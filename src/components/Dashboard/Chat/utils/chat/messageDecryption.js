@@ -84,9 +84,10 @@ export const decryptIncomingMessage = async (
     const n = Number(message.sendingNumber ?? 0);
     const pn = Number(message.previousSendingNumber ?? 0);
 
-    let skipped = (await getSkippedMessages(targetUserId)) ?? {};
-    console.log("BEFORE: ", skipped);
-    if (typeof skipped !== "object" || skipped == null || Array.isArray(skipped)) skipped = {};
+    const rawSkipped = (await getSkippedMessages(targetUserId)) ?? {};
+    let skipped = JSON.parse(JSON.stringify(
+      (typeof rawSkipped === "object" && rawSkipped !== null && !Array.isArray(rawSkipped)) ? rawSkipped : {}
+    ));
 
     let usedSkippedKey = false;
     const postDecryptActions = [];
