@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.0.4](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.3...v0.0.4) (2026-04-20)
+
+
+### Bug Fixes
+
+* removed vestigial crypto files ([5391e68](https://github.com/echo-chat-protocol/echo-frontend/commit/5391e680760a6edf44fa7ff5070dd979a121c2ab))
+
 ## [0.0.3](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.2...v0.0.3) (2026-04-20)
 
 
