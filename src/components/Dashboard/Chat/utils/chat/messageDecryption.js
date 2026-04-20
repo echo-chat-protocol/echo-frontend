@@ -348,7 +348,7 @@ export const decryptIncomingMessage = async (
         let skippedBucket = null;
         if (dh) {
           const existing = skipped[dh];
-          if (existing && typeof existing === "object" && !Array.isArray(existing) || skipped[dh] == null) {
+          if (existing && typeof existing === "object" && !Array.isArray(existing)) {
             skippedBucket = existing;
           } else {
             skippedBucket = {};
