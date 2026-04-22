@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.0.5](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.4...v0.0.5) (2026-04-22)
+
+
+### Bug Fixes
+
+* added treePublicNodes into commit signature ([fb27ae9](https://github.com/echo-chat-protocol/echo-frontend/commit/fb27ae98665899590f40ba74488dacf6de4b662a))
+* commit epoch should only equal epoch+1 ([1d47699](https://github.com/echo-chat-protocol/echo-frontend/commit/1d47699fe2d4ca1424612001ebb5e8267cdc6e4b))
+
 ## [0.0.4](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.3...v0.0.4) (2026-04-20)
 
 
