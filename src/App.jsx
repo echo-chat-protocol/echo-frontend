@@ -14,8 +14,8 @@ import Spinner from './components/common/Spinner'
 import PrivateRoute from './components/auth/PrivateRoute' // NOT lazy — used as synchronous route wrapper
 
 // ─── Lazy-loaded pages (code splitting) ─────────────────────────────────────
-const Login = lazy(() => import('./components/auth/Login'))
-const Register = lazy(() => import('./components/auth/Register'))
+const Login = lazy(() => import('./components/Login'))
+const Register = lazy(() => import('./components/Register'))
 const LandingPage = lazy(() => import('./components/LandingPage'))
 const Dashboard = lazy(() => import('./components/Dashboard/Dashboard'))
 const Chat = lazy(() => import('./components/Dashboard/Chat/Chat'))
@@ -68,6 +68,14 @@ function UserProfileRoute() {
   if (!user) return <Navigate to='/login' replace />
 
   return <UserProfile user={user} onChangePassword={() => alert('Change password clicked!')} />
+}
+
+function GlobalWidget() {
+  const location = useLocation()
+  const hiddenPrefixes = ['/dashboard', '/chat', '/video-call']
+  const shouldHide = hiddenPrefixes.some((prefix) => location.pathname.startsWith(prefix))
+
+  return shouldHide ? null : <EchoChatWidget />
 }
 
 function App() {
@@ -156,7 +164,7 @@ function App() {
           </Routes>
 
           {/* Global widget */}
-          <EchoChatWidget />
+          <GlobalWidget />
         </Suspense>
       </Router>
     </ErrorBoundary>

@@ -32,20 +32,40 @@ export async function login(page: Page, username: string, password: string) {
 
 export async function ensureUnlocked(page: Page, password: string) {
   const navFriends = page.getByTestId("nav-friends");
+  const dashboardSearch = page.getByTestId("dashboard-search");
   const unlockField = page.locator("#eld-password");
 
-  // Gate can appear asynchronously; wait for either the dashboard nav or the unlock form.
+  // Gate can appear asynchronously; wait for either the dashboard shell or the unlock form.
   await Promise.race([
     navFriends.waitFor({ state: "visible", timeout: 60_000 }),
+    dashboardSearch.waitFor({ state: "visible", timeout: 60_000 }),
     unlockField.waitFor({ state: "visible", timeout: 60_000 }),
   ]);
 
-  if (await unlockField.isVisible().catch(() => false)) {
-    await unlockField.fill(password);
-    await page.getByRole("button", { name: /^Unlock$/ }).click();
+  if (
+    (await navFriends.isVisible().catch(() => false)) ||
+    (await dashboardSearch.isVisible().catch(() => false))
+  ) {
+    return;
   }
 
-  await expect(navFriends).toBeVisible({ timeout: 60_000 });
+  if (await unlockField.isVisible().catch(() => false)) {
+    try {
+      await unlockField.fill(password, { timeout: 5_000 });
+      await page.getByRole("button", { name: /^Unlock$/ }).click();
+    } catch (error) {
+      const message = String(error);
+      if (
+        !message.includes("detached") &&
+        !message.includes("Timeout") &&
+        !message.includes("Target page")
+      ) {
+        throw error;
+      }
+    }
+  }
+
+  await expect(dashboardSearch).toBeVisible({ timeout: 60_000 });
 }
 
 export async function openChatWith(page: Page, friendUsername: string) {

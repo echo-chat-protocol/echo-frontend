@@ -24,6 +24,7 @@ import {
   installLeafPublicKeysFromMemberInitKeys,
   makeTreeFromPublicNodes,
   normalizeRoster,
+  publicTreeSnapshot,
   resizeNodes,
 } from './treeState.js'
 
@@ -303,7 +304,7 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
     currentState.selfLeafIndex,
     currentState.selfLeafIndex
   )
-  const treePublicNodes = nextTree.map((node) => node?.publicKeyB64 ?? null)
+  const treePublicNodes = publicTreeSnapshot(nextTree)
   const aadBytes = makeCommitAadBytes(currentState.groupId, nextEpoch)
 
   // wraps secret for the new member only
@@ -432,7 +433,7 @@ export async function buildRemoveCommit({ state, targetUserId, memberInitKeys })
     currentState.selfLeafIndex,
     currentState.selfLeafIndex
   )
-  const treePublicNodes = nextTree.map((node) => node?.publicKeyB64 ?? null)
+  const treePublicNodes = publicTreeSnapshot(nextTree)
 
   // builds commit object with group metadata, target member info, roster, tree snapshop and update path
   const commit = {

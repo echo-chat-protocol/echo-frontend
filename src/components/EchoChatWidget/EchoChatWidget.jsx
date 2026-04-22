@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useEffect } from 'react'
+﻿import { useState, useRef, useEffect } from 'react'
 import { X, Send, Minimize2, Maximize2, RotateCcw, ChevronLeft } from 'lucide-react'
 import gsap from 'gsap'
 import Logo from '../HomepageComponents/Logo'
@@ -606,7 +606,7 @@ const EchoChatWidget = () => {
           onClick={() => setIsOpen(true)}
           className='fixed bottom-6 right-6 z-40 flex items-center justify-center w-14 h-14 bg-violet-600 hover:bg-violet-500 text-white rounded-full shadow-[0_0_20px_rgba(124,58,237,0.5)] hover:shadow-[0_0_30px_rgba(124,58,237,0.7)] transition-all duration-300 group'
         >
-          <div className='absolute inset-0 rounded-full bg-violet-400 opacity-0 group-hover:opacity-20 transition-opacity duration-300' />
+          <div className='pointer-events-none absolute inset-0 rounded-full bg-violet-400 opacity-0 group-hover:opacity-20 transition-opacity duration-300' />
           <Logo size='sm' variant='light' />
           {hasUnread && (
             <span className='absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-[0_0_10px_rgba(239,68,68,0.7)] animate-pulse'>

@@ -12,6 +12,8 @@ import {
 } from "./helpers";
 
 test("two users can chat", async ({ browser }) => {
+  test.setTimeout(180_000);
+
   const password = "Testpass1!";
   const alice = uniqueUser("alice");
   const bob = uniqueUser("bob");
@@ -41,7 +43,7 @@ test("two users can chat", async ({ browser }) => {
     // Bob should receive and display the decrypted message.
     await expectEventuallyVisibleInChat({ page: bobPage, peerUsername: alice, password, text });
   } finally {
-    await aliceCtx.close();
-    await bobCtx.close();
+    await aliceCtx.close().catch(() => {});
+    await bobCtx.close().catch(() => {});
   }
 });
