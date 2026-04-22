@@ -510,6 +510,13 @@ export async function applyCommit({ state, commit, myInitPrivKeyB64 }) {
     throw new Error(`No signing pub key for commit sender at leafIndex ${commit.senderLeafIndex}`)
   }
 
+  if (
+    commit.senderSigningPubKeyB64 &&
+    commit.senderSigningPubKeyB64 !== senderEntry.leafSigningPubKeyB64
+  ) {
+    throw new Error('Commit sender signing pub key mismatch')
+  }
+
   await verifyCommit(commit, senderEntry.leafSigningPubKeyB64)
 
   // computes the leafCount

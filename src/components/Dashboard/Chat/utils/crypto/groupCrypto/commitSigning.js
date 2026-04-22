@@ -73,6 +73,7 @@ export function encodeCommitForSigning(commit) {
         `|${commit.epoch}` +
         `|${commit.type}` +
         `|${commit.senderLeafIndex}` +
+        `|${commit.senderSigningPubKeyB64 ?? ''}` +
         `|${commit.targetUserId ?? ''}` +
         `|${commit.leafCount ?? ''}`
     )

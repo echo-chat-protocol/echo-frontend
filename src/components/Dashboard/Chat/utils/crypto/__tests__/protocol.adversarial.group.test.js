@@ -199,6 +199,7 @@ const BASE_COMMIT_OBJ = Object.freeze({
   epoch: 1,
   type: 'add',
   senderLeafIndex: 0,
+  senderSigningPubKeyB64: 'YWxpY2U=',
   targetUserId: 'carol',
   leafCount: 4,
   roster: [
@@ -508,6 +509,18 @@ describe('applyCommit — signature enforcement', () => {
     ).rejects.toThrow()
   })
 
+  it('rejects when the commit-carried sender signing key differs from the trusted roster key', async () => {
+    const { aliceState, bobState } = await epoch0('sig-key-mismatch')
+    const { commit } = await addCarolCommit(aliceState)
+    await expect(
+      applyCommit({
+        state: bobState,
+        commit: { ...commit, senderSigningPubKeyB64: MALLORY_KEY },
+        myInitPrivKeyB64: BOB_KEY,
+      })
+    ).rejects.toThrow('Commit sender signing pub key mismatch')
+  })
+
   it('rejects when the commit signature does not match the sender key (forged signer)', async () => {
     const { aliceState, bobState } = await epoch0('sig-forged')
     const { commit } = await addCarolCommit(aliceState)
@@ -557,6 +570,10 @@ describe('encodeCommitForSigning — field coverage', () => {
 
   it('different senderLeafIndex produces different encoding', () => {
     expect(toHex({ ...BASE_COMMIT_OBJ, senderLeafIndex: 2 })).not.toBe(BASELINE)
+  })
+
+  it('different senderSigningPubKeyB64 produces different encoding', () => {
+    expect(toHex({ ...BASE_COMMIT_OBJ, senderSigningPubKeyB64: MALLORY_KEY })).not.toBe(BASELINE)
   })
 
   it('different targetUserId produces different encoding', () => {
