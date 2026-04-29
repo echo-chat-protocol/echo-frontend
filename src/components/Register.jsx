@@ -30,6 +30,7 @@ const Register = () => {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [aboutme] = useState('')
   const [profilePicture] = useState('')
+  const [agreedToTerms, setAgreedToTerms] = useState(false)
   const navigate = useNavigate()
   const [error, setError] = useState('')
   const [passwordStrength, setPasswordStrength] = useState(0)
@@ -231,6 +232,11 @@ const Register = () => {
                 return
               }
 
+              if (!agreedToTerms) {
+                setError('Please agree to the Terms of Service and Privacy Policy')
+                return
+              }
+
               setError('')
               handleRegister(e)
             }}
@@ -323,6 +329,8 @@ const Register = () => {
                 className='mt-0.5 h-4 w-4 rounded accent-primary-600 cursor-pointer border border-white/40 bg-white/5'
                 id='terms'
                 type='checkbox'
+                checked={agreedToTerms}
+                onChange={(e) => setAgreedToTerms(e.target.checked)}
               />
               <label
                 className='cursor-pointer text-xs text-white/70 leading-relaxed'
