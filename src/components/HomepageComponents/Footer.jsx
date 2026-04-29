@@ -1,7 +1,7 @@
-import React from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Mail, Linkedin, Github, Twitter } from 'lucide-react'
+import { Mail, Linkedin, Github } from 'lucide-react'
+import { FaXTwitter } from 'react-icons/fa6'
 
 const Footer = () => {
   const { t } = useTranslation()
@@ -48,7 +48,7 @@ const Footer = () => {
   const socialLinks = [
     { icon: Github, href: '#', label: 'GitHub' },
     { icon: Linkedin, href: '#', label: 'LinkedIn' },
-    { icon: Twitter, href: '#', label: 'Twitter' },
+    { icon: FaXTwitter, href: '#', label: 'X' },
     { icon: Mail, href: 'mailto:support@echo.dev', label: 'Email' },
   ]
 
