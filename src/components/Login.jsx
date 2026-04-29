@@ -1,213 +1,167 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { connectWithoutAuth } from '../socket';
-import { jwtDecode } from "jwt-decode";
-// import { Buffer } from "buffer";
-import init from '@mascaro101/echo-protocol';
-import Navbar from "../components/HomepageComponents/Navbar";
-import ParticlesBackground from "../components/HomepageComponents/ParticlesBackground";
-import WaveBackground from "../components/HomepageComponents/WaveBackground";
-import "./styles/SignIn.css";
-import eld from '../utils/storage/EncryptedLocalDatabase';
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { connectWithoutAuth } from '../socket'
+import { jwtDecode } from 'jwt-decode'
+import { User, Lock, Eye, EyeOff, ArrowRight } from 'lucide-react'
+import init from '@mascaro101/echo-protocol'
+import './styles/SignIn.css'
+import eld from '../utils/storage/EncryptedLocalDatabase'
 
 const Login = () => {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState("");
-  const navigate = useNavigate();
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [error, setError] = useState('')
+  const navigate = useNavigate()
 
   const handleLogin = async (e) => {
-    e.preventDefault();
+    e.preventDefault()
 
     if (!username || !password) {
-      setError("Username and password cannot be empty");
-      return;
+      setError('Username and password cannot be empty')
+      return
     }
 
-    await init();
-    const socket = connectWithoutAuth();
+    await init()
+    const socket = connectWithoutAuth()
 
-    socket.once("connect", () => {
-      socket.emit("login", { username, password }, async (response) => {
+    socket.once('connect', () => {
+      socket.emit('login', { username, password }, async (response) => {
         if (response.success) {
-          localStorage.setItem("token", response.token);
+          localStorage.setItem('token', response.token)
 
-          const resolvedUserId = response.userId || (() => {
-            try {
-              const decoded = jwtDecode(response.token);
-              return decoded?.id || "";
-            } catch {
-              return "";
-            }
-          })();
+          const resolvedUserId =
+            response.userId ||
+            (() => {
+              try {
+                const decoded = jwtDecode(response.token)
+                return decoded?.id || ''
+              } catch {
+                return ''
+              }
+            })()
 
-          localStorage.setItem("userId", resolvedUserId);
+          localStorage.setItem('userId', resolvedUserId)
 
           // Unlock the encrypted database
           try {
-            const userExists = await eld.userExists(resolvedUserId);
+            const userExists = await eld.userExists(resolvedUserId)
 
             if (userExists) {
-                await eld.unlock(resolvedUserId, password);
-              } else {
+              await eld.unlock(resolvedUserId, password)
+            } else {
               // First login on this device - no local keys
               // Option 1: Show warning and continue
-              console.warn("[ELD] No local database - keys not available locally");
+              console.warn('[ELD] No local database - keys not available locally')
               // Option 2: Or block login and require re-registration
               // setError("No local keys found. Please register on this device.");
               // socket.disconnect();
               // return;
             }
 
-            navigate("/dashboard");
+            navigate('/dashboard')
           } catch (err) {
-            console.error("[ELD] Unlock failed:", err);
-            setError("Failed to unlock: " + err.message);
-            socket.disconnect();
+            console.error('[ELD] Unlock failed:', err)
+            setError('Failed to unlock: ' + err.message)
+            socket.disconnect()
           }
         } else {
-          setError(response.error || "Login failed");
-          socket.disconnect();
+          setError(response.error || 'Login failed')
+          socket.disconnect()
         }
-      });
-    });
-  };
+      })
+    })
+  }
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-primary-1000">
-      <Navbar />
-      <ParticlesBackground />
-      <WaveBackground />
+    <div className='relative h-screen w-screen overflow-hidden bg-primary-1000'>
+      <div className='absolute inset-0 z-0'>
+        <img
+          alt='Echo wallpaper'
+          className='h-full w-full object-cover'
+          src='/wallpapers/Echowallpaper2.png'
+        />
+        <div className='absolute inset-0 bg-black/40' />
+      </div>
 
-      <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="form-container w-full max-w-md bg-[var(--color-background)]/50 backdrop-blur-md rounded-xl p-6 border border-[var(--color-primary)]/30 shadow-xl relative z-10">
-          <h2 className="text-2xl font-bold text-center mb-6 text-white">
-            Login
-          </h2>
+      <div className='relative z-10 flex h-screen w-screen items-center justify-center px-5'>
+        <div className='form-container w-full max-w-md rounded-2xl border border-white/20 bg-black/35 p-7 shadow-[0_0_45px_rgba(170,190,255,0.18)] backdrop-blur-xl'>
+          <div className='mb-6 flex justify-center'>
+            <img alt='ECHO brand logo' className='h-12 w-auto' src='/echo-logo-text.png' />
+          </div>
 
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label
-                htmlFor="username"
-                className="block text-sm font-medium text-white mb-2"
-              >
-                Username
-              </label>
-              <input
-                type="text"
-                id="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full px-4 py-3 bg-[var(--color-background)]/20 border border-[var(--color-primary)]/30 rounded-lg text-black placeholder-black/60 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] transition-all"
-                placeholder="Enter username"
-                required
-              />
+          <h1 className='mb-8 text-center text-3xl font-semibold tracking-wide text-white'>
+            Welcome Back
+          </h1>
+
+          {error && (
+            <div className='mb-4 rounded-lg border border-rose-700/50 bg-rose-950/50 p-4'>
+              <p className='text-sm text-rose-300'>{error}</p>
+            </div>
+          )}
+
+          <form onSubmit={handleLogin} className='mb-6 space-y-4'>
+            <div className='flex flex-col gap-1.5'>
+              <div className='input-glass rounded-lg flex items-center px-4 py-2'>
+                <User className='text-outline mr-2 w-5 h-5' />
+                <input
+                  type='text'
+                  id='username'
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className='bg-transparent border-none w-full text-on-background focus:ring-0 font-body-md placeholder-white/80 p-0 outline-none'
+                  placeholder='Enter your username'
+                  required
+                />
+              </div>
             </div>
 
-            <div>
-              <label
-                htmlFor="password"
-                className="block text-sm font-medium text-white mb-2"
-              >
-                Password
-              </label>
-              <div className="relative">
+            <div className='flex flex-col gap-1.5'>
+              <div className='input-glass relative rounded-lg flex items-center px-4 py-2'>
+                <Lock className='text-outline mr-2 w-5 h-5' />
                 <input
-                  type={showPassword ? "text" : "password"}
-                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  id='password'
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-3 bg-[var(--color-background)]/20 border border-[var(--color-primary)]/30 rounded-lg text-black placeholder-black/60 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] transition-all pr-10"
-                  placeholder="Enter password"
+                  className='bg-transparent border-none w-full text-on-background focus:ring-0 font-body-md placeholder-white/80 p-0 pr-8 outline-none'
+                  placeholder='Enter your password'
                   required
                 />
 
                 <button
-                  type="button"
+                  type='button'
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute top-1/2 right-3 transform -translate-y-1/2 text-black/60 hover:text-[#514b96]"
-                  aria-label="Toggle password visibility"
+                  className='absolute right-3 top-1/2 -translate-y-1/2 text-white/60 transition-colors hover:text-white'
+                  aria-label='Toggle password visibility'
                 >
-                  {showPassword ? (
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M3 3l18 18"
-                      />
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M10.477 10.477a3 3 0 104.046 4.046"
-                      />
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 5c4.477 0 8.268 2.943 9.542 7-1.18 3.753-4.614 6.518-8.665 6.902"
-                      />
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M6.343 6.343A9.957 9.957 0 003 12c1.274 4.057 5.065 7 9.542 7"
-                      />
-                    </svg>
-                  ) : (
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                      />
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                      />
-                    </svg>
-                  )}
+                  {showPassword ? <EyeOff className='h-5 w-5' /> : <Eye className='h-5 w-5' />}
                 </button>
               </div>
             </div>
 
-            {error && <p className="text-sm text-white">{error}</p>}
-
             <button
-              type="submit"
-              className="w-full mt-6 px-4 py-3 bg-gradient-to-r from-[#514b96] to-[#8e79f2] text-white font-medium rounded-lg hover:opacity-90 transition-all active:scale-[0.98] shadow-md"
+              type='submit'
+              className='mt-6 flex w-full items-center justify-center space-x-2 rounded-full bg-white px-4 py-3 text-base font-semibold text-black transition-colors duration-200 hover:bg-white/85 active:scale-[0.99]'
             >
-              Sign In
+              <span>Sign In</span>
+              <ArrowRight className='h-5 w-5' />
             </button>
-
-            <p className="text-center text-sm text-white mt-4">
-              Don't have an account?{" "}
-              <a href="/register" className="text-white hover:text-[#514b96]">
-                Register now
-              </a>
-            </p>
           </form>
+
+          <p className='text-center text-sm text-white/80'>
+            Don&#39;t have an account?{' '}
+            <a
+              href='/register'
+              className='font-medium text-white underline decoration-white/40 underline-offset-4 transition-colors hover:text-primary-400'
+            >
+              Register now
+            </a>
+          </p>
         </div>
       </div>
     </div>
-  );
-};
+  )
+}
 
-export default Login;
+export default Login
