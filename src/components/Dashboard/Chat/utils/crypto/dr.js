@@ -11,6 +11,7 @@ import init, { verify_signature, diffie_hellman, hkdf_derive } from '@mascaro101
 import { getIdentityKeys, getOPKPrivateKey, getPeerIdentityKeys } from '../chat/keyManagement'
 
 const HKDF_SALT = new Uint8Array()
+const INFO_SK = new TextEncoder().encode('EchoProtocol/v1/X3DH_SK')
 const INFO_RK = new TextEncoder().encode('EchoProtocol/v1/KDF_RK')
 
 const peerIdentityChangedError = (peerId, savedPeer, fetchedPeer) => {
@@ -96,7 +97,7 @@ const initializeDoubleRatchet = async (
     IKM.set(p, offset)
     offset += p.length
   }
-  const root_key = hkdf_derive(IKM, HKDF_SALT, INFO_RK, 32)
+  const root_key = hkdf_derive(IKM, HKDF_SALT, INFO_SK, 32)
 
   return { root_key, spkId, opkId, peerIdentityToPin }
 }
@@ -119,8 +120,8 @@ const continueDoubleRatchetChain = async (
   const DH4 = await diffie_hellman(privateEphemeralKey, previousTargetPublicEphemeralKey)
 
   const hkdf_expand = hkdf_derive(DH4, root_key, INFO_RK, 64)
-  const receivingChainKey = hkdf_expand.slice(0, 32)
-  const newRootKey = hkdf_expand.slice(32)
+  const newRootKey = hkdf_expand.slice(0, 32)
+  const receivingChainKey = hkdf_expand.slice(32)
 
   return { receivingChainKey, newRootKey }
 }
@@ -193,7 +194,7 @@ const initializeDoubleRatchetResponse = async (socket, message, targetUserId, pr
     IKM.set(p, offset)
     offset += p.length
   }
-  const root_key = hkdf_derive(IKM, HKDF_SALT, INFO_RK, 32)
+  const root_key = hkdf_derive(IKM, HKDF_SALT, INFO_SK, 32)
   return { root_key, peerIdentityToPin }
 }
 
