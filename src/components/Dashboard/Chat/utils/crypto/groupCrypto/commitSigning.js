@@ -90,6 +90,62 @@ export function encodeCommitForSigning(commit) {
   return message
 }
 
+export function encodeWelcomeForSigning(welcome) {
+  const rosterStr = (welcome.roster ?? [])
+    .slice()
+    .sort((a, b) => a.leafIndex - b.leafIndex)
+    .map((m) => `${m.userId}:${m.leafIndex}:${m.leafSigningPubKeyB64 ?? ''}`)
+    .join(',')
+  const rosterBytes = encodeLengthPrefixed(TEXT_ENCODER.encode(rosterStr))
+
+  const treeStr = Array.from(
+    { length: welcome.treePublicNodes?.length ?? 0 },
+    (_, index) => welcome.treePublicNodes?.[index] ?? null
+  )
+    .map((k) => k ?? '')
+    .join(',')
+  const treeBytes = encodeLengthPrefixed(TEXT_ENCODER.encode(treeStr))
+
+  const wrappedInit = welcome.wrappedInitSecret ?? {}
+  const wrappedCommit = welcome.wrappedCommitSecret ?? {}
+  const wrappedBytes = encodeLengthPrefixed(
+    TEXT_ENCODER.encode(
+      [
+        wrappedInit.encryptedB64 ?? '',
+        wrappedInit.ephPubB64 ?? '',
+        wrappedInit.nonceB64 ?? '',
+        wrappedCommit.encryptedB64 ?? '',
+        wrappedCommit.ephPubB64 ?? '',
+        wrappedCommit.nonceB64 ?? '',
+      ].join('|')
+    )
+  )
+
+  const header = encodeLengthPrefixed(
+    TEXT_ENCODER.encode(
+      `EchoMLS/v1/WelcomeSig` +
+        `|${welcome.groupId}` +
+        `|${welcome.epoch}` +
+        `|${welcome.cipherSuite ?? ''}` +
+        `|${welcome.recipientUserId ?? ''}` +
+        `|${welcome.recipientLeafIndex ?? ''}` +
+        `|${welcome.leafCount ?? ''}` +
+        `|${welcome.senderLeafIndex ?? ''}` +
+        `|${welcome.senderSigningPubKeyB64 ?? ''}`
+    )
+  )
+
+  const message = new Uint8Array(
+    header.length + rosterBytes.length + treeBytes.length + wrappedBytes.length
+  )
+  message.set(header, 0)
+  message.set(rosterBytes, header.length)
+  message.set(treeBytes, header.length + rosterBytes.length)
+  message.set(wrappedBytes, header.length + rosterBytes.length + treeBytes.length)
+
+  return message
+}
+
 // Sign
 
 export async function signCommit(commit, leafSigningPrivKeyB64) {
@@ -127,4 +183,39 @@ export async function verifyCommit(commit, senderSigningPubKeyB64) {
 
   const valid = verify_signature(sigBytes, message, pubKey)
   if (!valid) throw new Error('Commit signature invalid')
+}
+
+export async function signWelcome(welcome, leafSigningPrivKeyB64) {
+  await init()
+
+  const privKey = base64ToBytes(leafSigningPrivKeyB64)
+  const message = encodeWelcomeForSigning(welcome)
+
+  const xeddsaKey = convert_x25519_to_xeddsa(privKey)
+  const edPrivScaler = xeddsaKey.slice(0, 32)
+  const prefix = xeddsaKey.slice(32, 64)
+  const pubEdKey = derive_ed25519_keypair_from_x25519(privKey)
+
+  const nonce = compute_determenistic_nonce(prefix, message)
+  const noncePoint = compute_nonce_point(nonce)
+  const challenge = compute_challenge_hash(noncePoint, pubEdKey, message)
+  const sigScaler = compute_signature_scaler(nonce, challenge, edPrivScaler)
+  const signature = compute_signature(noncePoint, sigScaler)
+
+  return bytesToBase64(signature)
+}
+
+export async function verifyWelcome(welcome, senderSigningPubKeyB64) {
+  await init()
+
+  if (!welcome.signature || !senderSigningPubKeyB64) {
+    throw new Error('Welcome missing signature or signing pub key')
+  }
+
+  const pubKey = base64ToBytes(senderSigningPubKeyB64)
+  const sigBytes = base64ToBytes(welcome.signature)
+  const message = encodeWelcomeForSigning(welcome)
+
+  const valid = verify_signature(sigBytes, message, pubKey)
+  if (!valid) throw new Error('Welcome signature invalid')
 }

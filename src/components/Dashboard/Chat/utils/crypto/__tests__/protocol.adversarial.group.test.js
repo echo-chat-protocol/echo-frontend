@@ -159,6 +159,7 @@ vi.mock('../../../../../../utils/storage/EncryptedLocalDatabase', () => ({
 // ─── module imports (after mocks) ─────────────────────────────────────────────
 
 const { bytesToBase64 } = await import('../../helpers.js')
+const protocol = await import('@mascaro101/echo-protocol')
 const {
   applyCommit,
   buildAddCommit,
@@ -167,7 +168,8 @@ const {
   createNewGroupState,
   processWelcome,
 } = await import('../groupCryptoProvider.js')
-const { encodeCommitForSigning } = await import('../groupCrypto/commitSigning.js')
+const { encodeCommitForSigning, encodeWelcomeForSigning } =
+  await import('../groupCrypto/commitSigning.js')
 
 // ─── fixtures ─────────────────────────────────────────────────────────────────
 
@@ -764,6 +766,28 @@ describe('processWelcome — structural validation', () => {
     ).rejects.toThrow()
   })
 
+  it('rejects a welcome with no signature field', async () => {
+    const { bobWelcome } = await epoch0('wlc-no-sig')
+    await expect(
+      processWelcome({
+        welcome: omitKey(bobWelcome, 'signature'),
+        selfUserId: 'bob',
+        myInitPrivKeyB64: BOB_KEY,
+      })
+    ).rejects.toThrow('Welcome missing signature or signing pub key')
+  })
+
+  it('rejects a welcome with no senderSigningPubKeyB64 field', async () => {
+    const { bobWelcome } = await epoch0('wlc-no-sender-key')
+    await expect(
+      processWelcome({
+        welcome: omitKey(bobWelcome, 'senderSigningPubKeyB64'),
+        selfUserId: 'bob',
+        myInitPrivKeyB64: BOB_KEY,
+      })
+    ).rejects.toThrow(`Welcome is missing senderSigningPubKeyB64 for group ${bobWelcome.groupId}`)
+  })
+
   it('rejects when no private key is supplied', async () => {
     const { bobWelcome } = await epoch0('wlc-no-key')
     await expect(
@@ -847,6 +871,65 @@ describe('processWelcome — AEAD authentication', () => {
         myInitPrivKeyB64: BOB_KEY,
       })
     ).rejects.toThrow()
+  })
+})
+
+describe('processWelcome — signed metadata integrity', () => {
+  it('rejects when the roster is substituted by the server', async () => {
+    const { bobWelcome } = await epoch0('wlc-roster-sub')
+    const tampered = {
+      ...bobWelcome,
+      roster: [
+        ...bobWelcome.roster,
+        { userId: 'mallory', username: 'Mallory', leafIndex: 9, leafSigningPubKeyB64: MALLORY_KEY },
+      ],
+    }
+    expect(Buffer.from(encodeWelcomeForSigning(tampered))).not.toEqual(
+      Buffer.from(encodeWelcomeForSigning(bobWelcome))
+    )
+    vi.mocked(protocol.verify_signature).mockReturnValueOnce(false)
+    await expect(
+      processWelcome({
+        welcome: tampered,
+        selfUserId: 'bob',
+        myInitPrivKeyB64: BOB_KEY,
+      })
+    ).rejects.toThrow('Welcome signature invalid')
+  })
+
+  it('rejects when treePublicNodes are substituted by the server', async () => {
+    const { bobWelcome } = await epoch0('wlc-tree-sub')
+    const tamperedTree = [...bobWelcome.treePublicNodes]
+    tamperedTree[0] = MALLORY_KEY
+    const tampered = {
+      ...bobWelcome,
+      treePublicNodes: tamperedTree,
+    }
+    expect(Buffer.from(encodeWelcomeForSigning(tampered))).not.toEqual(
+      Buffer.from(encodeWelcomeForSigning(bobWelcome))
+    )
+    vi.mocked(protocol.verify_signature).mockReturnValueOnce(false)
+    await expect(
+      processWelcome({
+        welcome: tampered,
+        selfUserId: 'bob',
+        myInitPrivKeyB64: BOB_KEY,
+      })
+    ).rejects.toThrow('Welcome signature invalid')
+  })
+
+  it('rejects when senderSigningPubKeyB64 does not match the roster sender entry', async () => {
+    const { bobWelcome } = await epoch0('wlc-sender-key-mismatch')
+    await expect(
+      processWelcome({
+        welcome: {
+          ...bobWelcome,
+          senderSigningPubKeyB64: MALLORY_KEY,
+        },
+        selfUserId: 'bob',
+        myInitPrivKeyB64: BOB_KEY,
+      })
+    ).rejects.toThrow('Welcome sender signing pub key mismatch')
   })
 })
 

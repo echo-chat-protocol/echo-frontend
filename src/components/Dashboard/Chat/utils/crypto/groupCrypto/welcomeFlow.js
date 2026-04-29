@@ -12,7 +12,7 @@ import {
   publicTreeSnapshot,
 } from './treeState.js'
 
-import { generateLeafSigningKeypair } from './commitSigning.js'
+import { generateLeafSigningKeypair, signWelcome, verifyWelcome } from './commitSigning.js'
 
 // Build initial welcome message recieved by each member when they are added to a group
 export async function buildInitialWelcomes({ creatorState, roster, memberInitKeys }) {
@@ -46,6 +46,19 @@ export async function buildInitialWelcomes({ creatorState, roster, memberInitKey
   const treePublicNodes = publicTreeSnapshot(state.tree.nodes)
 
   const welcomes = []
+  const senderRosterEntry = normalizedRoster.find(
+    (member) => String(member.userId) === String(state.selfUserId)
+  )
+  if (!senderRosterEntry?.leafSigningPubKeyB64) {
+    throw new Error(
+      `Creator state is missing sender leaf signing public key for group ${state.groupId}`
+    )
+  }
+  if (!state.leafSigningPrivKeyB64) {
+    throw new Error(
+      `Creator state is missing sender leaf signing private key for group ${state.groupId}`
+    )
+  }
 
   // for each memvber (except creator) find that members initKeyB64 from memberInitKeys
   // encryps init secret for that member via wrapGroupKey
@@ -66,7 +79,7 @@ export async function buildInitialWelcomes({ creatorState, roster, memberInitKey
     const wrappedCommitSecret = await wrapGroupKey(commitSecretB64, initKeyB64, aadBytes)
 
     // returns welcome array with one welcome per member
-    welcomes.push({
+    const welcome = {
       groupId: state.groupId,
       epoch: state.epoch,
       cipherSuite: state.cipherSuite,
@@ -74,10 +87,14 @@ export async function buildInitialWelcomes({ creatorState, roster, memberInitKey
       recipientUserId: member.userId,
       recipientLeafIndex: member.leafIndex,
       leafCount: computeLeafCount({ roster: normalizedRoster, treeNodes: state.tree.nodes }),
+      senderLeafIndex: state.selfLeafIndex,
+      senderSigningPubKeyB64: senderRosterEntry.leafSigningPubKeyB64,
       wrappedInitSecret,
       wrappedCommitSecret,
       treePublicNodes,
-    })
+    }
+    welcome.signature = await signWelcome(welcome, state.leafSigningPrivKeyB64)
+    welcomes.push(welcome)
   }
 
   return welcomes
@@ -102,6 +119,27 @@ export async function processWelcome({ welcome, selfUserId = null, myInitPrivKey
   if (!welcome.wrappedInitSecret || !welcome.wrappedCommitSecret) {
     throw new Error(`Welcome is missing encrypted key fields for group ${welcome.groupId}`)
   }
+  if (!Number.isInteger(welcome.senderLeafIndex)) {
+    throw new Error(`Welcome is missing senderLeafIndex for group ${welcome.groupId}`)
+  }
+  if (
+    typeof welcome.senderSigningPubKeyB64 !== 'string' ||
+    welcome.senderSigningPubKeyB64.length === 0
+  ) {
+    throw new Error(`Welcome is missing senderSigningPubKeyB64 for group ${welcome.groupId}`)
+  }
+
+  const normalizedRoster = normalizeRoster(welcome.roster)
+  const senderEntry = normalizedRoster.find(
+    (member) => member.leafIndex === welcome.senderLeafIndex
+  )
+  if (!senderEntry?.leafSigningPubKeyB64) {
+    throw new Error(`No signing pub key for welcome sender at leafIndex ${welcome.senderLeafIndex}`)
+  }
+  if (senderEntry.leafSigningPubKeyB64 !== welcome.senderSigningPubKeyB64) {
+    throw new Error('Welcome sender signing pub key mismatch')
+  }
+  await verifyWelcome(welcome, senderEntry.leafSigningPubKeyB64)
 
   // builds AAD for unwrapping secrets
   const aadBytes = makeCommitAadBytes(welcome.groupId, welcome.epoch)
@@ -124,7 +162,7 @@ export async function processWelcome({ welcome, selfUserId = null, myInitPrivKey
 
   // Generate leaf signing keypair for this member, this will be used for signing and verifying commits
   const { leafSigningPrivKeyB64, leafSigningPubKeyB64 } = await generateLeafSigningKeypair()
-  const rosterWithSigningKey = normalizeRoster(welcome.roster).map((m) =>
+  const rosterWithSigningKey = normalizedRoster.map((m) =>
     String(m.userId) === String(selfUserId ?? welcome.recipientUserId)
       ? { ...m, leafSigningPubKeyB64 }
       : m

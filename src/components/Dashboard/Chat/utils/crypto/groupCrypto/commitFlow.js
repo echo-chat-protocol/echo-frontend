@@ -28,7 +28,7 @@ import {
   resizeNodes,
 } from './treeState.js'
 
-import { signCommit, verifyCommit } from './commitSigning.js'
+import { signCommit, signWelcome, verifyCommit } from './commitSigning.js'
 
 // This function builds the update path for a given sender
 // it generates new path secrets for each node in the direct path
@@ -369,6 +369,9 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
   )
   commit.senderSigningPubKeyB64 = senderRosterEntry?.leafSigningPubKeyB64 ?? null
   commit.signature = await signCommit(commit, currentState.leafSigningPrivKeyB64)
+  welcome.senderLeafIndex = currentState.selfLeafIndex
+  welcome.senderSigningPubKeyB64 = senderRosterEntry?.leafSigningPubKeyB64 ?? null
+  welcome.signature = await signWelcome(welcome, currentState.leafSigningPrivKeyB64)
 
   return { commit, welcome, nextState }
 }
