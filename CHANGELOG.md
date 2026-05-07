@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.0.7](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.6...v0.0.7) (2026-05-07)
+
+
+### Bug Fixes
+
+* deriveRootKey and continueDR use proper HKDF tags ([683e166](https://github.com/echo-chat-protocol/echo-frontend/commit/683e1667f58b3646dd47ce91a79d7c2e2c101ba1))
+* resolve all broken module imports across frontend ([c6bb503](https://github.com/echo-chat-protocol/echo-frontend/commit/c6bb503491474f40ef2f179b6f5c1abaeb3419fa))
+
 ## [0.0.6](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.2...v0.0.6) (2026-04-29)
 
 
