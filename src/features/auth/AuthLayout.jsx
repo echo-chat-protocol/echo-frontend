@@ -1,6 +1,6 @@
 import React from 'react'
 import { motion } from 'framer-motion'
-import Navbar from './HomepageComponents/Navbar'
+import Navbar from '@components/layout/Navbar'
 
 const AuthLayout = ({ children, title, subtitle }) => {
   return (

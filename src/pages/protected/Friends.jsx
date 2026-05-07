@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { getSocket } from "../../../socket";
+import { getSocket } from '@/socket';
 import PropTypes from "prop-types";
 import { jwtDecode } from "jwt-decode";
-import { formatProfileImage } from "../DashboardComponents/utils/helpers";
+import { formatProfileImage } from "@features/dashboard/utils/helpers";
 
 const Friends = ({ token, onActiveChatChange, searchTerm }) => {
   const [chatList, setSearchList] = useState([]);

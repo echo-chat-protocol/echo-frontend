@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react'
-import { getSocket } from '../services/socket'
+import { getSocket } from '@services/socket'
 
 /**
  * Subscribes to a socket event and cleans up automatically on unmount.

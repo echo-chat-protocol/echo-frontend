@@ -2,7 +2,7 @@ import {
   decryptApplicationMessage,
   loadGroupState,
   saveGroupState,
-} from "../crypto/groupCryptoProvider";
+} from "@lib/crypto/groupCryptoProvider";
 import {
   consumePendingOutgoingGroupMessage,
   updateSavedMessages,

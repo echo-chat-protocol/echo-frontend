@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { webcrypto } from 'node:crypto'
 
-import { arrayBufferToBase64, base64ToArrayBuffer } from '../../helpers.js'
+import { arrayBufferToBase64, base64ToArrayBuffer } from '@features/chat/utils/helpers'
 
 if (!globalThis.crypto) {
   globalThis.crypto = webcrypto
@@ -215,8 +215,8 @@ vi.mock('../../crypto/hkdf', () => ({
 vi.mock('../../crypto/dr', () => dr)
 vi.mock('../../chat/keyManagement', () => km)
 
-import { encryptOutgoingMessage } from '../../chat/messageEncryption.js'
-import { decryptIncomingMessage } from '../../chat/messageDecryption.js'
+import { encryptOutgoingMessage } from '@features/chat/utils/chat/messageEncryption'
+import { decryptIncomingMessage } from '@features/chat/utils/chat/messageDecryption'
 
 function seedConversation({ a, b, ckABByte = 5, ckBAByte = 9 }) {
   const A_dh_priv = new Uint8Array(32).fill(0xa0)

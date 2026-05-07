@@ -1,5 +1,5 @@
 import React from 'react'
-import echoLogo from '../Logo/echo-logo.svg'
+import echoLogo from '@assets/icons/echo-logo.svg'
 
 const Logo = ({ size = 'md', variant = 'default' }) => {
   const sizeMap = {

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { getSocket } from "../../../socket";
-import DisplayText from "./MessageDisplay/displayText";
-import GroupSendText from "./MessageInput/GroupSendText";
+import { getSocket } from '@/socket';
+import DisplayText from "@features/chat/components/displayText";
+import GroupSendText from "@features/chat/components/GroupSendText";
 
 import {
   applyCommit,
@@ -12,7 +12,7 @@ import {
   loadGroupState,
   saveGroupState,
   processWelcome,
-} from "./utils/crypto/groupCryptoProvider";
+} from "@lib/crypto/groupCryptoProvider";
 
 import {
   deletePendingOutgoingGroupMessage,

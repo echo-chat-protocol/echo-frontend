@@ -50,7 +50,7 @@ vi.mock('@mascaro101/echo-protocol', async () => {
   }
 })
 
-const { base64ToBytes, bytesToBase64 } = await import('../../helpers.js')
+const { base64ToBytes, bytesToBase64 } = await import('@features/chat/utils/helpers')
 const { generateLeafSigningKeypair, encodeCommitForSigning, signCommit, verifyCommit } =
   await import('../groupCrypto/commitSigning.js')
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 
-import { arrayBufferToBase64, base64ToArrayBuffer } from "../../helpers.js";
+import { arrayBufferToBase64, base64ToArrayBuffer } from '@features/chat/utils/helpers';
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 if (!globalThis.atob) globalThis.atob = (b64) => Buffer.from(b64, "base64").toString("binary");
@@ -161,8 +161,8 @@ const km = vi.hoisted(() => ({
 
 vi.mock("../../chat/keyManagement.js", () => km);
 
-import { encryptOutgoingMessage } from "../../chat/messageEncryption.js";
-import { decryptIncomingMessage } from "../../chat/messageDecryption.js";
+import { encryptOutgoingMessage } from "@features/chat/utils/chat/messageEncryption";
+import { decryptIncomingMessage } from "@features/chat/utils/chat/messageDecryption";
 
 function snapshot(userId) {
   const d = device(userId);

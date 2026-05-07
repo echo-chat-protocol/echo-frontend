@@ -1,4 +1,4 @@
-import eld from '../../../../../utils/storage/EncryptedLocalDatabase';
+import eld from '@lib/storage/EncryptedLocalDatabase';
 
 // In-memory caches
 const ephemeralCache = new Map();

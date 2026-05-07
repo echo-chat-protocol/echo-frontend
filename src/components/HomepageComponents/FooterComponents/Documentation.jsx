@@ -1,6 +1,6 @@
-import Navbar from '../Navbar'
-import Footer from '../Footer'
-import ParticlesBackground from '../ParticlesBackground'
+import Navbar from '@components/layout/Navbar'
+import Footer from '@components/layout/Footer'
+import ParticlesBackground from '@components/animations/ParticlesBackground'
 
 const Documentation = () => {
   return (

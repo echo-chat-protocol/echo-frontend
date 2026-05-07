@@ -10,9 +10,9 @@ import {
   Search,
   ArrowRight,
 } from 'lucide-react'
-import Navbar from '../components/HomepageComponents/Navbar'
-import Footer from '../components/HomepageComponents/Footer'
-import ParticlesBackground from '../components/HomepageComponents/ParticlesBackground'
+import Navbar from '@components/layout/Navbar'
+import Footer from '@components/layout/Footer'
+import ParticlesBackground from '@components/animations/ParticlesBackground'
 
 const CATEGORIES = [
   {

@@ -158,7 +158,7 @@ vi.mock('../../../../../../utils/storage/EncryptedLocalDatabase', () => ({
 
 // ─── module imports (after mocks) ─────────────────────────────────────────────
 
-const { bytesToBase64 } = await import('../../helpers.js')
+const { bytesToBase64 } = await import('@features/chat/utils/helpers')
 const {
   applyCommit,
   buildAddCommit,

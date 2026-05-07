@@ -89,7 +89,7 @@ vi.mock('../../../../../../utils/storage/EncryptedLocalDatabase', () => ({
   },
 }));
 
-const { bytesToBase64 } = await import('../../helpers');
+const { bytesToBase64 } = await import('@features/chat/utils/helpers');
 const {
   applyCommit,
   buildAddCommit,

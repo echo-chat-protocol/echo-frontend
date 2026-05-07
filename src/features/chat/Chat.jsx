@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef } from "react";
-import SafetyNumberModal from "./SafetyNumberModal";
+import SafetyNumberModal from "@features/chat/components/SafetyNumberModal";
 import { jwtDecode } from "jwt-decode";
-import { getSocket } from "../../../socket";
+import { getSocket } from '@/socket';
 import PropTypes from "prop-types";
-import SendText from "./MessageInput/sendText";
-import DisplayText from "./MessageDisplay/displayText";
+import SendText from "@features/chat/components/sendText";
+import DisplayText from "@features/chat/components/displayText";
 import {
   getWallpaperComponent,
   getWallpaperClasses,
-} from "../DashboardComponents/utils/wallpaper";
+} from "@features/dashboard/utils/wallpaper";
 import {
   base64ToArrayBuffer,
 } from "./utils/helpers";

@@ -1,14 +1,14 @@
-import { base64ToArrayBuffer } from '../helpers'
+import { base64ToArrayBuffer } from '@features/chat/utils/helpers'
 
 import {
   fetchPublicIdentityKeyX25519,
   fetchPublicIdentityKeyEd25519,
   fetchPreKeyBundle,
-} from '../api'
+} from '@features/chat/utils/api'
 
 import init, { verify_signature, diffie_hellman, hkdf_derive } from '@mascaro101/echo-protocol'
 
-import { getIdentityKeys, getOPKPrivateKey, getPeerIdentityKeys } from '../chat/keyManagement'
+import { getIdentityKeys, getOPKPrivateKey, getPeerIdentityKeys } from '@features/chat/utils/chat/keyManagement'
 
 const HKDF_SALT = new Uint8Array()
 const INFO_SK = new TextEncoder().encode('EchoProtocol/v1/X3DH_SK')

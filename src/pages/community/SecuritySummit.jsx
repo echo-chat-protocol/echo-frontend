@@ -2,8 +2,8 @@ import React from 'react'
 import { motion } from 'framer-motion'
 import { Calendar, MapPin, Shield, Lock, User, Clock, CheckCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import Navbar from '../../components/HomepageComponents/Navbar'
-import Footer from '../../components/HomepageComponents/Footer'
+import Navbar from '@components/layout/Navbar'
+import Footer from '@components/layout/Footer'
 
 const SecuritySummit = () => {
   const { t } = useTranslation()

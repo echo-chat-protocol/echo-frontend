@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Play, Copy, Download } from 'lucide-react'
-import Navbar from '../components/HomepageComponents/Navbar'
-import Footer from '../components/HomepageComponents/Footer'
+import Navbar from '@components/layout/Navbar'
+import Footer from '@components/layout/Footer'
 import gsap from 'gsap'
 
 const APIPlayground = () => {

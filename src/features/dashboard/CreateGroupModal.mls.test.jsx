@@ -11,11 +11,11 @@ const getIdentityKeysMock = vi.fn();
 const formatProfileImageMock = vi.fn(() => "profile.png");
 const getSocketMock = vi.fn();
 
-vi.mock("../../../socket", () => ({
+vi.mock('@/socket', () => ({
   getSocket: (...args) => getSocketMock(...args),
 }));
 
-vi.mock("../DashboardComponents/utils/helpers", () => ({
+vi.mock("@features/dashboard/utils/helpers", () => ({
   formatProfileImage: (...args) => formatProfileImageMock(...args),
 }));
 

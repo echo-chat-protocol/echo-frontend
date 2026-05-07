@@ -3,7 +3,7 @@ import init_dh, {
     generate_public_ephemeral_key,
 } from '@mascaro101/echo-protocol';
 
-import { arrayBufferToBase64 } from '../helpers';
+import { arrayBufferToBase64 } from '@features/chat/utils/helpers';
 
 const OPK_BATCH_SIZE = 100;
 

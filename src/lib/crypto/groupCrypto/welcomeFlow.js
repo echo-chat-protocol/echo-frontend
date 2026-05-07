@@ -1,4 +1,4 @@
-import { base64ToBytes, bytesToBase64 } from '../../helpers.js'
+import { base64ToBytes, bytesToBase64 } from '@features/chat/utils/helpers'
 
 // Key schedule Imports
 import { advanceEpoch } from '../keySchedule.js'

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { arrayBufferToBase64 } from "../../helpers.js";
+import { arrayBufferToBase64 } from '@features/chat/utils/helpers';
 
 const decryptMock = vi.hoisted(() =>
     vi.fn(async () => JSON.stringify({ text: "hi", image: null }))
@@ -65,7 +65,7 @@ vi.mock("../../crypto/hkdf", () => ({
 }));
 vi.mock("../../chat/keyManagement", () => km);
 
-import { decryptIncomingMessage } from "../../chat/messageDecryption.js";
+import { decryptIncomingMessage } from "@features/chat/utils/chat/messageDecryption";
 
 beforeEach(() => {
     vi.clearAllMocks();

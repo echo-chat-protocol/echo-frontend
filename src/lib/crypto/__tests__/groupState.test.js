@@ -36,7 +36,7 @@ const {
   DEFAULT_MLS_CIPHER_SUITE,
 } = await import('../groupCrypto/groupState.js');
 
-const { bytesToBase64, base64ToBytes } = await import('../../helpers.js');
+const { bytesToBase64, base64ToBytes } = await import('@features/chat/utils/helpers');
 
 // ── Fixture helpers ───────────────────────────────────────────────────────────
 

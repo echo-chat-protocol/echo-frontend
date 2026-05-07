@@ -4,40 +4,40 @@ import './Dashboard.css'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Search, Plus, Lock, MessageCircle, Menu, ArrowLeft } from 'lucide-react'
-import Friends from './Friends/Friends'
-import Chat from './Chat/Chat'
-import Sidebar from './DashboardComponents/Sidebar/Sidebar'
-import ChatHeader from './DashboardComponents/Header/ChatHeader'
-import GroupHeader from './DashboardComponents/Header/GroupHeader'
-import ConversationList from './DashboardComponents/Conversations/ConversationList'
+import Friends from '@pages/protected/Friends'
+import Chat from '@features/chat/Chat'
+import Sidebar from '@components/layout/Sidebar'
+import ChatHeader from '@components/layout/ChatHeader'
+import GroupHeader from '@components/layout/GroupHeader'
+import ConversationList from '@features/dashboard/ConversationList'
 
-import { useConversations } from './DashboardComponents/hooks/useConversations'
-import { useGroups } from './DashboardComponents/hooks/useGroups'
+import { useConversations } from '@hooks/useConversations'
+import { useGroups } from '@hooks/useGroups'
 
 import {
   getUserData,
   fetchUserProfileFromSocket,
   getCachedUserProfile,
   formatProfileImage,
-} from './DashboardComponents/utils/helpers'
-import { WALLPAPER_PREVIEWS } from './DashboardComponents/utils/wallpaper'
-import { getSocket } from '../../socket'
+} from './utils/helpers'
+import { WALLPAPER_PREVIEWS } from './utils/wallpaper'
+import { getSocket } from '@/socket'
 import IncomingCallNotification from '../VideoCall/IncomingCallNotification'
 import {
   getIdentityKeys,
   getSavedMessages,
   updateSavedMessages,
-} from './Chat/utils/chat/keyManagement'
+} from '@features/chat/utils/chat/keyManagement'
 
-import { decryptIncomingGroupMessage } from './Chat/utils/chat/groupMessageDecryption'
-import { decryptIncomingMessage } from './Chat/utils/chat/messageDecryption'
-import { base64ToArrayBuffer } from './Chat/utils/helpers'
-import { generateOneTimePreKeys } from './Chat/utils/crypto/opk'
-import { createOpkReplenishHandler, requestOpkStatusAndReplenish } from '../../utils/opk/replenish'
-import eld from '../../utils/storage/EncryptedLocalDatabase'
-import GroupList from './DashboardComponents/Groups/GroupList'
-import CreateGroupModal from './Groups/CreateGroupModal'
-import GroupChat from './Chat/GroupChat'
+import { decryptIncomingGroupMessage } from '@features/chat/utils/chat/groupMessageDecryption'
+import { decryptIncomingMessage } from '@features/chat/utils/chat/messageDecryption'
+import { base64ToArrayBuffer } from '../chat/utils/helpers'
+import { generateOneTimePreKeys } from '@lib/crypto/opk'
+import { createOpkReplenishHandler, requestOpkStatusAndReplenish } from '@lib/crypto/replenish'
+import eld from '@lib/storage/EncryptedLocalDatabase'
+import GroupList from '@features/dashboard/GroupList'
+import CreateGroupModal from '@features/dashboard/CreateGroupModal'
+import GroupChat from '@features/chat/GroupChat'
 
 const Dashboard = () => {
   const { t } = useTranslation()

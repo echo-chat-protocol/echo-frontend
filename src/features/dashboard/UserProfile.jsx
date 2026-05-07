@@ -3,9 +3,9 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Lock, Eye, EyeOff, Edit, X, Check, Trash2, Key, Shield, ArrowLeft } from 'lucide-react'
 import { jwtDecode } from 'jwt-decode'
-import { getSocket } from '../../services/socket'
-import Toast from '../common/Toast'
-import ParticlesBackground from '../HomepageComponents/ParticlesBackground.jsx'
+import { getSocket } from '@services/socket'
+import Toast from '@components/common/Toast'
+import ParticlesBackground from '@components/animations/ParticlesBackground'
 
 const UserProfile = () => {
   const { t } = useTranslation()

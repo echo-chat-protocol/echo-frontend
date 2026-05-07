@@ -1,5 +1,5 @@
 import { CheckCircle, AlertTriangle, XCircle, Info } from 'lucide-react'
-import '../styles/Toast.css'
+import '@assets/styles/Toast.css';
 
 function Toast({ message, type = 'success', onClose }) {
   if (!message) return null

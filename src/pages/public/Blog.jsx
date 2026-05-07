@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { useInView } from 'react-intersection-observer'
-import Navbar from './Navbar.jsx'
-import ParticlesBackground from './ParticlesBackground.jsx'
-import Footer from './Footer.jsx'
+import Navbar from '@components/layout/Navbar'
+import ParticlesBackground from '@components/animations/ParticlesBackground'
+import Footer from '@components/layout/Footer'
 
 const BlogPage = () => {
   const [currentPage, setCurrentPage] = useState(1)

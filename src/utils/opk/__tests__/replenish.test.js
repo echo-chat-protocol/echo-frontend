@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { createOpkReplenishHandler, requestOpkStatusAndReplenish } from "../replenish.js";
+import { createOpkReplenishHandler, requestOpkStatusAndReplenish } from "@lib/crypto/replenish";
 
 describe("OPK replenish helper", () => {
   it("does nothing when needed <= 0", async () => {

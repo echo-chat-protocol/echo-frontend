@@ -1,5 +1,5 @@
-import eld from '../../../../../../utils/storage/EncryptedLocalDatabase.js';
-import { bytesToBase64 } from '../../helpers.js';
+import eld from '@lib/storage/EncryptedLocalDatabase';
+import { bytesToBase64 } from '@features/chat/utils/helpers';
 
 // Key schedule Imports
 import { advanceEpoch } from '../keySchedule.js';

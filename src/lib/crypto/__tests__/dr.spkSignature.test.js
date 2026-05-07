@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { webcrypto } from "node:crypto";
 
-import { arrayBufferToBase64 } from "../../helpers.js";
+import { arrayBufferToBase64 } from '@features/chat/utils/helpers';
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 if (!globalThis.atob) globalThis.atob = (b64) => Buffer.from(b64, "base64").toString("binary");
@@ -30,7 +30,7 @@ const km = vi.hoisted(() => ({
   getOPKPrivateKey: vi.fn(async () => null),
 }));
 
-vi.mock("../../api.js", () => api);
+vi.mock('@features/chat/utils/api', () => api);
 vi.mock("../../chat/keyManagement.js", () => km);
 
 vi.mock('@mascaro101/echo-protocol', () => ({

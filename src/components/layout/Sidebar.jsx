@@ -1,7 +1,7 @@
 import { MessageCircle, User, Users, LogOut, PaintbrushVertical } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { WALLPAPER_PREVIEWS } from '../utils/wallpaper.jsx'
+import { WALLPAPER_PREVIEWS } from '@features/dashboard/utils/wallpaper'
 
 // Custom hook para detectar clics fuera del elemento
 const useClickOutside = (ref, callback) => {

@@ -2,8 +2,8 @@
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Check, ArrowRight, Zap, Shield, Building2, ChevronDown } from 'lucide-react'
-import Navbar from '../components/HomepageComponents/Navbar'
-import Footer from '../components/HomepageComponents/Footer'
+import Navbar from '@components/layout/Navbar'
+import Footer from '@components/layout/Footer'
 
 /*  animation helper  */
 const fu = (delay = 0) => ({

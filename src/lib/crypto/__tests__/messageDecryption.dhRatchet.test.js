@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { webcrypto } from 'node:crypto'
-import { arrayBufferToBase64 } from '../../helpers.js'
+import { arrayBufferToBase64 } from '@features/chat/utils/helpers'
 
 if (!globalThis.crypto) {
   globalThis.crypto = webcrypto
@@ -86,7 +86,7 @@ vi.mock('../../crypto/hkdf', () => ({
 }))
 vi.mock('../../chat/keyManagement', () => km)
 
-import { decryptIncomingMessage } from '../../chat/messageDecryption.js'
+import { decryptIncomingMessage } from '@features/chat/utils/chat/messageDecryption'
 
 function b64Dh(byte) {
   return arrayBufferToBase64(new Uint8Array(32).fill(byte))

@@ -1,4 +1,4 @@
-import { base64ToBytes, bytesToBase64 } from '../../helpers.js'
+import { base64ToBytes, bytesToBase64 } from '@features/chat/utils/helpers'
 
 // Protocol Imports
 import init, { generate_public_ephemeral_key } from '@mascaro101/echo-protocol'

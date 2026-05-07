@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { getSocket } from "../../socket";
+import { getSocket } from '@/socket';
 
 const IncomingCallNotification = ({ callData, onClose }) => {
   const navigate = useNavigate();

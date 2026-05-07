@@ -13,9 +13,9 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import { jwtDecode } from "jwt-decode";
-import { getSocket } from "../socket";
+import { getSocket } from '@/socket';
 import Toast from "./Toast";
-import ParticlesBackground from "./HomepageComponents/ParticlesBackground.jsx";
+import ParticlesBackground from "@components/animations/ParticlesBackground";
 
 const UserProfile = () => {
   const location = useLocation();

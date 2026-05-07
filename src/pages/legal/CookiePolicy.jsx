@@ -1,8 +1,8 @@
 ﻿import React, { useEffect } from 'react'
 import { Cookie, Settings, BarChart2, Lock, RefreshCw } from 'lucide-react'
-import Navbar from '../../Navbar'
-import Footer from '../../Footer'
-import PageWrapper from '../../../common/PageWrapper'
+import Navbar from '@components/layout/Navbar'
+import Footer from '@components/layout/Footer'
+import PageWrapper from '@components/common/PageWrapper'
 
 const SectionCard = ({ title, icon: Icon, children }) => (
   <div className='bg-white/5 border border-white/10 rounded-2xl p-8 mb-6'>

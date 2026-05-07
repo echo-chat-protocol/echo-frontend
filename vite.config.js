@@ -25,6 +25,8 @@ export default defineConfig({
       '@utils': path.resolve(__dirname, './src/utils'),
       '@pages': path.resolve(__dirname, './src/pages'),
       '@store': path.resolve(__dirname, './src/store'),
+      '@features': path.resolve(__dirname, './src/features'),
+      '@assets': path.resolve(__dirname, './src/assets'),
       // WASM modules
       'aes-wasm': path.resolve(__dirname, './aes-wasm/pkg/aes_wasm.js'),
       'xeddsa-wasm': path.resolve(__dirname, './xeddsa-wasm/pkg/xeddsa_wasm.js'),

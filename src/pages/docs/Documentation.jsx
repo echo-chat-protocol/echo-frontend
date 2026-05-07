@@ -16,7 +16,7 @@ import {
   Send,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
-import Navbar from '../components/HomepageComponents/Navbar'
+import Navbar from '@components/layout/Navbar'
 
 const ApiPlayground = () => {
   const [method, setMethod] = useState('GET')

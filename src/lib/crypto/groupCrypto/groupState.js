@@ -1,4 +1,4 @@
-import { base64ToBytes } from '../../helpers.js';
+import { base64ToBytes } from '@features/chat/utils/helpers';
 
 // TreeKEM math Imports
 import { nodeWidth } from './treemath.js';

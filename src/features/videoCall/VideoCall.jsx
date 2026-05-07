@@ -2,7 +2,7 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import firebase from 'firebase/compat/app';
 import 'firebase/compat/firestore';
-import { getSocket } from '../../socket';
+import { getSocket } from '@/socket';
 
 // Firebase config
 const firebaseConfig = {

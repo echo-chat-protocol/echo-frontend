@@ -20,7 +20,7 @@ const setPendingOutgoingGroupMessageMock = vi.fn();
 const deletePendingOutgoingGroupMessageMock = vi.fn();
 const getSocketMock = vi.fn();
 
-vi.mock("../../../socket", () => ({
+vi.mock('@/socket', () => ({
   getSocket: (...args) => getSocketMock(...args),
 }));
 

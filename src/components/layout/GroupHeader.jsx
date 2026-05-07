@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Camera, MoreHorizontal, Plus, Search, X } from "lucide-react";
-import { getSocket } from "../../../../socket";
-import { formatProfileImage } from "../utils/helpers";
+import { getSocket } from '@/socket';
+import { formatProfileImage } from "@features/dashboard/utils/helpers";
 
 import {
   loadGroupState,
   saveGroupState,
   buildAddCommit,
   buildRemoveCommit
-} from "../../Chat/utils/crypto/groupCryptoProvider";
+} from "@lib/crypto/groupCryptoProvider";
 
-import { getIdentityKeys } from '../../Chat/utils/chat/keyManagement';
-import { compressImage } from "../../Chat/utils/imageUtils";
+import { getIdentityKeys } from '@features/chat/utils/chat/keyManagement';
+import { compressImage } from '@features/chat/utils/imageUtils';
 
 const MAX_GROUP_PROFILE_IMAGE_BYTES = 140 * 1024;
 const SOCKET_ACK_TIMEOUT_MS = 12000;

@@ -2,10 +2,10 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Buffer } from 'buffer'
 import { User, Lock, ArrowRight } from 'lucide-react'
-import Toast from './common/Toast'
-import './styles/SignIn.css'
+import Toast from '@components/common/Toast'
+import '@assets/styles/SignIn.css'
 
-import eld from '../utils/storage/EncryptedLocalDatabase'
+import eld from '@lib/storage/EncryptedLocalDatabase'
 
 import init, {
   generate_ed25519_private_key,
@@ -21,8 +21,8 @@ import init, {
   compute_signature,
   verify_signature,
 } from '@mascaro101/echo-protocol'
-import { generateOneTimePreKeys } from './Dashboard/Chat/utils/crypto/opk'
-import { connectWithoutAuth } from '../socket'
+import { generateOneTimePreKeys } from '@lib/crypto/opk'
+import { connectWithoutAuth } from '@/socket'
 
 const Register = () => {
   const [username, setUsername] = useState('')

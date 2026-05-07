@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { jwtDecode } from "jwt-decode";
 import PropTypes from "prop-types";
-import eld from "../../utils/storage/EncryptedLocalDatabase";
+import eld from "@lib/storage/EncryptedLocalDatabase";
 
 const passKeyForUser = (userId) => `eld-pass-${userId}`;
 

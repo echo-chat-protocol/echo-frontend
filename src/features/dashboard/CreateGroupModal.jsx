@@ -1,14 +1,14 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { X, Plus, Search } from "lucide-react";
-import { getSocket } from "../../../socket";
-import { formatProfileImage } from "../DashboardComponents/utils/helpers";
+import { getSocket } from '@/socket';
+import { formatProfileImage } from "@features/dashboard/utils/helpers";
 import { getIdentityKeys } from "../Chat/utils/chat/keyManagement";
 
 import {
   createNewGroupState,
   buildInitialWelcomes,
-} from "../Chat/utils/crypto/groupCryptoProvider";
+} from "@lib/crypto/groupCryptoProvider";
 
 const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
   const [name, setName] = useState("");

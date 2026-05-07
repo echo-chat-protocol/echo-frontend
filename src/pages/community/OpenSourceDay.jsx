@@ -13,8 +13,8 @@ import {
   Award,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import Navbar from '../../components/HomepageComponents/Navbar'
-import Footer from '../../components/HomepageComponents/Footer'
+import Navbar from '@components/layout/Navbar'
+import Footer from '@components/layout/Footer'
 
 const projects = [
   {

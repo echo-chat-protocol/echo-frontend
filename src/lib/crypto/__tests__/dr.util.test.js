@@ -31,7 +31,7 @@ const xeddsa = vi.hoisted(() => ({
   verify_signature: vi.fn(async () => true),
 }))
 
-vi.mock('../../api.js', () => api)
+vi.mock('@features/chat/utils/api', () => api)
 vi.mock('../../chat/keyManagement.js', () => km)
 
 vi.mock('@mascaro101/echo-protocol', () => ({

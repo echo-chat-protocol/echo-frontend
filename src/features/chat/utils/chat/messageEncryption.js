@@ -4,9 +4,9 @@ import init_dh, {
   generate_public_ephemeral_key,
 } from '@mascaro101/echo-protocol';
 
-import { buildAadBytes, encryptWithAad } from "../crypto/aes";
-import { initializeDoubleRatchet } from "../crypto/dr";
-import { chain_key_KDF, deriveChainKeys } from "../crypto/hkdf";
+import { buildAadBytes, encryptWithAad } from "@lib/crypto/aes";
+import { initializeDoubleRatchet } from "@lib/crypto/dr";
+import { chain_key_KDF, deriveChainKeys } from "@lib/crypto/hkdf";
 import {
   getRootKey,
   setRootKey,

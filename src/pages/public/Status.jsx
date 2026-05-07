@@ -14,9 +14,9 @@ import {
   Lock,
   Bell,
 } from 'lucide-react'
-import Navbar from '../components/HomepageComponents/Navbar'
-import Footer from '../components/HomepageComponents/Footer'
-import PageWrapper from '../components/common/PageWrapper'
+import Navbar from '@components/layout/Navbar'
+import Footer from '@components/layout/Footer'
+import PageWrapper from '@components/common/PageWrapper'
 
 /* Non-translatable: icon + status id mappings */
 const SERVICE_ICONS = [Server, Globe, Zap, Database, Lock, Bell]

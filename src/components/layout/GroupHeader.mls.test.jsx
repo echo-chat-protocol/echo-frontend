@@ -12,11 +12,11 @@ const buildRemoveCommitMock = vi.fn();
 const getSocketMock = vi.fn();
 const formatProfileImageMock = vi.fn(() => "profile.png");
 
-vi.mock("../../../../socket", () => ({
+vi.mock('@/socket', () => ({
   getSocket: (...args) => getSocketMock(...args),
 }));
 
-vi.mock("../utils/helpers", () => ({
+vi.mock("@features/dashboard/utils/helpers", () => ({
   formatProfileImage: (...args) => formatProfileImageMock(...args),
 }));
 

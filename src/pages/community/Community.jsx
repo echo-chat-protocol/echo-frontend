@@ -17,8 +17,8 @@ import {
 } from 'lucide-react'
 import { FaDiscord, FaXTwitter } from 'react-icons/fa6'
 import { motion } from 'framer-motion'
-import Navbar from '../components/HomepageComponents/Navbar'
-import Footer from '../components/HomepageComponents/Footer'
+import Navbar from '@components/layout/Navbar'
+import Footer from '@components/layout/Footer'
 
 const Community = () => {
   const { t } = useTranslation()

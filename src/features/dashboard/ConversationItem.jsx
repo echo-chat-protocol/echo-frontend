@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getSavedMessages } from "../../Chat/utils/chat/keyManagement";
+import { getSavedMessages } from "@features/chat/utils/chat/keyManagement";
 
 const ConversationItem = ({
   conversation,

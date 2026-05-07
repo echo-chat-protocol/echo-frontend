@@ -2,8 +2,8 @@ import React from 'react'
 import { motion } from 'framer-motion'
 import { Code, Cpu, Globe, Trophy, Zap, Timer, Users, Lock } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import Navbar from '../../components/HomepageComponents/Navbar'
-import Footer from '../../components/HomepageComponents/Footer'
+import Navbar from '@components/layout/Navbar'
+import Footer from '@components/layout/Footer'
 
 const GlobalHackathon = () => {
   const { t } = useTranslation()

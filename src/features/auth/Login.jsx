@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { connectWithoutAuth } from '../socket'
+import { connectWithoutAuth } from '@/socket'
 import { jwtDecode } from 'jwt-decode'
 import { User, Lock, Eye, EyeOff, ArrowRight } from 'lucide-react'
 import init from '@mascaro101/echo-protocol'
-import './styles/SignIn.css'
-import eld from '../utils/storage/EncryptedLocalDatabase'
+import '@assets/styles/SignIn.css'
+import eld from '@lib/storage/EncryptedLocalDatabase'
 
 const Login = () => {
   const [username, setUsername] = useState('')

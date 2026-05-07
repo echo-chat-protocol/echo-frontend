@@ -21,7 +21,7 @@ vi.mock('@mascaro101/echo-protocol', () => ({
 }));
 
 // Mock helpers so no transitive imports break
-vi.mock("../../helpers.js", () => ({
+vi.mock('@features/chat/utils/helpers', () => ({
   arrayBufferToBase64: (buf) => Buffer.from(buf).toString("base64"),
   base64ToArrayBuffer: (b64) => new Uint8Array(Buffer.from(b64, "base64")),
 }));

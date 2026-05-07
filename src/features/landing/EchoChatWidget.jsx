@@ -1,8 +1,8 @@
 ﻿import { useState, useRef, useEffect } from 'react'
 import { X, Send, Minimize2, Maximize2, RotateCcw, ChevronLeft } from 'lucide-react'
 import gsap from 'gsap'
-import Logo from '../HomepageComponents/Logo'
-import './EchoChatWidget.css'
+import Logo from '@components/common/Logo'
+import '@features/chat/components/EchoChatWidget.css'
 
 /* FAQ DECISION TREE */
 const FAQ = {

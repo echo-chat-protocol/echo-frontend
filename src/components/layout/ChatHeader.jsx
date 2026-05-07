@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { getSocket } from "../../../../socket";
+import { getSocket } from '@/socket';
 
 const ChatHeader = ({ userId, activeChat, isHovered, token }) => {
   const navigate = useNavigate()

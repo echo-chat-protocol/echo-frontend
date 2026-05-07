@@ -1,8 +1,8 @@
 import React, { useEffect } from 'react'
 import { Scale, ExternalLink } from 'lucide-react'
-import Navbar from '../../Navbar'
-import Footer from '../../Footer'
-import PageWrapper from '../../../common/PageWrapper'
+import Navbar from '@components/layout/Navbar'
+import Footer from '@components/layout/Footer'
+import PageWrapper from '@components/common/PageWrapper'
 
 const LICENSES = [
   {

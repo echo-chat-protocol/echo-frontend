@@ -1,5 +1,5 @@
 import sodaCan from '/echo-logo.svg'
-import './logo.css'
+import '@assets/styles/logo.css'
 
 const Logo = () => {
   return (

@@ -9,7 +9,7 @@ import init, {
   compute_signature,
   verify_signature,
 } from '@mascaro101/echo-protocol'
-import { bytesToBase64, base64ToBytes } from '../../helpers.js'
+import { bytesToBase64, base64ToBytes } from '@features/chat/utils/helpers'
 
 const TEXT_ENCODER = new TextEncoder()
 

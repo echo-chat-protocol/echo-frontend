@@ -1,5 +1,8 @@
 import init, { encrypt as wasmEncrypt, decrypt as wasmDecrypt, encrypt_aad_bytes, decrypt_aad_bytes } from '@mascaro101/echo-protocol';
-import { base64ToBytes, bytesToBase64 } from '../helpers';
+import {
+  base64ToBytes,
+  bytesToBase64,
+} from '@features/chat/utils/helpers';
 const normalizeAesKey = (key) => {
   if (key instanceof Uint8Array) return key;
   if (key instanceof ArrayBuffer) return new Uint8Array(key);

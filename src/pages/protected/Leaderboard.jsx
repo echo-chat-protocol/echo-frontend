@@ -2,8 +2,8 @@ import React, { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Code, Star, GitPullRequest, Shield, Trophy, ArrowLeft, Search, Filter } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import Navbar from '../components/HomepageComponents/Navbar'
-import Footer from '../components/HomepageComponents/Footer'
+import Navbar from '@components/layout/Navbar'
+import Footer from '@components/layout/Footer'
 
 const ALL_CONTRIBUTORS = [
   {

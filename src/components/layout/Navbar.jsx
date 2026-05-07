@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Menu, X } from 'lucide-react'
 import gsap from 'gsap'
-import Logo from './Logo'
+import Logo from '@components/common/Logo'
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false)

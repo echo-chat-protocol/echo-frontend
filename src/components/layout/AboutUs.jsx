@@ -2,9 +2,9 @@ import React from 'react'
 import { motion } from 'framer-motion'
 import { useInView } from 'react-intersection-observer'
 import { Lock, Cpu, Code, Shield, GitMerge, Key, Server } from 'lucide-react'
-import Navbar from '../Navbar'
-import Footer from '../Footer'
-import PageWrapper from '../../common/PageWrapper'
+import Navbar from '@components/layout/Navbar'
+import Footer from '@components/layout/Footer'
+import PageWrapper from '@components/common/PageWrapper'
 
 const AboutUs = () => {
   const [ref, inView] = useInView({

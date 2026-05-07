@@ -9,9 +9,9 @@ import {
   ExternalLink,
   Download,
 } from 'lucide-react'
-import Navbar from '../components/HomepageComponents/Navbar'
-import Footer from '../components/HomepageComponents/Footer'
-import PageWrapper from '../components/common/PageWrapper'
+import Navbar from '@components/layout/Navbar'
+import Footer from '@components/layout/Footer'
+import PageWrapper from '@components/common/PageWrapper'
 
 const COMING_SOON_ICONS = [
   {

@@ -8,8 +8,8 @@ import {
   deleteOPKPrivateKey,
   storePeerIdentityKeys,
 } from './keyManagement'
-import { initializeDoubleRatchetResponse, continueDoubleRatchetChain } from '../crypto/dr'
-import { buildAadBytes, decryptWithAad } from '../crypto/aes'
+import { initializeDoubleRatchetResponse, continueDoubleRatchetChain } from '@lib/crypto/dr'
+import { buildAadBytes, decryptWithAad } from '@lib/crypto/aes'
 import init_dh, {
   generate_private_ephemeral_key,
   generate_public_ephemeral_key,
@@ -17,7 +17,7 @@ import init_dh, {
   hkdf_derive,
 } from '@mascaro101/echo-protocol'
 
-import { chain_key_KDF, deriveChainKeys } from '../crypto/hkdf'
+import { chain_key_KDF, deriveChainKeys } from '@lib/crypto/hkdf'
 import {
   getRootKey,
   setRootKey,

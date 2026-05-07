@@ -12,7 +12,7 @@ import {
   right,
   root,
   sibling,
-} from '../treemath.js';
+} from '@lib/crypto/groupCrypto/treemath';
 
 describe('treemath level', () => {
   it('computes the number of trailing 1 bits', () => {

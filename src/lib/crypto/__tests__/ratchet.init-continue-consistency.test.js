@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { webcrypto } from 'node:crypto'
 
-import { base64ToArrayBuffer } from '../../helpers.js'
+import { base64ToArrayBuffer } from '@features/chat/utils/helpers'
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto
 
@@ -210,8 +210,8 @@ vi.mock('../../crypto/dr', async () => {
   }
 })
 
-import { encryptOutgoingMessage } from '../../chat/messageEncryption.js'
-import { decryptIncomingMessage } from '../../chat/messageDecryption.js'
+import { encryptOutgoingMessage } from '@features/chat/utils/chat/messageEncryption'
+import { decryptIncomingMessage } from '@features/chat/utils/chat/messageDecryption'
 
 async function send(from, to, text) {
   return asUser(from, () =>

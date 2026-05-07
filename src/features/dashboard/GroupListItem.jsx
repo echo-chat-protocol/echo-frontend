@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { formatProfileImage } from "../utils/helpers";
+import { formatProfileImage } from "./utils/helpers";
 
 const GroupListItem = ({ group, isActive, onSelect, unreadCount = 0 }) => {
   const name = group?.name || "Unnamed group";

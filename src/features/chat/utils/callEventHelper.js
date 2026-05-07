@@ -47,7 +47,7 @@ export const createCallEventMessage = ({
 /**
  * Example usage in VideoCall.jsx:
  *
- * import { createCallEventMessage } from '../Dashboard/Chat/utils/callEventHelper';
+ * import { createCallEventMessage } from '@features/chat/utils/callEventHelper';
  *
  * // When call ends
  * const handleEndCall = () => {
