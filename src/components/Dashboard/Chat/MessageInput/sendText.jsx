@@ -1,161 +1,163 @@
-import { useState, useRef } from 'react';
-import PropTypes from 'prop-types';
-import { Send, X } from 'lucide-react';
-import { compressImage } from '../utils/imageUtils';
+import { useState, useRef } from 'react'
+import PropTypes from 'prop-types'
+import { Send, X } from 'lucide-react'
+import { compressImage } from '../utils/imageUtils'
 
 const SendText = ({ sendMessage, disabled = false, disabledReason = '' }) => {
-  const [text, setText] = useState('');
-  const [selectedImage, setSelectedImage] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
-  const [showImageModal, setShowImageModal] = useState(false);
-  const [imageText, setImageText] = useState('');
-  const fileInputRef = useRef(null);
+  const [text, setText] = useState('')
+  const [selectedImage, setSelectedImage] = useState(null)
+  const [imagePreview, setImagePreview] = useState(null)
+  const [showImageModal, setShowImageModal] = useState(false)
+  const [imageText, setImageText] = useState('')
+  const fileInputRef = useRef(null)
 
   const handleChange = (event) => {
-    setText(event.target.value);
-  };
+    setText(event.target.value)
+  }
 
   const handleSubmit = async (event) => {
-    event.preventDefault();
-    if (disabled) return;
-    const next = text.trim();
-    if (!next) return;
+    event.preventDefault()
+    if (disabled) return
+    const next = text.trim()
+    if (!next) return
     try {
-      await Promise.resolve(sendMessage(next));
-      setText('');
+      await Promise.resolve(sendMessage(next))
+      setText('')
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[SendText] Failed to send message:', err);
+      console.error('[SendText] Failed to send message:', err)
     }
-  };
+  }
 
   // Trigger hidden file input when image icon clicked
   const handleImageClick = () => {
-    if (disabled) return;
-    fileInputRef.current?.click();
-  };
+    if (disabled) return
+    fileInputRef.current?.click()
+  }
 
   // Read selected file and show preview modal
   const handleImageChange = (event) => {
-    const file = event.target.files?.[0];
+    const file = event.target.files?.[0]
     if (file) {
-      setSelectedImage(file);
-      const reader = new FileReader();
+      setSelectedImage(file)
+      const reader = new FileReader()
       reader.onload = (e) => {
-        setImagePreview(e.target.result);
-        setShowImageModal(true);
-      };
-      reader.readAsDataURL(file);
+        setImagePreview(e.target.result)
+        setShowImageModal(true)
+      }
+      reader.readAsDataURL(file)
     }
-  };
+  }
 
   // Send image with optional text
   const handleImageSend = async () => {
-    if (disabled) return;
+    if (disabled) return
     if (selectedImage) {
       // Compress the image
-      const compressedBlob = await compressImage(selectedImage);
+      const compressedBlob = await compressImage(selectedImage)
 
       // Convert to base64 for storage
-      const reader = new FileReader();
+      const reader = new FileReader()
       reader.onload = () => {
-        const base64Image = reader.result;
+        const base64Image = reader.result
         Promise.resolve(sendMessage(imageText, base64Image)).catch((err) => {
-          // eslint-disable-next-line no-console
-          console.error('[SendText] Failed to send image:', err);
-        });
+          console.error('[SendText] Failed to send image:', err)
+        })
 
         // Reset state
-        setShowImageModal(false);
-        setSelectedImage(null);
-        setImagePreview(null);
-        setImageText('');
-      };
-      reader.readAsDataURL(compressedBlob);
+        setShowImageModal(false)
+        setSelectedImage(null)
+        setImagePreview(null)
+        setImageText('')
+      }
+      reader.readAsDataURL(compressedBlob)
     }
-  };
+  }
 
   const handleCloseModal = () => {
-    setShowImageModal(false);
-    setSelectedImage(null);
-    setImagePreview(null);
-    setImageText('');
-  };
+    setShowImageModal(false)
+    setSelectedImage(null)
+    setImagePreview(null)
+    setImageText('')
+  }
 
   return (
     <form
-
-
       onSubmit={handleSubmit}
-      className="flex items-center p-3 bg-black border-t border-gray-800"
+      className='flex items-center p-3 bg-black border-t border-gray-800'
     >
-      <div className="flex-1 flex items-center bg-white/10 rounded-full border border-gray-700 focus-within:ring-2 focus-within:ring-[#8e79f2]">
+      <div className='flex-1 flex items-center bg-white/10 rounded-full border border-gray-700 focus-within:ring-2 focus-within:ring-[#8e79f2]'>
         <button
-          type="button"
+          type='button'
           onClick={handleImageClick}
           disabled={disabled}
-          className="pl-4 pr-2 py-3 text-gray-400 hover:text-white"
-          title={disabled ? (disabledReason || 'Sending is disabled') : 'Attach image'}
+          className='pl-4 pr-2 py-3 text-gray-400 hover:text-white'
+          title={disabled ? disabledReason || 'Sending is disabled' : 'Attach image'}
         >
-          <i className="fa-solid fa-image text-lg"></i>
+          <i className='fa-solid fa-image text-lg'></i>
         </button>
         <input
-          type="file"
+          type='file'
           ref={fileInputRef}
           onChange={handleImageChange}
-          accept="image/*"
-          className="hidden"
+          accept='image/*'
+          className='hidden'
         />
         {showImageModal && (
-          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-            <div className="bg-gray-900 rounded-lg p-4 max-w-md w-full mx-4">
-              <button onClick={handleCloseModal} className="float-right text-gray-400 hover:text-white">
-                <X className="w-5 h-5" />
+          <div className='fixed inset-0 bg-black/70 flex items-center justify-center z-50'>
+            <div className='bg-gray-900 rounded-lg p-4 max-w-md w-full mx-4'>
+              <button
+                onClick={handleCloseModal}
+                className='float-right text-gray-400 hover:text-white'
+              >
+                <X className='w-5 h-5' />
               </button>
 
-              <img src={imagePreview} alt="Preview" className="max-h-64 mx-auto rounded-lg mb-4" />
+              <img src={imagePreview} alt='Preview' className='max-h-64 mx-auto rounded-lg mb-4' />
 
               <input
-                type="text"
+                type='text'
                 value={imageText}
                 onChange={(e) => setImageText(e.target.value)}
-                placeholder="Add a caption..."
-                className="w-full p-3 bg-gray-800 text-white rounded-lg mb-4"
+                placeholder='Add a caption...'
+                className='w-full p-3 bg-gray-800 text-white rounded-lg mb-4'
               />
 
-              <button onClick={handleImageSend} className="w-full p-3 bg-indigo-700 text-white rounded-lg">
+              <button
+                onClick={handleImageSend}
+                className='w-full p-3 bg-indigo-700 text-white rounded-lg'
+              >
                 Send Image
               </button>
             </div>
           </div>
         )}
         <input
-          data-testid="chat-input"
-          type="text"
+          data-testid='chat-input'
+          type='text'
           value={text}
           onChange={handleChange}
-          placeholder={disabled ? (disabledReason || 'Sending is disabled') : 'Type a message...'}
+          placeholder={disabled ? disabledReason || 'Sending is disabled' : 'Type a message...'}
           disabled={disabled}
-          className="flex-1 py-3 px-5 bg-white/10 text-white rounded-full focus:outline-none focus:ring-2 focus:ring-[#8e79f2] placeholder-gray-400 border border-gray-700"
+          className='flex-1 py-3 px-5 bg-white/10 text-white rounded-full focus:outline-none focus:ring-2 focus:ring-[#8e79f2] placeholder-gray-400 border border-gray-700'
         />
       </div>
       <button
-        data-testid="chat-send"
-        type="submit"
+        data-testid='chat-send'
+        type='submit'
         disabled={disabled || !text.trim()}
-        className={`ml-3 p-3 rounded-full ${(!disabled && text.trim()) ? 'bg-indigo-700 text-white hover:bg-[#8e79f2]' : 'bg-gray-700 text-gray-500 cursor-not-allowed'} transition-colors`}
-        title={disabled ? (disabledReason || 'Sending is disabled') : 'Send'}
+        className={`ml-3 p-3 rounded-full ${!disabled && text.trim() ? 'bg-indigo-700 text-white hover:bg-[#8e79f2]' : 'bg-gray-700 text-gray-500 cursor-not-allowed'} transition-colors`}
+        title={disabled ? disabledReason || 'Sending is disabled' : 'Send'}
       >
-        <Send className="w-5 h-5" />
+        <Send className='w-5 h-5' />
       </button>
     </form>
-  );
-};
+  )
+}
 
 SendText.propTypes = {
   sendMessage: PropTypes.func.isRequired,
   disabled: PropTypes.bool,
   disabledReason: PropTypes.string,
-};
+}
 
-export default SendText;
+export default SendText
