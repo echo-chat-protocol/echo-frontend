@@ -1,45 +1,49 @@
 import { CheckCircle, AlertTriangle, XCircle, Info } from 'lucide-react'
-import '../styles/Toast.css'
+
+const TOAST_STYLES = {
+  base: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.75rem',
+    padding: '0.9rem 1.2rem',
+    borderRadius: '12px',
+    backdropFilter: 'blur(14px)',
+    border: '1px solid rgba(168,85,247,0.2)',
+    background: 'rgba(10,10,14,0.85)',
+    color: '#f5f5f5',
+    boxShadow: '0 8px 30px -8px rgba(0,0,0,0.6)',
+    minWidth: '260px',
+    maxWidth: '400px',
+    position: 'relative',
+  },
+  icon: { flexShrink: 0, width: 20, height: 20 },
+  content: { display: 'flex', flexDirection: 'column', flex: 1, gap: '2px', fontSize: '0.875rem' },
+  title: { fontWeight: 600, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em' },
+  close: {
+    background: 'none', border: 'none', cursor: 'pointer',
+    color: '#a0a0a0', fontSize: '1.2rem', lineHeight: 1, padding: '0 4px',
+  },
+}
 
 function Toast({ message, type = 'success', onClose }) {
   if (!message) return null
 
-  let icon, title
-  switch (type) {
-    case 'success':
-      icon = <CheckCircle className='user-profile-toast-icon' color='#1a7f37' />
-      title = 'Success'
-      break
-    case 'warning':
-      icon = <AlertTriangle className='user-profile-toast-icon' color='#b68400' />
-      title = 'Warning'
-      break
-    case 'error':
-      icon = <XCircle className='user-profile-toast-icon' color='#c00' />
-      title = 'Error'
-      break
-    case 'info':
-    default:
-      icon = <Info className='user-profile-toast-icon' color='#2563eb' />
-      title = 'Info'
+  const config = {
+    success: { icon: <CheckCircle style={TOAST_STYLES.icon} color='#22c55e' />, title: 'Success' },
+    warning: { icon: <AlertTriangle style={TOAST_STYLES.icon} color='#f59e0b' />, title: 'Warning' },
+    error:   { icon: <XCircle style={TOAST_STYLES.icon} color='#ef4444' />, title: 'Error' },
+    info:    { icon: <Info style={TOAST_STYLES.icon} color='#60a5fa' />, title: 'Info' },
   }
+  const { icon, title } = config[type] ?? config.info
 
   return (
-    <div
-      className={`user-profile-toast user-profile-toast-${type}`}
-      role='alert'
-      aria-live='assertive'
-    >
+    <div style={TOAST_STYLES.base} role='alert' aria-live='assertive'>
       {icon}
-      <div className='user-profile-toast-content'>
-        <span className='user-profile-toast-title'>{title}</span>
+      <div style={TOAST_STYLES.content}>
+        <span style={TOAST_STYLES.title}>{title}</span>
         <span>{message}</span>
       </div>
-      <button
-        className='user-profile-toast-close'
-        onClick={onClose}
-        aria-label='Close notification'
-      >
+      <button style={TOAST_STYLES.close} onClick={onClose} aria-label='Close notification'>
         ×
       </button>
     </div>
