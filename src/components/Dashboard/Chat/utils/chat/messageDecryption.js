@@ -101,6 +101,7 @@ export const decryptIncomingMessage = async (
 
     let root_key = await getRootKey(userId, targetUserId)
     let messageKey = null
+    let derivedNonce = null
 
     const MAX_SKIP = 2000
 
@@ -126,9 +127,11 @@ export const decryptIncomingMessage = async (
       const mkEntry = skipped?.[dh]?.[n]
       // Support both new { k, ts } format and legacy plain-string format.
       const mkB64 = typeof mkEntry === 'object' && mkEntry !== null ? mkEntry.k : mkEntry
+      const nonceB64 = typeof mkEntry === 'object' && mkEntry !== null ? mkEntry.iv : null
       if (mkB64) {
         usedSkippedKey = true
         messageKey = base64ToArrayBuffer(mkB64)
+        if (nonceB64) derivedNonce = base64ToArrayBuffer(nonceB64)
 
         // Only consume skipped keys after successful decrypt.
         postDecryptActions.push(async () => {
@@ -191,13 +194,20 @@ export const decryptIncomingMessage = async (
       for (let i = 0; i < n; i++) {
         const material = chain_key_KDF(ckr)
         const mk_i = material.slice(0, 32)
-        ckr = material.slice(32)
-        if (dh) skipped[dh][i] = { k: arrayBufferToBase64(mk_i), ts: Date.now() }
+        ckr = material.slice(32, 64)
+        const nonce_i = material.slice(64, 76)
+        if (dh)
+          skipped[dh][i] = {
+            k: arrayBufferToBase64(mk_i),
+            iv: arrayBufferToBase64(nonce_i),
+            ts: Date.now(),
+          }
       }
 
       const materialN = chain_key_KDF(ckr)
       messageKey = materialN.slice(0, 32)
-      const nextReceivingChainKey = materialN.slice(32)
+      const nextReceivingChainKey = materialN.slice(32, 64)
+      derivedNonce = materialN.slice(64, 76)
 
       postDecryptActions.push(() =>
         setReceivingChainKey(userId, targetUserId, nextReceivingChainKey)
@@ -275,9 +285,13 @@ export const decryptIncomingMessage = async (
         for (let i = Nr; i < pn; i++) {
           const material = chain_key_KDF(oldCkr)
           const mk_i = material.slice(0, 32)
-          oldCkr = material.slice(32)
-
-          skipped[oldDh][i] = { k: arrayBufferToBase64(mk_i), ts: Date.now() }
+          oldCkr = material.slice(32, 64)
+          const nonce_i = material.slice(64, 76)
+          skipped[oldDh][i] = {
+            k: arrayBufferToBase64(mk_i),
+            iv: arrayBufferToBase64(nonce_i),
+            ts: Date.now(),
+          }
         }
       } else if (pn !== 0) {
         // We don't know the previous DH/chain, so we can't derive skipped keys for pn>0 safely.
@@ -315,14 +329,19 @@ export const decryptIncomingMessage = async (
       for (let i = 0; i < n; i++) {
         const material = chain_key_KDF(newCkr)
         const mk_i = material.slice(0, 32)
-        newCkr = material.slice(32)
-
-        skipped[newDh][i] = { k: arrayBufferToBase64(mk_i), ts: Date.now() }
+        newCkr = material.slice(32, 64)
+        const nonce_i = material.slice(64, 76)
+        skipped[newDh][i] = {
+          k: arrayBufferToBase64(mk_i),
+          iv: arrayBufferToBase64(nonce_i),
+          ts: Date.now(),
+        }
       }
 
       const materialN = chain_key_KDF(newCkr)
       messageKey = materialN.slice(0, 32)
-      const nextReceivingChainKey = materialN.slice(32)
+      const nextReceivingChainKey = materialN.slice(32, 64)
+      derivedNonce = materialN.slice(64, 76)
 
       postDecryptActions.push(() =>
         setReceivingChainKey(userId, targetUserId, nextReceivingChainKey)
@@ -416,15 +435,21 @@ export const decryptIncomingMessage = async (
         for (let i = Nr; i < n; i++) {
           const material = chain_key_KDF(receivingChainKey)
           const mk_i = material.slice(0, 32)
-          receivingChainKey = material.slice(32) // advance chain
-
-          if (skippedBucket) skippedBucket[i] = { k: arrayBufferToBase64(mk_i), ts: Date.now() }
+          receivingChainKey = material.slice(32, 64) // advance chain
+          const nonce_i = material.slice(64, 76)
+          if (skippedBucket)
+            skippedBucket[i] = {
+              k: arrayBufferToBase64(mk_i),
+              iv: arrayBufferToBase64(nonce_i),
+              ts: Date.now(),
+            }
         }
 
         // 3) Derive key for n
         const materialN = chain_key_KDF(receivingChainKey)
         messageKey = materialN.slice(0, 32)
-        const nextChainKey = materialN.slice(32)
+        const nextChainKey = materialN.slice(32, 64)
+        derivedNonce = materialN.slice(64, 76)
 
         postDecryptActions.push(() => setReceivingChainKey(userId, targetUserId, nextChainKey))
         postDecryptActions.push(() => setCurrentReceivingNumber(targetUserId, n + 1))
@@ -453,7 +478,12 @@ export const decryptIncomingMessage = async (
       opkId: message.opkId,
     })
 
-    const decryptedPayloadStr = await decryptWithAad(message.payload, messageKey, nonce, aadBytes)
+    const decryptedPayloadStr = await decryptWithAad(
+      message.payload,
+      messageKey,
+      derivedNonce,
+      aadBytes
+    )
     const decryptedPayload = JSON.parse(decryptedPayloadStr)
     const decryptedMessage = {
       ...message,

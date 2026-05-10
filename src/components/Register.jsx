@@ -8,10 +8,8 @@ import './styles/SignIn.css'
 import eld from '../utils/storage/EncryptedLocalDatabase'
 
 import init, {
-  generate_ed25519_private_key,
   generate_public_prekey,
   generate_private_prekey,
-  derive_x25519_from_ed25519_private,
   convert_x25519_to_xeddsa,
   compute_determenistic_nonce,
   compute_nonce_point,
@@ -75,13 +73,12 @@ const Register = () => {
       const randomBytes_IK = crypto.getRandomValues(new Uint8Array(32))
       const randomBytes_SPK = crypto.getRandomValues(new Uint8Array(32))
 
-      const privateKey = generate_ed25519_private_key(randomBytes_IK)
+      const x25519_private_key = generate_private_prekey(randomBytes_IK)
+      const x25519_public_key = generate_public_prekey(x25519_private_key)
 
+      const spkId = crypto.randomUUID()
       const privatePreKey = generate_private_prekey(randomBytes_SPK)
       const publicPreKey = generate_public_prekey(privatePreKey)
-
-      const x25519_key_pair = derive_x25519_from_ed25519_private(privateKey)
-      const { x25519_private_key, x25519_public_key } = x25519_key_pair
 
       // XEdDSA expects an X25519 private key (not the Ed25519 seed).
       const xeddsaKey = convert_x25519_to_xeddsa(x25519_private_key)
@@ -119,7 +116,6 @@ const Register = () => {
       }
 
       const privatePreKeyBase64 = arrayBufferToBase64(privatePreKey)
-      const ed25519PrivateKeyBase64 = arrayBufferToBase64(privateKey)
       const x25519PrivateKeyBase64 = arrayBufferToBase64(x25519_private_key)
       const x25519PublicKeyBase64 = arrayBufferToBase64(x25519_public_key)
 
@@ -128,6 +124,7 @@ const Register = () => {
         publicIdentityKeyEd25519: publicKeyStringED25519,
         publicSignedPreKey: [publicPreKeyString, signatureString],
         oneTimePreKeys: opkPublicBundle,
+        spkId,
       }
 
       const socket = connectWithoutAuth()
@@ -142,11 +139,12 @@ const Register = () => {
 
               // Store all keys encrypted
               await eld.storeIdentityKeys({
-                privateKeyEd25519: ed25519PrivateKeyBase64,
                 privateKeyX25519: x25519PrivateKeyBase64,
                 publicKeyX25519: x25519PublicKeyBase64,
                 publicKeyEd25519: publicKeyStringED25519,
                 privatePreKey: privatePreKeyBase64,
+                spkId,
+                spkCreatedAt: new Date().toISOString(),
               })
 
               await eld.storeOPKs(opkPrivateKeys)

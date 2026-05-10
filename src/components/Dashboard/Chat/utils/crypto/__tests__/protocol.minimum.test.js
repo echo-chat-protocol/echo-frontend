@@ -60,7 +60,8 @@ const chainKdfMock = vi.hoisted(() =>
     const b = new Uint8Array(ck)[0]
     const mk = new Uint8Array(32).fill(b)
     const next = new Uint8Array(32).fill((b + 1) & 0xff)
-    return new Uint8Array([...mk, ...next])
+    const nonce = new Uint8Array(12).fill((b + 2) & 0xff)
+    return new Uint8Array([...mk, ...next, ...nonce])
   })
 )
 

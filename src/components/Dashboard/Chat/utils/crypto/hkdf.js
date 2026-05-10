@@ -18,5 +18,5 @@ export const deriveChainKeys = (rootKey, userId, targetUserid) => {
 }
 
 export const chain_key_KDF = (chainKey) => {
-  return hkdf_derive(chainKey, CHAIN_SALT, CHAIN_INFO, 64)
+  return hkdf_derive(chainKey, CHAIN_SALT, CHAIN_INFO, 76)
 }
