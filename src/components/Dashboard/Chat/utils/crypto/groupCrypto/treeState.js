@@ -19,6 +19,7 @@ export function normalizeRoster(roster) {
         typeof member?.leafSigningPubKeyB64 === 'string' && member.leafSigningPubKeyB64.length > 0
           ? member.leafSigningPubKeyB64
           : null,
+      credential: member?.credential ?? null,
     }))
     .filter((member) => member.userId.length > 0)
     .sort((a, b) => a.leafIndex - b.leafIndex)

@@ -79,13 +79,25 @@ export function encodeCommitForSigning(commit) {
     )
   )
 
+  // Proposal refs: commits reference the proposals they bundle.
+  const proposalRefsStr = (commit.proposalRefs ?? []).join(';')
+  const proposalRefsBytes = encodeLengthPrefixed(TEXT_ENCODER.encode(proposalRefsStr))
+
   const message = new Uint8Array(
-    header.length + rosterBytes.length + pathBytes.length + treeBytes.length
+    header.length +
+      rosterBytes.length +
+      pathBytes.length +
+      treeBytes.length +
+      proposalRefsBytes.length
   )
   message.set(header, 0)
   message.set(rosterBytes, header.length)
   message.set(pathBytes, header.length + rosterBytes.length)
   message.set(treeBytes, header.length + rosterBytes.length + pathBytes.length)
+  message.set(
+    proposalRefsBytes,
+    header.length + rosterBytes.length + pathBytes.length + treeBytes.length
+  )
 
   return message
 }
@@ -218,4 +230,30 @@ export async function verifyWelcome(welcome, senderSigningPubKeyB64) {
 
   const valid = verify_signature(sigBytes, message, pubKey)
   if (!valid) throw new Error('Welcome signature invalid')
+}
+
+// Low-level: sign arbitrary bytes with the XEdDSA key.
+// Used by credential.js, keyPackage.js, and proposals.js.
+export async function signBytes(message, leafSigningPrivKeyB64) {
+  await init()
+  const privKey = base64ToBytes(leafSigningPrivKeyB64)
+  const xeddsaKey = convert_x25519_to_xeddsa(privKey)
+  const edPrivScaler = xeddsaKey.slice(0, 32)
+  const prefix = xeddsaKey.slice(32, 64)
+  const pubEdKey = derive_ed25519_keypair_from_x25519(privKey)
+  const nonce = compute_determenistic_nonce(prefix, message)
+  const noncePoint = compute_nonce_point(nonce)
+  const challenge = compute_challenge_hash(noncePoint, pubEdKey, message)
+  const sigScaler = compute_signature_scaler(nonce, challenge, edPrivScaler)
+  const signature = compute_signature(noncePoint, sigScaler)
+  return bytesToBase64(signature)
+}
+
+// Low-level: verify arbitrary bytes against an XEdDSA public key.
+export async function verifyBytes(message, signatureB64, pubKeyB64) {
+  await init()
+  const pubKey = base64ToBytes(pubKeyB64)
+  const sigBytes = base64ToBytes(signatureB64)
+  const valid = verify_signature(sigBytes, message, pubKey)
+  if (!valid) throw new Error('Signature invalid')
 }

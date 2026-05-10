@@ -11,16 +11,15 @@ import {
   normalizeRoster,
   publicTreeSnapshot,
 } from './treeState.js'
-
 import { generateLeafSigningKeypair, signWelcome, verifyWelcome } from './commitSigning.js'
+import { issueCredential, verifyRosterCredentials } from './credential.js'
+import { computeTreeHash, genesisTranscriptHash } from './groupContext.js'
 
-// Build initial welcome message recieved by each member when they are added to a group
+// Builds the initial welcome sent to each non-creator member when a group is created.
 export async function buildInitialWelcomes({ creatorState, roster, memberInitKeys }) {
-  // Validate inputs and load state
   const state = normalizeGroupState(creatorState)
-  // Use state.roster as the authoritative source since it carries leafSigningPubKeyB64.
-  // Merge with the passed-in roster so any extra members are included, but signing keys
-  // from the state always take precedence.
+
+  // Merge passed-in roster with state roster; state's signing keys take precedence.
   const passedRoster = normalizeRoster(roster)
   const normalizedRoster = passedRoster.map((m) => {
     const inState = state.roster.find((s) => String(s.userId) === String(m.userId))
@@ -28,24 +27,20 @@ export async function buildInitialWelcomes({ creatorState, roster, memberInitKey
       ? {
           ...m,
           leafSigningPubKeyB64: inState.leafSigningPubKeyB64 ?? m.leafSigningPubKeyB64 ?? null,
+          credential: inState.credential ?? m.credential ?? null,
         }
       : m
   })
+
   const initSecretB64 = state.secrets.epochInitSecretB64
   const commitSecretB64 = state.secrets.epochCommitSecretB64
-
-  // these secrets are required to build the welcome messages
   if (!initSecretB64 || !commitSecretB64) {
     throw new Error(`Creator state is missing epoch seed secrets for group ${state.groupId}`)
   }
 
-  // builds commit AAD
   const aadBytes = makeCommitAadBytes(state.groupId, state.epoch)
-
-  // collect current treePublicNodes
   const treePublicNodes = publicTreeSnapshot(state.tree.nodes)
 
-  const welcomes = []
   const senderRosterEntry = normalizedRoster.find(
     (member) => String(member.userId) === String(state.selfUserId)
   )
@@ -60,9 +55,7 @@ export async function buildInitialWelcomes({ creatorState, roster, memberInitKey
     )
   }
 
-  // for each memvber (except creator) find that members initKeyB64 from memberInitKeys
-  // encryps init secret for that member via wrapGroupKey
-  // creates welcome message object with group metadata, roster, recipients info, encrypted secrets tree pk's
+  const welcomes = []
   for (const member of normalizedRoster) {
     if (String(member.userId) === String(state.selfUserId)) continue
 
@@ -78,7 +71,6 @@ export async function buildInitialWelcomes({ creatorState, roster, memberInitKey
     const wrappedInitSecret = await wrapGroupKey(initSecretB64, initKeyB64, aadBytes)
     const wrappedCommitSecret = await wrapGroupKey(commitSecretB64, initKeyB64, aadBytes)
 
-    // returns welcome array with one welcome per member
     const welcome = {
       groupId: state.groupId,
       epoch: state.epoch,
@@ -92,6 +84,7 @@ export async function buildInitialWelcomes({ creatorState, roster, memberInitKey
       wrappedInitSecret,
       wrappedCommitSecret,
       treePublicNodes,
+      confirmedTranscriptHashB64: state.confirmedTranscriptHashB64 ?? null,
     }
     welcome.signature = await signWelcome(welcome, state.leafSigningPrivKeyB64)
     welcomes.push(welcome)
@@ -100,9 +93,8 @@ export async function buildInitialWelcomes({ creatorState, roster, memberInitKey
   return welcomes
 }
 
-// Takes in the welcome packet and turns it into a users local group state
+// Takes in a welcome packet and builds the recipient's local group state.
 export async function processWelcome({ welcome, selfUserId = null, myInitPrivKeyB64 }) {
-  // validates the welcome fields
   if (!welcome || typeof welcome !== 'object') throw new Error('Invalid welcome')
   if (typeof welcome.groupId !== 'string' || welcome.groupId.length === 0) {
     throw new Error('Welcome is missing groupId')
@@ -130,6 +122,7 @@ export async function processWelcome({ welcome, selfUserId = null, myInitPrivKey
   }
 
   const normalizedRoster = normalizeRoster(welcome.roster)
+
   const senderEntry = normalizedRoster.find(
     (member) => member.leafIndex === welcome.senderLeafIndex
   )
@@ -141,51 +134,74 @@ export async function processWelcome({ welcome, selfUserId = null, myInitPrivKey
   }
   await verifyWelcome(welcome, senderEntry.leafSigningPubKeyB64)
 
-  // builds AAD for unwrapping secrets
+  // Verify all credentials in the roster before trusting any roster material.
+  await verifyRosterCredentials(normalizedRoster)
+
   const aadBytes = makeCommitAadBytes(welcome.groupId, welcome.epoch)
 
-  // decrypt the init and commit secrets from the welcome using the recipients init private key
   const initSecret = await unwrapGroupKey(welcome.wrappedInitSecret, myInitPrivKeyB64, aadBytes)
   const commitSecret = await unwrapGroupKey(welcome.wrappedCommitSecret, myInitPrivKeyB64, aadBytes)
 
-  // advance epoch using the decrypted secrets to derive the application secret for this user
+  // Reconstruct the tree hash and confirmed transcript hash to feed into the key schedule.
+  const treeNodes = makeTreeFromPublicNodes(welcome.treePublicNodes)
+  installOwnLeafPrivateKey(treeNodes, welcome.recipientLeafIndex, myInitPrivKeyB64)
+
+  const treePublicNodes = Array.isArray(welcome.treePublicNodes)
+    ? welcome.treePublicNodes
+    : publicTreeSnapshot(treeNodes)
+  const treeHash = await computeTreeHash(treePublicNodes)
+
+  const confirmedTranscriptHash = welcome.confirmedTranscriptHashB64
+    ? base64ToBytes(welcome.confirmedTranscriptHashB64)
+    : await genesisTranscriptHash(welcome.groupId)
+
+  const cipherSuite =
+    typeof welcome.cipherSuite === 'string' && welcome.cipherSuite.length > 0
+      ? welcome.cipherSuite
+      : DEFAULT_MLS_CIPHER_SUITE
+
   const { applicationSecret, nextInitSecret } = await advanceEpoch({
     initSecret: base64ToBytes(initSecret),
     commitSecret: base64ToBytes(commitSecret),
     groupId: welcome.groupId,
     epoch: welcome.epoch,
+    cipherSuite,
+    treeHash,
+    confirmedTranscriptHash,
   })
 
-  // Rebuild tree from welcome treePublicNodes and install the recipients init private key
-  const treeNodes = makeTreeFromPublicNodes(welcome.treePublicNodes)
-  installOwnLeafPrivateKey(treeNodes, welcome.recipientLeafIndex, myInitPrivKeyB64)
-
-  // Generate leaf signing keypair for this member, this will be used for signing and verifying commits
+  // Generate a fresh leaf signing keypair and self-signed credential for this member.
+  const effectiveSelfUserId = selfUserId ?? welcome.recipientUserId
   const { leafSigningPrivKeyB64, leafSigningPubKeyB64 } = await generateLeafSigningKeypair()
+  const credential = await issueCredential(
+    effectiveSelfUserId,
+    leafSigningPrivKeyB64,
+    leafSigningPubKeyB64
+  )
+
   const rosterWithSigningKey = normalizedRoster.map((m) =>
-    String(m.userId) === String(selfUserId ?? welcome.recipientUserId)
-      ? { ...m, leafSigningPubKeyB64 }
+    String(m.userId) === String(effectiveSelfUserId)
+      ? { ...m, leafSigningPubKeyB64, credential }
       : m
   )
 
-  // return a normalized group state with epoch, roster, tree and derived secrets
   return normalizeGroupState({
     stateVersion: MLS_STATE_VERSION,
     groupId: welcome.groupId,
     epoch: Number.isInteger(welcome.epoch) ? welcome.epoch : 0,
-    cipherSuite:
-      typeof welcome.cipherSuite === 'string' && welcome.cipherSuite.length > 0
-        ? welcome.cipherSuite
-        : DEFAULT_MLS_CIPHER_SUITE,
-    selfUserId: selfUserId ?? welcome.recipientUserId ?? null,
+    cipherSuite,
+    selfUserId: effectiveSelfUserId,
     selfLeafIndex: welcome.recipientLeafIndex,
     applicationSecretB64: bytesToBase64(applicationSecret),
     initSecretB64: bytesToBase64(nextInitSecret),
+    confirmedTranscriptHashB64: welcome.confirmedTranscriptHashB64 ?? null,
+    treeHashB64: bytesToBase64(treeHash),
     senderGenerations: {},
     roster: rosterWithSigningKey,
     tree: { nodes: treeNodes },
     secrets: { initSecretB64: bytesToBase64(nextInitSecret) },
     pendingCommits: [],
+    pendingProposals: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
     leafSigningPrivKeyB64,

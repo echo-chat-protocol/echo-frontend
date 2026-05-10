@@ -106,6 +106,10 @@ vi.mock('../keySchedule.js', () => ({
   ratchetAppSecret: vi.fn(async (applicationSecret, senderLeafIndex, generation) =>
     deriveBytes(32, applicationSecret, encodeText(`secret|${senderLeafIndex}|${generation}`))
   ),
+  computeConfirmationTag: vi.fn(async (epochSecret, thBytes) =>
+    deriveBytes(32, epochSecret, thBytes, encodeText('confirm'))
+  ),
+  verifyConfirmationTag: vi.fn(async () => {}),
 }))
 
 vi.mock('../../../../../../utils/storage/EncryptedLocalDatabase', () => ({

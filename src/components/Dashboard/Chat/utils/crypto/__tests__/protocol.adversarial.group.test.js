@@ -140,6 +140,10 @@ vi.mock('../keySchedule.js', () => ({
   ratchetAppSecret: vi.fn(async (appSec, leaf, gen) =>
     deriveBytes(32, appSec, encodeText(`secret|${leaf}|${gen}`))
   ),
+  computeConfirmationTag: vi.fn(async (epochSecret, thBytes) =>
+    deriveBytes(32, epochSecret, thBytes, encodeText('confirm'))
+  ),
+  verifyConfirmationTag: vi.fn(async () => {}),
 }))
 
 // ─── EncryptedLocalDatabase mock (in-memory) ──────────────────────────────────
@@ -1021,5 +1025,124 @@ describe('buildRemoveCommit — post-remove isolation', () => {
     await expect(
       applyCommit({ state: bobState2, commit: removeCommit, myInitPrivKeyB64: BOB_KEY })
     ).rejects.toThrow('Invalid commit epoch')
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 10. Parent-hash binding — applyCommit must reject tampered node keys
+//
+// A sender who knows their own path secrets can encrypt them correctly for
+// copath recipients, but CANNOT substitute the parent node public keys with
+// attacker-controlled values.  applyUpdatePath re-derives the expected key
+// from the decrypted path secret and compares it to the claimed publicKeyB64.
+//
+// Similarly, a tampered parentHashB64 must be detected even when the node
+// key itself is unchanged, because parentHashB64 binds the key to the copath
+// sibling subtree state.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('applyCommit — parent-hash binding', () => {
+  it('real commit carries parentHashB64 on every non-root update-path node', async () => {
+    const { aliceState } = await epoch0('phash-present')
+    const { commit } = await addCarolCommit(aliceState)
+
+    // The root has no copath sibling so no parentHashB64; all other nodes must have it.
+    const nonRootEntries = commit.updatePath.slice(0, -1)
+    for (const entry of nonRootEntries) {
+      expect(typeof entry.parentHashB64).toBe('string')
+      expect(entry.parentHashB64.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('rejects a commit whose leaf node publicKeyB64 is replaced with an attacker key', async () => {
+    const { aliceState, bobState } = await epoch0('phash-tamper-key-leaf')
+    const { commit } = await addCarolCommit(aliceState)
+
+    // Replace the leaf (index 0) node's public key with a bogus key.
+    const tampered = {
+      ...commit,
+      updatePath: commit.updatePath.map((e, i) =>
+        i === 0 ? { ...e, publicKeyB64: MALLORY_KEY } : e
+      ),
+    }
+
+    // Bob decrypts the copath path secret fine, but the re-derived expected key
+    // for the leaf differs from MALLORY_KEY → recoverAndVerify throws.
+    await expect(
+      applyCommit({ state: bobState, commit: tampered, myInitPrivKeyB64: BOB_KEY })
+    ).rejects.toThrow('Node key mismatch')
+  })
+
+  it('rejects a commit whose parent node publicKeyB64 is replaced with an attacker key', async () => {
+    const { aliceState, bobState } = await epoch0('phash-tamper-key-parent')
+    const { commit } = await addCarolCommit(aliceState)
+
+    // Find the first non-leaf update-path entry (index 1 if the path has depth ≥ 2).
+    const parentIdx = commit.updatePath.findIndex((e, i) => i > 0)
+    if (parentIdx === -1) return // skip for trivially shallow trees
+
+    const tampered = {
+      ...commit,
+      updatePath: commit.updatePath.map((e, i) =>
+        i === parentIdx ? { ...e, publicKeyB64: MALLORY_KEY } : e
+      ),
+    }
+
+    await expect(
+      applyCommit({ state: bobState, commit: tampered, myInitPrivKeyB64: BOB_KEY })
+    ).rejects.toThrow('Node key mismatch')
+  })
+
+  it('rejects a commit whose parentHashB64 is replaced with garbage (copath-binding check)', async () => {
+    const { aliceState, bobState } = await epoch0('phash-tamper-phash')
+    const { commit } = await addCarolCommit(aliceState)
+
+    // Replace the leaf node's parentHashB64 with a zeroed-out value.
+    const bogusParentHash = bytesToBase64(new Uint8Array(32).fill(0x00))
+    const tampered = {
+      ...commit,
+      updatePath: commit.updatePath.map((e, i) =>
+        i === 0 && e.parentHashB64 ? { ...e, parentHashB64: bogusParentHash } : e
+      ),
+    }
+
+    // The node key itself is correct, but the parentHashB64 no longer matches
+    // SHA-256(nodePub || subtreeHash(copathSibling)) → recoverAndVerify throws.
+    await expect(
+      applyCommit({ state: bobState, commit: tampered, myInitPrivKeyB64: BOB_KEY })
+    ).rejects.toThrow('Parent hash mismatch')
+  })
+
+  it('a legitimately-built commit always passes parent-hash verification end-to-end', async () => {
+    const { aliceState, bobState } = await epoch0('phash-roundtrip')
+    const { commit } = await addCarolCommit(aliceState)
+
+    // No tampering — should succeed without throwing.
+    await expect(
+      applyCommit({ state: bobState, commit, myInitPrivKeyB64: BOB_KEY })
+    ).resolves.not.toThrow()
+  })
+
+  it('parentHashB64 changes when the copath sibling key changes (binding is tight)', async () => {
+    // Build two add-carol commits from two states whose trees differ in the
+    // copath sibling position, and check that their parentHashB64 values differ.
+    const { aliceState: a1 } = await epoch0('phash-tight-1')
+    const { aliceState: a2 } = await epoch0('phash-tight-2')
+    const { commit: c1 } = await addCarolCommit(a1)
+    const { commit: c2 } = await addCarolCommit(a2)
+
+    // Both commits follow the same structure.  The randomised leaf signing keys
+    // mean the copath sibling's public key differs between the two group states,
+    // so the parentHashB64 on the leaf path node must differ.
+    const ph1 = c1.updatePath[0]?.parentHashB64
+    const ph2 = c2.updatePath[0]?.parentHashB64
+
+    // One or both must be non-null (at minimum the first non-root node has one).
+    expect(ph1 ?? ph2).toBeTruthy()
+    // Because the two states have distinct leaf signing keys, their copath hashes
+    // differ, which must produce different parentHashB64 values.
+    if (ph1 && ph2) {
+      expect(ph1).not.toBe(ph2)
+    }
   })
 })
