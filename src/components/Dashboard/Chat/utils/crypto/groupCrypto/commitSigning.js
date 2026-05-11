@@ -1,37 +1,84 @@
-import init, {
-  generate_private_ephemeral_key,
-  derive_ed25519_keypair_from_x25519,
-  convert_x25519_to_xeddsa,
-  compute_determenistic_nonce,
-  compute_nonce_point,
-  compute_challenge_hash,
-  compute_signature_scaler,
-  compute_signature,
-  verify_signature,
-} from '@mascaro101/echo-protocol'
 import { bytesToBase64, base64ToBytes } from '../../helpers.js'
 
 const TEXT_ENCODER = new TextEncoder()
 
-// Key Generation
-// Uses an X25519 pk as a leaf signing key
-// The verifiable pk is the XEdDSA Ed25519 pk derived from it.
+// Web Crypto JWK fields use base64url, while the app stores standard base64.
+function base64urlToBytes(b64url) {
+  const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = b64.padEnd(Math.ceil(b64.length / 4) * 4, '=')
+  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0))
+}
 
+// Convert standard bytes into base64url for JWK fields.
+function bytesToBase64url(bytes) {
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '')
+}
+
+// Generate and store one leaf signing keypair.
 export async function generateLeafSigningKeypair() {
-  await init()
-  const randomBytes = crypto.getRandomValues(new Uint8Array(32))
-  const leafSigningPrivKey = generate_private_ephemeral_key(randomBytes)
-  const leafSigningPubKey = derive_ed25519_keypair_from_x25519(leafSigningPrivKey)
+  const kp = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])
+  const privJwk = await crypto.subtle.exportKey('jwk', kp.privateKey)
+  const pubJwk = await crypto.subtle.exportKey('jwk', kp.publicKey)
+
+  const seedBytes = base64urlToBytes(privJwk.d)
+  const pubBytes = base64urlToBytes(pubJwk.x)
+
+  // Store the seed and public key together so the private JWK can be rebuilt later.
+  const privBytes = new Uint8Array(64)
+  privBytes.set(seedBytes, 0)
+  privBytes.set(pubBytes, 32)
 
   return {
-    leafSigningPrivKeyB64: bytesToBase64(leafSigningPrivKey),
-    leafSigningPubKeyB64: bytesToBase64(leafSigningPubKey),
+    leafSigningPrivKeyB64: bytesToBase64(privBytes),
+    leafSigningPubKeyB64: bytesToBase64(pubBytes),
   }
 }
 
-// Canonical encoding
-// Deterministic byte encoding of the commit payload.
+// Import the stored leaf signing private key into Web Crypto.
+async function importSigningPrivKey(leafSigningPrivKeyB64) {
+  const privBytes = base64ToBytes(leafSigningPrivKeyB64)
+  const seedBytes = privBytes.slice(0, 32)
+  const pubBytes = privBytes.slice(32, 64)
+  return crypto.subtle.importKey(
+    'jwk',
+    { kty: 'OKP', crv: 'Ed25519', d: bytesToBase64url(seedBytes), x: bytesToBase64url(pubBytes) },
+    { name: 'Ed25519' },
+    false,
+    ['sign']
+  )
+}
 
+// Import the stored leaf signing public key into Web Crypto.
+async function importVerifyPubKey(leafSigningPubKeyB64) {
+  const pubBytes = base64ToBytes(leafSigningPubKeyB64)
+  return crypto.subtle.importKey(
+    'jwk',
+    { kty: 'OKP', crv: 'Ed25519', x: bytesToBase64url(pubBytes) },
+    { name: 'Ed25519' },
+    false,
+    ['verify']
+  )
+}
+
+// Sign one byte string with a leaf signing key.
+export async function signBytes(message, leafSigningPrivKeyB64) {
+  const key = await importSigningPrivKey(leafSigningPrivKeyB64)
+  const sig = await crypto.subtle.sign({ name: 'Ed25519' }, key, message)
+  return bytesToBase64(new Uint8Array(sig))
+}
+
+// Verify one signature with a leaf signing public key.
+export async function verifyBytes(message, signatureB64, pubKeyB64) {
+  const key = await importVerifyPubKey(pubKeyB64)
+  const sigBytes = base64ToBytes(signatureB64)
+  const valid = await crypto.subtle.verify({ name: 'Ed25519' }, key, sigBytes, message)
+  if (!valid) throw new Error('Signature invalid')
+}
+
+// Encode bytes with a fixed 4-byte length prefix.
 function encodeLengthPrefixed(bytes) {
   const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes ?? [])
   const out = new Uint8Array(4 + data.length)
@@ -41,8 +88,8 @@ function encodeLengthPrefixed(bytes) {
   return out
 }
 
+// Keep commit signing stable by encoding the same fields in the same order.
 export function encodeCommitForSigning(commit) {
-  // 1. Canonicalize structured sections so order and separators are deterministic.
   const rosterStr = (commit.roster ?? [])
     .slice()
     .sort((a, b) => a.leafIndex - b.leafIndex)
@@ -50,22 +97,19 @@ export function encodeCommitForSigning(commit) {
     .join(',')
   const rosterBytes = encodeLengthPrefixed(TEXT_ENCODER.encode(rosterStr))
 
-  // 2. Commit to update-path public keys only, not the encrypted secrets.
   const pathStr = (commit.updatePath ?? [])
     .map((e) => `${e.nodeIndex}:${e.publicKeyB64 ?? ''}`)
     .join(',')
   const pathBytes = encodeLengthPrefixed(TEXT_ENCODER.encode(pathStr))
 
-  // Commit to the full tree snapshot so the relay cannot substitute non-path nodes.
   const treeStr = Array.from(
     { length: commit.treePublicNodes?.length ?? 0 },
-    (_, index) => commit.treePublicNodes?.[index] ?? null
+    (_, i) => commit.treePublicNodes?.[i] ?? null
   )
     .map((k) => k ?? '')
     .join(',')
   const treeBytes = encodeLengthPrefixed(TEXT_ENCODER.encode(treeStr))
 
-  // 3. Encode all critical fields in a fixed, deterministic format.
   const header = encodeLengthPrefixed(
     TEXT_ENCODER.encode(
       `EchoMLS/v1/CommitSig` +
@@ -79,7 +123,6 @@ export function encodeCommitForSigning(commit) {
     )
   )
 
-  // Proposal refs: commits reference the proposals they bundle.
   const proposalRefsStr = (commit.proposalRefs ?? []).join(';')
   const proposalRefsBytes = encodeLengthPrefixed(TEXT_ENCODER.encode(proposalRefsStr))
 
@@ -98,41 +141,11 @@ export function encodeCommitForSigning(commit) {
     proposalRefsBytes,
     header.length + rosterBytes.length + pathBytes.length + treeBytes.length
   )
-
   return message
 }
 
+// Encode the signed part of a welcome message.
 export function encodeWelcomeForSigning(welcome) {
-  const rosterStr = (welcome.roster ?? [])
-    .slice()
-    .sort((a, b) => a.leafIndex - b.leafIndex)
-    .map((m) => `${m.userId}:${m.leafIndex}:${m.leafSigningPubKeyB64 ?? ''}`)
-    .join(',')
-  const rosterBytes = encodeLengthPrefixed(TEXT_ENCODER.encode(rosterStr))
-
-  const treeStr = Array.from(
-    { length: welcome.treePublicNodes?.length ?? 0 },
-    (_, index) => welcome.treePublicNodes?.[index] ?? null
-  )
-    .map((k) => k ?? '')
-    .join(',')
-  const treeBytes = encodeLengthPrefixed(TEXT_ENCODER.encode(treeStr))
-
-  const wrappedInit = welcome.wrappedInitSecret ?? {}
-  const wrappedCommit = welcome.wrappedCommitSecret ?? {}
-  const wrappedBytes = encodeLengthPrefixed(
-    TEXT_ENCODER.encode(
-      [
-        wrappedInit.encryptedB64 ?? '',
-        wrappedInit.ephPubB64 ?? '',
-        wrappedInit.nonceB64 ?? '',
-        wrappedCommit.encryptedB64 ?? '',
-        wrappedCommit.ephPubB64 ?? '',
-        wrappedCommit.nonceB64 ?? '',
-      ].join('|')
-    )
-  )
-
   const header = encodeLengthPrefixed(
     TEXT_ENCODER.encode(
       `EchoMLS/v1/WelcomeSig` +
@@ -141,119 +154,49 @@ export function encodeWelcomeForSigning(welcome) {
         `|${welcome.cipherSuite ?? ''}` +
         `|${welcome.recipientUserId ?? ''}` +
         `|${welcome.recipientLeafIndex ?? ''}` +
-        `|${welcome.leafCount ?? ''}` +
         `|${welcome.senderLeafIndex ?? ''}` +
         `|${welcome.senderSigningPubKeyB64 ?? ''}`
     )
   )
 
-  const message = new Uint8Array(
-    header.length + rosterBytes.length + treeBytes.length + wrappedBytes.length
-  )
-  message.set(header, 0)
-  message.set(rosterBytes, header.length)
-  message.set(treeBytes, header.length + rosterBytes.length)
-  message.set(wrappedBytes, header.length + rosterBytes.length + treeBytes.length)
+  const gs = welcome.encryptedGroupSecrets ?? {}
+  const gi = welcome.encryptedGroupInfo ?? {}
+  const secretsStr = `${gs.encryptedB64 ?? ''}|${gs.ephPubB64 ?? ''}|${gs.nonceB64 ?? ''}`
+  const infoStr = `${gi.encryptedB64 ?? ''}|${gi.nonceB64 ?? ''}`
+  const payloadBytes = encodeLengthPrefixed(TEXT_ENCODER.encode(`${secretsStr}||${infoStr}`))
 
+  const message = new Uint8Array(header.length + payloadBytes.length)
+  message.set(header, 0)
+  message.set(payloadBytes, header.length)
   return message
 }
 
-// Sign
-
+// Signatures cover the canonical byte encoding, not the raw JS object shape.
 export async function signCommit(commit, leafSigningPrivKeyB64) {
-  await init()
-
-  const privKey = base64ToBytes(leafSigningPrivKeyB64)
   const message = encodeCommitForSigning(commit)
-
-  const xeddsaKey = convert_x25519_to_xeddsa(privKey)
-  const edPrivScaler = xeddsaKey.slice(0, 32)
-  const prefix = xeddsaKey.slice(32, 64)
-  const pubEdKey = derive_ed25519_keypair_from_x25519(privKey)
-
-  const nonce = compute_determenistic_nonce(prefix, message)
-  const noncePoint = compute_nonce_point(nonce)
-  const challenge = compute_challenge_hash(noncePoint, pubEdKey, message)
-  const sigScaler = compute_signature_scaler(nonce, challenge, edPrivScaler)
-  const signature = compute_signature(noncePoint, sigScaler)
-
-  return bytesToBase64(signature)
+  return signBytes(message, leafSigningPrivKeyB64)
 }
 
-// Verify
-
+// Verify one signed commit.
 export async function verifyCommit(commit, senderSigningPubKeyB64) {
-  await init()
-
   if (!commit.signature || !senderSigningPubKeyB64) {
     throw new Error('Commit missing signature or signing pub key')
   }
-
-  const pubKey = base64ToBytes(senderSigningPubKeyB64)
-  const sigBytes = base64ToBytes(commit.signature)
   const message = encodeCommitForSigning(commit)
-
-  const valid = verify_signature(sigBytes, message, pubKey)
-  if (!valid) throw new Error('Commit signature invalid')
+  await verifyBytes(message, commit.signature, senderSigningPubKeyB64)
 }
 
+// Sign one welcome message.
 export async function signWelcome(welcome, leafSigningPrivKeyB64) {
-  await init()
-
-  const privKey = base64ToBytes(leafSigningPrivKeyB64)
   const message = encodeWelcomeForSigning(welcome)
-
-  const xeddsaKey = convert_x25519_to_xeddsa(privKey)
-  const edPrivScaler = xeddsaKey.slice(0, 32)
-  const prefix = xeddsaKey.slice(32, 64)
-  const pubEdKey = derive_ed25519_keypair_from_x25519(privKey)
-
-  const nonce = compute_determenistic_nonce(prefix, message)
-  const noncePoint = compute_nonce_point(nonce)
-  const challenge = compute_challenge_hash(noncePoint, pubEdKey, message)
-  const sigScaler = compute_signature_scaler(nonce, challenge, edPrivScaler)
-  const signature = compute_signature(noncePoint, sigScaler)
-
-  return bytesToBase64(signature)
+  return signBytes(message, leafSigningPrivKeyB64)
 }
 
+// Verify one signed welcome message.
 export async function verifyWelcome(welcome, senderSigningPubKeyB64) {
-  await init()
-
   if (!welcome.signature || !senderSigningPubKeyB64) {
     throw new Error('Welcome missing signature or signing pub key')
   }
-
-  const pubKey = base64ToBytes(senderSigningPubKeyB64)
-  const sigBytes = base64ToBytes(welcome.signature)
   const message = encodeWelcomeForSigning(welcome)
-
-  const valid = verify_signature(sigBytes, message, pubKey)
-  if (!valid) throw new Error('Welcome signature invalid')
-}
-
-// Low-level: sign arbitrary bytes with the XEdDSA key.
-// Used by credential.js, keyPackage.js, and proposals.js.
-export async function signBytes(message, leafSigningPrivKeyB64) {
-  await init()
-  const privKey = base64ToBytes(leafSigningPrivKeyB64)
-  const xeddsaKey = convert_x25519_to_xeddsa(privKey)
-  const edPrivScaler = xeddsaKey.slice(0, 32)
-  const prefix = xeddsaKey.slice(32, 64)
-  const pubEdKey = derive_ed25519_keypair_from_x25519(privKey)
-  const nonce = compute_determenistic_nonce(prefix, message)
-  const noncePoint = compute_nonce_point(nonce)
-  const challenge = compute_challenge_hash(noncePoint, pubEdKey, message)
-  const sigScaler = compute_signature_scaler(nonce, challenge, edPrivScaler)
-  const signature = compute_signature(noncePoint, sigScaler)
-  return bytesToBase64(signature)
-}
-
-// Low-level: verify arbitrary bytes against an XEdDSA public key.
-export async function verifyBytes(message, signatureB64, pubKeyB64) {
-  await init()
-  const pubKey = base64ToBytes(pubKeyB64)
-  const sigBytes = base64ToBytes(signatureB64)
-  const valid = verify_signature(sigBytes, message, pubKey)
-  if (!valid) throw new Error('Signature invalid')
+  await verifyBytes(message, welcome.signature, senderSigningPubKeyB64)
 }

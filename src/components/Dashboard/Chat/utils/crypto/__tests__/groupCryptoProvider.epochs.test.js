@@ -85,6 +85,10 @@ vi.mock('@mascaro101/echo-protocol', () => {
     hkdf_derive: vi.fn((ikm, _salt, info, len) =>
       deriveBytes(len, new Uint8Array(ikm), new Uint8Array(info))
     ),
+    hkdf_extract: vi.fn((salt, ikm) => deriveBytes(32, new Uint8Array(salt), new Uint8Array(ikm))),
+    hkdf_expand: vi.fn((prk, info, len) =>
+      deriveBytes(len, new Uint8Array(prk), new Uint8Array(info))
+    ),
     // XEdDSA stubs — verify always passes so the epoch chain runs end-to-end.
     derive_ed25519_keypair_from_x25519: vi.fn((priv) => new Uint8Array(priv).slice(0, 32)),
     convert_x25519_to_xeddsa: vi.fn((priv) => {
@@ -119,19 +123,36 @@ vi.mock('@mascaro101/echo-protocol', () => {
 
 vi.mock('../keySchedule.js', () => ({
   advanceEpoch: vi.fn(async ({ initSecret, commitSecret, groupId, epoch }) => {
-    const epochSecret = deriveBytes(
-      32,
-      initSecret,
-      commitSecret,
-      encodeText(`${groupId}|${epoch}|epoch`)
-    )
+    const joinerSecret = deriveBytes(32, initSecret, commitSecret, encodeText('joiner'))
+    const epochSecret = deriveBytes(32, joinerSecret, encodeText(`${groupId}|${epoch}|epoch`))
     return {
       epochSecret,
       applicationSecret: deriveBytes(32, epochSecret, encodeText('encryption')),
       senderDataSecret: deriveBytes(32, epochSecret, encodeText('sender_data')),
+      externalSecret: deriveBytes(32, epochSecret, encodeText('external')),
       nextInitSecret: deriveBytes(32, epochSecret, encodeText('init')),
     }
   }),
+  deriveEpochSecrets: vi.fn(async (joinerSecret, { groupId, epoch }) => {
+    const epochSecret = deriveBytes(32, joinerSecret, encodeText(`${groupId}|${epoch}|epoch`))
+    return {
+      epochSecret,
+      applicationSecret: deriveBytes(32, epochSecret, encodeText('encryption')),
+      senderDataSecret: deriveBytes(32, epochSecret, encodeText('sender_data')),
+      externalSecret: deriveBytes(32, epochSecret, encodeText('external')),
+      nextInitSecret: deriveBytes(32, epochSecret, encodeText('init')),
+    }
+  }),
+  deriveJoinerSecret: vi.fn(async (initSecret, commitSecret) =>
+    deriveBytes(32, initSecret, commitSecret, encodeText('joiner'))
+  ),
+  deriveWelcomeSecret: vi.fn(async (joinerSecret) =>
+    deriveBytes(32, joinerSecret, encodeText('welcome'))
+  ),
+  deriveWelcomeKeyAndNonce: vi.fn(async (welcomeSecret) => ({
+    key: deriveBytes(32, welcomeSecret, encodeText('key')),
+    nonce: deriveBytes(12, welcomeSecret, encodeText('nonce')),
+  })),
   deriveSecret: vi.fn(async (secret, label) => deriveBytes(32, secret, encodeText(label))),
   expandWithLabel: vi.fn(async (secret, label, context, length) =>
     deriveBytes(length, secret, encodeText(label), context)
@@ -147,6 +168,13 @@ vi.mock('../keySchedule.js', () => ({
     deriveBytes(32, epochSecret, thBytes, encodeText('confirm'))
   ),
   verifyConfirmationTag: vi.fn(async () => {}),
+  deriveSenderDataKeyAndNonce: vi.fn(async (senderDataSecret, ciphertextPrefix4) => {
+    const ctx = new Uint8Array(ciphertextPrefix4).slice(0, 4)
+    return {
+      key: deriveBytes(32, senderDataSecret, encodeText('key'), ctx),
+      nonce: deriveBytes(12, senderDataSecret, encodeText('nonce'), ctx),
+    }
+  }),
 }))
 
 // ── EncryptedLocalDatabase mock ───────────────────────────────────────────────
@@ -448,12 +476,16 @@ describe('commit signature enforcement in applyCommit', () => {
   it('throws when the sender entry has no leafSigningPubKeyB64 in the local roster', async () => {
     const { aliceState, bobState } = await epoch0States('sig-missing-key')
 
-    // Strip Alice's signing pub key from Bob's local view of the roster before the commit.
+    // tree.leafData is the authoritative roster source during normalization.
     const bobStateNoAliceSig = {
       ...bobState,
-      roster: bobState.roster.map((m) =>
-        m.userId === 'alice' ? { ...m, leafSigningPubKeyB64: null } : m
-      ),
+      tree: {
+        ...bobState.tree,
+        leafData: {
+          ...bobState.tree.leafData,
+          0: { ...bobState.tree.leafData['0'], leafSigningPubKeyB64: null },
+        },
+      },
     }
 
     const { commit } = await buildAddCommit({
@@ -471,7 +503,7 @@ describe('commit signature enforcement in applyCommit', () => {
     ).rejects.toThrow('No signing pub key for commit sender')
   })
 
-  it('throws when verify_signature returns false (forged or corrupted commit)', async () => {
+  it('throws when the commit signature is corrupted', async () => {
     const { aliceState, bobState } = await epoch0States('sig-bad-verify')
 
     const { commit } = await buildAddCommit({
@@ -484,12 +516,10 @@ describe('commit signature enforcement in applyCommit', () => {
       ],
     })
 
-    // Override the mock to reject the next verification call.
-    const protocol = await import('@mascaro101/echo-protocol')
-    vi.mocked(protocol.verify_signature).mockReturnValueOnce(false)
+    const tamperedCommit = { ...commit, signature: `${commit.signature.slice(0, -4)}AAAA` }
 
     await expect(
-      applyCommit({ state: bobState, commit, myInitPrivKeyB64: BOB_KEY })
+      applyCommit({ state: bobState, commit: tamperedCommit, myInitPrivKeyB64: BOB_KEY })
     ).rejects.toThrow()
   })
 

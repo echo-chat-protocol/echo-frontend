@@ -1,28 +1,25 @@
 import { base64ToBytes } from '../../helpers.js'
 
-// TreeKEM math Imports
 import { nodeWidth } from './treemath.js'
 import {
   computeLeafCount,
   findLeafIndexForUser,
+  normalizeLeafData,
   normalizeRoster,
   resizeNodes,
+  rosterFromLeafData,
 } from './treeState.js'
 
-// local group state management
 export const MLS_STATE_VERSION = 1
-// Prefix for keys in the ELD, the full key is this prefix + groupId
 export const MLS_STATE_PREFIX = 'echo-mls:groupState:'
-// Default cipher suite, for now we only support one
 export const DEFAULT_MLS_CIPHER_SUITE = 'ECHO-MLS/X25519_AES256GCM_SHA256'
 
-// builds storage key string for groupId
+// Build the storage key for one group state record.
 export function getGroupState(groupId) {
   return `${MLS_STATE_PREFIX}${groupId}`
 }
 
-// picks which stored group key to use, uses stae.applicationSecretB64 if available
-// falls back to state.groupKeyB64 for legacy support, throws if neither are available
+// Resolve the current application secret from state.
 export function resolveApplicationKey(state) {
   const applicationSecretB64 =
     typeof state?.applicationSecretB64 === 'string' && state.applicationSecretB64.length > 0
@@ -36,37 +33,30 @@ export function resolveApplicationKey(state) {
       `Group state is missing application key material for group ${state?.groupId ?? ''}`
     )
   }
-
   return { applicationSecretB64, keyBytes: base64ToBytes(applicationSecretB64) }
 }
 
-// Normalize and sanitize group state ebfore being used or updated
+// Normalize all persisted and in-memory group state fields.
 export function normalizeGroupState(state) {
-  // throw if missing state
-  if (!state || typeof state !== 'object') {
-    throw new Error('Invalid group state')
-  }
+  if (!state || typeof state !== 'object') throw new Error('Invalid group state')
 
-  // normalize the roster and find the self leaf index
-  const roster = normalizeRoster(state.roster)
+  // Prefer the tree leaf data when it is present. Older state may only have roster.
+  const rawLeafData = normalizeLeafData(state.tree?.leafData)
+  const leafDataRoster = rosterFromLeafData(rawLeafData)
+  const roster = leafDataRoster.length > 0 ? leafDataRoster : normalizeRoster(state.roster)
+
   const selfLeafIndex = Number.isInteger(state.selfLeafIndex)
     ? state.selfLeafIndex
     : findLeafIndexForUser(roster, state.selfUserId)
 
-  // computes the number of leaves
   const leafCount = computeLeafCount({
     roster,
     treeNodes: state.tree?.nodes,
     extraLeafIndex: selfLeafIndex,
   })
-
-  // compute the width of the tree and resize the tree nodes to match
-  // this will clean all nodes and ensure the tree has the correct number of nodes to represent the roster
   const width = nodeWidth(leafCount)
   const treeNodes = resizeNodes(state.tree?.nodes, width)
 
-  // normalize sender generations, stringifies keys and if own generation key is missing
-  // but applicationMessageCounter and selfLeafIndex are available, add self generation to the map
   const rawSenderGenerations =
     state.senderGenerations && typeof state.senderGenerations === 'object'
       ? state.senderGenerations
@@ -82,10 +72,10 @@ export function normalizeGroupState(state) {
     Number.isInteger(state.applicationMessageCounter) &&
     senderGenerations[String(selfLeafIndex)] === undefined
   ) {
+    // Backfill the local sender counter from older state shapes.
     senderGenerations[String(selfLeafIndex)] = state.applicationMessageCounter
   }
 
-  // Resolve applicationSecretB64 with fallback to groupKeyB64
   const applicationSecretB64 =
     state.applicationSecretB64 === null
       ? null
@@ -97,7 +87,6 @@ export function normalizeGroupState(state) {
             ? state.groupKeyB64
             : null
 
-  // Resolve initSecret with fallback to state.secrets.initSecretsB64
   const initSecretB64 =
     state.initSecretB64 === null
       ? null
@@ -110,8 +99,31 @@ export function normalizeGroupState(state) {
             ? state.secrets.initSecretB64
             : null
 
-  // returns canonical state object with normalized roster, tree and keys, this is the format that the rest of the code expects
-  // basically returns a cleaned up version of the input state with fallbacks
+  const senderDataSecretB64 =
+    typeof state.senderDataSecretB64 === 'string' && state.senderDataSecretB64.length > 0
+      ? state.senderDataSecretB64
+      : null
+
+  const confirmationTagB64 =
+    typeof state.confirmationTagB64 === 'string' && state.confirmationTagB64.length > 0
+      ? state.confirmationTagB64
+      : null
+
+  const externalSecretB64 =
+    typeof state.externalSecretB64 === 'string' && state.externalSecretB64.length > 0
+      ? state.externalSecretB64
+      : null
+
+  const membershipSecretB64 =
+    typeof state.membershipSecretB64 === 'string' && state.membershipSecretB64.length > 0
+      ? state.membershipSecretB64
+      : null
+
+  const resumptionPskB64 =
+    typeof state.resumptionPskB64 === 'string' && state.resumptionPskB64.length > 0
+      ? state.resumptionPskB64
+      : null
+
   return {
     stateVersion: state.stateVersion || MLS_STATE_VERSION,
     groupId: state.groupId,
@@ -123,10 +135,15 @@ export function normalizeGroupState(state) {
     selfUserId: state.selfUserId ?? null,
     selfLeafIndex,
     applicationSecretB64,
+    senderDataSecretB64,
+    confirmationTagB64,
+    externalSecretB64,
+    membershipSecretB64,
+    resumptionPskB64,
     initSecretB64,
     senderGenerations,
     roster,
-    tree: { nodes: treeNodes },
+    tree: { nodes: treeNodes, leafData: rawLeafData },
     secrets: {
       initSecretB64,
       epochInitSecretB64:
@@ -159,5 +176,6 @@ export function normalizeGroupState(state) {
       typeof state.leafSigningPrivKeyB64 === 'string' && state.leafSigningPrivKeyB64.length > 0
         ? state.leafSigningPrivKeyB64
         : null,
+    reInit: state.reInit === true,
   }
 }

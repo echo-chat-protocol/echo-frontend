@@ -84,6 +84,8 @@ vi.mock('@mascaro101/echo-protocol', () => {
     generate_private_ephemeral_key: vi.fn((rand) => new Uint8Array(rand).slice(0, 32)),
     generate_public_ephemeral_key: vi.fn((priv) => new Uint8Array(priv).slice(0, 32)),
     hkdf_derive: vi.fn((ikm, _s, info, len) => db(len, new Uint8Array(ikm), new Uint8Array(info))),
+    hkdf_extract: vi.fn((salt, ikm) => db(32, new Uint8Array(salt), new Uint8Array(ikm))),
+    hkdf_expand: vi.fn((prk, info, len) => db(len, new Uint8Array(prk), new Uint8Array(info))),
     derive_ed25519_keypair_from_x25519: vi.fn((priv) => new Uint8Array(priv).slice(0, 32)),
     convert_x25519_to_xeddsa: vi.fn((priv) => {
       const b = new Uint8Array(64)
@@ -116,19 +118,36 @@ vi.mock('@mascaro101/echo-protocol', () => {
 
 vi.mock('../keySchedule.js', () => ({
   advanceEpoch: vi.fn(async ({ initSecret, commitSecret, groupId, epoch }) => {
-    const epochSecret = deriveBytes(
-      32,
-      initSecret,
-      commitSecret,
-      encodeText(`${groupId}|${epoch}|epoch`)
-    )
+    const joinerSecret = deriveBytes(32, initSecret, commitSecret, encodeText('joiner'))
+    const epochSecret = deriveBytes(32, joinerSecret, encodeText(`${groupId}|${epoch}|epoch`))
     return {
       epochSecret,
       applicationSecret: deriveBytes(32, epochSecret, encodeText('encryption')),
       senderDataSecret: deriveBytes(32, epochSecret, encodeText('sender_data')),
+      externalSecret: deriveBytes(32, epochSecret, encodeText('external')),
       nextInitSecret: deriveBytes(32, epochSecret, encodeText('init')),
     }
   }),
+  deriveEpochSecrets: vi.fn(async (joinerSecret, { groupId, epoch }) => {
+    const epochSecret = deriveBytes(32, joinerSecret, encodeText(`${groupId}|${epoch}|epoch`))
+    return {
+      epochSecret,
+      applicationSecret: deriveBytes(32, epochSecret, encodeText('encryption')),
+      senderDataSecret: deriveBytes(32, epochSecret, encodeText('sender_data')),
+      externalSecret: deriveBytes(32, epochSecret, encodeText('external')),
+      nextInitSecret: deriveBytes(32, epochSecret, encodeText('init')),
+    }
+  }),
+  deriveJoinerSecret: vi.fn(async (initSecret, commitSecret) =>
+    deriveBytes(32, initSecret, commitSecret, encodeText('joiner'))
+  ),
+  deriveWelcomeSecret: vi.fn(async (joinerSecret) =>
+    deriveBytes(32, joinerSecret, encodeText('welcome'))
+  ),
+  deriveWelcomeKeyAndNonce: vi.fn(async (welcomeSecret) => ({
+    key: deriveBytes(32, welcomeSecret, encodeText('key')),
+    nonce: deriveBytes(12, welcomeSecret, encodeText('nonce')),
+  })),
   deriveSecret: vi.fn(async (secret, label) => deriveBytes(32, secret, encodeText(label))),
   expandWithLabel: vi.fn(async (secret, label, ctx, len) =>
     deriveBytes(len, secret, encodeText(label), ctx)
@@ -144,6 +163,13 @@ vi.mock('../keySchedule.js', () => ({
     deriveBytes(32, epochSecret, thBytes, encodeText('confirm'))
   ),
   verifyConfirmationTag: vi.fn(async () => {}),
+  deriveSenderDataKeyAndNonce: vi.fn(async (senderDataSecret, ciphertextPrefix4) => {
+    const ctx = new Uint8Array(ciphertextPrefix4).slice(0, 4)
+    return {
+      key: deriveBytes(32, senderDataSecret, encodeText('key'), ctx),
+      nonce: deriveBytes(12, senderDataSecret, encodeText('nonce'), ctx),
+    }
+  }),
 }))
 
 // ─── EncryptedLocalDatabase mock (in-memory) ──────────────────────────────────
@@ -162,7 +188,7 @@ vi.mock('../../../../../../utils/storage/EncryptedLocalDatabase', () => ({
 
 // ─── module imports (after mocks) ─────────────────────────────────────────────
 
-const { bytesToBase64 } = await import('../../helpers.js')
+const { base64ToBytes, bytesToBase64 } = await import('../../helpers.js')
 const protocol = await import('@mascaro101/echo-protocol')
 const {
   applyCommit,
@@ -172,7 +198,9 @@ const {
   createNewGroupState,
   processWelcome,
 } = await import('../groupCryptoProvider.js')
-const { encodeCommitForSigning, encodeWelcomeForSigning } =
+const { deriveWelcomeKeyAndNonce, deriveWelcomeSecret } = await import('../keySchedule.js')
+const { makeCommitAadBytes, unwrapGroupKey } = await import('../groupCrypto/pathSecrets.js')
+const { encodeCommitForSigning, encodeWelcomeForSigning, signCommit, signWelcome } =
   await import('../groupCrypto/commitSigning.js')
 
 // ─── fixtures ─────────────────────────────────────────────────────────────────
@@ -254,6 +282,59 @@ async function addCarolCommit(aliceState) {
 
 // Convenience: encode a commit to hex for byte-level comparison.
 const toHex = (commit) => Buffer.from(encodeCommitForSigning(commit)).toString('hex')
+const corruptBase64 = (value) => `${value.slice(0, -4)}AAAA`
+
+async function readWelcomeGroupInfo(welcome, myInitPrivKeyB64) {
+  const aadBytes = makeCommitAadBytes(welcome.groupId, welcome.epoch)
+  const groupSecretsRaw = await unwrapGroupKey(
+    welcome.encryptedGroupSecrets,
+    myInitPrivKeyB64,
+    aadBytes
+  )
+  const groupSecretsText = new TextDecoder('utf-8', { fatal: true }).decode(
+    base64ToBytes(groupSecretsRaw)
+  )
+  const { joinerSecretB64 } = JSON.parse(groupSecretsText)
+  const joinerSecret = base64ToBytes(joinerSecretB64)
+  const welcomeSecret = await deriveWelcomeSecret(joinerSecret)
+  const { key, nonce } = await deriveWelcomeKeyAndNonce(welcomeSecret)
+  const encryptedGroupInfo = base64ToBytes(welcome.encryptedGroupInfo.encryptedB64)
+  const groupInfoBytes = protocol.decrypt_aad_bytes(
+    encryptedGroupInfo,
+    key,
+    nonce,
+    new Uint8Array(0)
+  )
+  const groupInfo = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(groupInfoBytes))
+  return { groupInfo, key, nonce }
+}
+
+async function tamperWelcomeGroupInfo({
+  welcome,
+  myInitPrivKeyB64,
+  mutateGroupInfo,
+  signerPrivKeyB64,
+}) {
+  const { groupInfo, key, nonce } = await readWelcomeGroupInfo(welcome, myInitPrivKeyB64)
+  const mutatedGroupInfo = mutateGroupInfo(JSON.parse(JSON.stringify(groupInfo)))
+  const encryptedGroupInfo = protocol.encrypt_aad_bytes(
+    new TextEncoder().encode(JSON.stringify(mutatedGroupInfo)),
+    key,
+    nonce,
+    new Uint8Array(0)
+  )
+  const tampered = {
+    ...welcome,
+    encryptedGroupInfo: {
+      ...welcome.encryptedGroupInfo,
+      encryptedB64: bytesToBase64(encryptedGroupInfo),
+    },
+  }
+  if (signerPrivKeyB64) {
+    tampered.signature = await signWelcome(tampered, signerPrivKeyB64)
+  }
+  return tampered
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -479,13 +560,15 @@ describe('applyCommit — signature enforcement', () => {
     ).rejects.toThrow()
   })
 
-  it('rejects when verify_signature returns false', async () => {
+  it('rejects when the commit signature is corrupted', async () => {
     const { aliceState, bobState } = await epoch0('sig-bad-verify')
     const { commit } = await addCarolCommit(aliceState)
-    const protocol = await import('@mascaro101/echo-protocol')
-    vi.mocked(protocol.verify_signature).mockReturnValueOnce(false)
     await expect(
-      applyCommit({ state: bobState, commit, myInitPrivKeyB64: BOB_KEY })
+      applyCommit({
+        state: bobState,
+        commit: { ...commit, signature: corruptBase64(commit.signature) },
+        myInitPrivKeyB64: BOB_KEY,
+      })
     ).rejects.toThrow()
   })
 
@@ -494,7 +577,12 @@ describe('applyCommit — signature enforcement', () => {
     const { commit } = await addCarolCommit(aliceState)
     const bobStateNoAlice = {
       ...bobState,
-      roster: bobState.roster.filter((m) => m.userId !== 'alice'),
+      tree: {
+        ...bobState.tree,
+        leafData: Object.fromEntries(
+          Object.entries(bobState.tree.leafData).filter(([leafIndex]) => leafIndex !== '0')
+        ),
+      },
     }
     await expect(
       applyCommit({ state: bobStateNoAlice, commit, myInitPrivKeyB64: BOB_KEY })
@@ -506,9 +594,13 @@ describe('applyCommit — signature enforcement', () => {
     const { commit } = await addCarolCommit(aliceState)
     const bobStateNoKey = {
       ...bobState,
-      roster: bobState.roster.map((m) =>
-        m.userId === 'alice' ? { ...m, leafSigningPubKeyB64: null } : m
-      ),
+      tree: {
+        ...bobState.tree,
+        leafData: {
+          ...bobState.tree.leafData,
+          0: { ...bobState.tree.leafData['0'], leafSigningPubKeyB64: null },
+        },
+      },
     }
     await expect(
       applyCommit({ state: bobStateNoKey, commit, myInitPrivKeyB64: BOB_KEY })
@@ -530,12 +622,12 @@ describe('applyCommit — signature enforcement', () => {
   it('rejects when the commit signature does not match the sender key (forged signer)', async () => {
     const { aliceState, bobState } = await epoch0('sig-forged')
     const { commit } = await addCarolCommit(aliceState)
-    // Simulate the case where real XEdDSA verification would reject the signature by
-    // forcing verify_signature to return false for this call.
-    const protocol = await import('@mascaro101/echo-protocol')
-    vi.mocked(protocol.verify_signature).mockReturnValueOnce(false)
+    const forgedCommit = {
+      ...commit,
+      signature: await signCommit(commit, bobState.leafSigningPrivKeyB64),
+    }
     await expect(
-      applyCommit({ state: bobState, commit, myInitPrivKeyB64: BOB_KEY })
+      applyCommit({ state: bobState, commit: forgedCommit, myInitPrivKeyB64: BOB_KEY })
     ).rejects.toThrow()
   })
 })
@@ -740,30 +832,33 @@ describe('processWelcome — structural validation', () => {
     ).rejects.toThrow()
   })
 
-  it('rejects a welcome with no roster', async () => {
+  it('rejects a welcome with no encryptedGroupInfo (roster/tree are encrypted within it)', async () => {
     const { bobWelcome } = await epoch0('wlc-no-roster')
-    const noRoster = omitKey(bobWelcome, 'roster')
-    await expect(
-      processWelcome({ welcome: noRoster, selfUserId: 'bob', myInitPrivKeyB64: BOB_KEY })
-    ).rejects.toThrow()
-  })
-
-  it('rejects a welcome with null wrappedInitSecret', async () => {
-    const { bobWelcome } = await epoch0('wlc-null-init')
     await expect(
       processWelcome({
-        welcome: { ...bobWelcome, wrappedInitSecret: null },
+        welcome: { ...bobWelcome, encryptedGroupInfo: null },
         selfUserId: 'bob',
         myInitPrivKeyB64: BOB_KEY,
       })
     ).rejects.toThrow()
   })
 
-  it('rejects a welcome with null wrappedCommitSecret', async () => {
+  it('rejects a welcome with null encryptedGroupSecrets (joiner_secret cannot be unwrapped)', async () => {
+    const { bobWelcome } = await epoch0('wlc-null-init')
+    await expect(
+      processWelcome({
+        welcome: { ...bobWelcome, encryptedGroupSecrets: null },
+        selfUserId: 'bob',
+        myInitPrivKeyB64: BOB_KEY,
+      })
+    ).rejects.toThrow()
+  })
+
+  it('rejects a welcome with null encryptedGroupInfo (group context cannot be decrypted)', async () => {
     const { bobWelcome } = await epoch0('wlc-null-commit')
     await expect(
       processWelcome({
-        welcome: { ...bobWelcome, wrappedCommitSecret: null },
+        welcome: { ...bobWelcome, encryptedGroupInfo: null },
         selfUserId: 'bob',
         myInitPrivKeyB64: BOB_KEY,
       })
@@ -823,16 +918,16 @@ describe('processWelcome — AEAD authentication', () => {
     ).rejects.toThrow()
   })
 
-  it('rejects when wrappedInitSecret ciphertext is tampered', async () => {
+  it('rejects when encryptedGroupSecrets ciphertext is tampered', async () => {
     const { bobWelcome } = await epoch0('wlc-tamper-init')
-    const ct = Buffer.from(bobWelcome.wrappedInitSecret.encryptedB64, 'base64')
+    const ct = Buffer.from(bobWelcome.encryptedGroupSecrets.encryptedB64, 'base64')
     ct[ct.length - 1] ^= 0xff // flip a byte inside the AES-GCM auth tag
     await expect(
       processWelcome({
         welcome: {
           ...bobWelcome,
-          wrappedInitSecret: {
-            ...bobWelcome.wrappedInitSecret,
+          encryptedGroupSecrets: {
+            ...bobWelcome.encryptedGroupSecrets,
             encryptedB64: ct.toString('base64'),
           },
         },
@@ -842,16 +937,16 @@ describe('processWelcome — AEAD authentication', () => {
     ).rejects.toThrow()
   })
 
-  it('rejects when wrappedCommitSecret ciphertext is tampered', async () => {
+  it('rejects when encryptedGroupInfo ciphertext is tampered', async () => {
     const { bobWelcome } = await epoch0('wlc-tamper-commit')
-    const ct = Buffer.from(bobWelcome.wrappedCommitSecret.encryptedB64, 'base64')
+    const ct = Buffer.from(bobWelcome.encryptedGroupInfo.encryptedB64, 'base64')
     ct[ct.length - 1] ^= 0xff
     await expect(
       processWelcome({
         welcome: {
           ...bobWelcome,
-          wrappedCommitSecret: {
-            ...bobWelcome.wrappedCommitSecret,
+          encryptedGroupInfo: {
+            ...bobWelcome.encryptedGroupInfo,
             encryptedB64: ct.toString('base64'),
           },
         },
@@ -861,7 +956,7 @@ describe('processWelcome — AEAD authentication', () => {
     ).rejects.toThrow()
   })
 
-  it('rejects when the ephemeral public key in wrappedInitSecret is substituted', async () => {
+  it('rejects when the ephemeral public key in encryptedGroupSecrets is substituted', async () => {
     const { bobWelcome } = await epoch0('wlc-sub-eph')
     // Swapping the ephemeral public key changes the DH output → different wrap key →
     // AES-GCM auth tag mismatch.
@@ -869,7 +964,7 @@ describe('processWelcome — AEAD authentication', () => {
       processWelcome({
         welcome: {
           ...bobWelcome,
-          wrappedInitSecret: { ...bobWelcome.wrappedInitSecret, ephPubB64: MALLORY_KEY },
+          encryptedGroupSecrets: { ...bobWelcome.encryptedGroupSecrets, ephPubB64: MALLORY_KEY },
         },
         selfUserId: 'bob',
         myInitPrivKeyB64: BOB_KEY,
@@ -881,17 +976,25 @@ describe('processWelcome — AEAD authentication', () => {
 describe('processWelcome — signed metadata integrity', () => {
   it('rejects when the roster is substituted by the server', async () => {
     const { bobWelcome } = await epoch0('wlc-roster-sub')
-    const tampered = {
-      ...bobWelcome,
-      roster: [
-        ...bobWelcome.roster,
-        { userId: 'mallory', username: 'Mallory', leafIndex: 9, leafSigningPubKeyB64: MALLORY_KEY },
-      ],
-    }
+    const tampered = await tamperWelcomeGroupInfo({
+      welcome: bobWelcome,
+      myInitPrivKeyB64: BOB_KEY,
+      mutateGroupInfo: (groupInfo) => ({
+        ...groupInfo,
+        roster: [
+          ...(groupInfo.roster ?? []),
+          {
+            userId: 'mallory',
+            username: 'Mallory',
+            leafIndex: 9,
+            leafSigningPubKeyB64: MALLORY_KEY,
+          },
+        ],
+      }),
+    })
     expect(Buffer.from(encodeWelcomeForSigning(tampered))).not.toEqual(
       Buffer.from(encodeWelcomeForSigning(bobWelcome))
     )
-    vi.mocked(protocol.verify_signature).mockReturnValueOnce(false)
     await expect(
       processWelcome({
         welcome: tampered,
@@ -903,16 +1006,18 @@ describe('processWelcome — signed metadata integrity', () => {
 
   it('rejects when treePublicNodes are substituted by the server', async () => {
     const { bobWelcome } = await epoch0('wlc-tree-sub')
-    const tamperedTree = [...bobWelcome.treePublicNodes]
-    tamperedTree[0] = MALLORY_KEY
-    const tampered = {
-      ...bobWelcome,
-      treePublicNodes: tamperedTree,
-    }
+    const tampered = await tamperWelcomeGroupInfo({
+      welcome: bobWelcome,
+      myInitPrivKeyB64: BOB_KEY,
+      mutateGroupInfo: (groupInfo) => {
+        const treePublicNodes = [...(groupInfo.treePublicNodes ?? [])]
+        treePublicNodes[0] = MALLORY_KEY
+        return { ...groupInfo, treePublicNodes }
+      },
+    })
     expect(Buffer.from(encodeWelcomeForSigning(tampered))).not.toEqual(
       Buffer.from(encodeWelcomeForSigning(bobWelcome))
     )
-    vi.mocked(protocol.verify_signature).mockReturnValueOnce(false)
     await expect(
       processWelcome({
         welcome: tampered,
@@ -923,13 +1028,19 @@ describe('processWelcome — signed metadata integrity', () => {
   })
 
   it('rejects when senderSigningPubKeyB64 does not match the roster sender entry', async () => {
-    const { bobWelcome } = await epoch0('wlc-sender-key-mismatch')
+    const { aliceState, bobWelcome } = await epoch0('wlc-sender-key-mismatch')
+    const tampered = await tamperWelcomeGroupInfo({
+      welcome: bobWelcome,
+      myInitPrivKeyB64: BOB_KEY,
+      mutateGroupInfo: (groupInfo) => ({
+        ...groupInfo,
+        senderSigningPubKeyB64: MALLORY_KEY,
+      }),
+      signerPrivKeyB64: aliceState.leafSigningPrivKeyB64,
+    })
     await expect(
       processWelcome({
-        welcome: {
-          ...bobWelcome,
-          senderSigningPubKeyB64: MALLORY_KEY,
-        },
+        welcome: tampered,
         selfUserId: 'bob',
         myInitPrivKeyB64: BOB_KEY,
       })
@@ -1065,6 +1176,7 @@ describe('applyCommit — parent-hash binding', () => {
         i === 0 ? { ...e, publicKeyB64: MALLORY_KEY } : e
       ),
     }
+    tampered.signature = await signCommit(tampered, aliceState.leafSigningPrivKeyB64)
 
     // Bob decrypts the copath path secret fine, but the re-derived expected key
     // for the leaf differs from MALLORY_KEY → recoverAndVerify throws.
@@ -1087,6 +1199,7 @@ describe('applyCommit — parent-hash binding', () => {
         i === parentIdx ? { ...e, publicKeyB64: MALLORY_KEY } : e
       ),
     }
+    tampered.signature = await signCommit(tampered, aliceState.leafSigningPrivKeyB64)
 
     await expect(
       applyCommit({ state: bobState, commit: tampered, myInitPrivKeyB64: BOB_KEY })

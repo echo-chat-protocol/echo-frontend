@@ -52,6 +52,10 @@ vi.mock('@mascaro101/echo-protocol', () => {
     hkdf_derive: vi.fn((ikm, _salt, info, len) =>
       deriveBytes(len, new Uint8Array(ikm), new Uint8Array(info))
     ),
+    hkdf_extract: vi.fn((salt, ikm) => deriveBytes(32, new Uint8Array(salt), new Uint8Array(ikm))),
+    hkdf_expand: vi.fn((prk, info, len) =>
+      deriveBytes(len, new Uint8Array(prk), new Uint8Array(info))
+    ),
     derive_ed25519_keypair_from_x25519: vi.fn((priv) => new Uint8Array(priv).slice(0, 32)),
     convert_x25519_to_xeddsa: vi.fn((priv) => {
       const b = new Uint8Array(64)
@@ -81,19 +85,36 @@ vi.mock('@mascaro101/echo-protocol', () => {
 
 vi.mock('../keySchedule.js', () => ({
   advanceEpoch: vi.fn(async ({ initSecret, commitSecret, groupId, epoch }) => {
-    const epochSecret = deriveBytes(
-      32,
-      initSecret,
-      commitSecret,
-      encodeText(`${groupId}|${epoch}|epoch`)
-    )
+    const joinerSecret = deriveBytes(32, initSecret, commitSecret, encodeText('joiner'))
+    const epochSecret = deriveBytes(32, joinerSecret, encodeText(`${groupId}|${epoch}|epoch`))
     return {
       epochSecret,
       applicationSecret: deriveBytes(32, epochSecret, encodeText('encryption')),
       senderDataSecret: deriveBytes(32, epochSecret, encodeText('sender_data')),
+      externalSecret: deriveBytes(32, epochSecret, encodeText('external')),
       nextInitSecret: deriveBytes(32, epochSecret, encodeText('init')),
     }
   }),
+  deriveEpochSecrets: vi.fn(async (joinerSecret, { groupId, epoch }) => {
+    const epochSecret = deriveBytes(32, joinerSecret, encodeText(`${groupId}|${epoch}|epoch`))
+    return {
+      epochSecret,
+      applicationSecret: deriveBytes(32, epochSecret, encodeText('encryption')),
+      senderDataSecret: deriveBytes(32, epochSecret, encodeText('sender_data')),
+      externalSecret: deriveBytes(32, epochSecret, encodeText('external')),
+      nextInitSecret: deriveBytes(32, epochSecret, encodeText('init')),
+    }
+  }),
+  deriveJoinerSecret: vi.fn(async (initSecret, commitSecret) =>
+    deriveBytes(32, initSecret, commitSecret, encodeText('joiner'))
+  ),
+  deriveWelcomeSecret: vi.fn(async (joinerSecret) =>
+    deriveBytes(32, joinerSecret, encodeText('welcome'))
+  ),
+  deriveWelcomeKeyAndNonce: vi.fn(async (welcomeSecret) => ({
+    key: deriveBytes(32, welcomeSecret, encodeText('key')),
+    nonce: deriveBytes(12, welcomeSecret, encodeText('nonce')),
+  })),
   deriveSecret: vi.fn(async (secret, label) => deriveBytes(32, secret, encodeText(label))),
   expandWithLabel: vi.fn(async (secret, label, context, length) =>
     deriveBytes(length, secret, encodeText(label), context)
@@ -109,6 +130,13 @@ vi.mock('../keySchedule.js', () => ({
     deriveBytes(32, epochSecret, thBytes, encodeText('confirm'))
   ),
   verifyConfirmationTag: vi.fn(async () => {}),
+  deriveSenderDataKeyAndNonce: vi.fn(async (senderDataSecret, ciphertextPrefix4) => {
+    const ctx = new Uint8Array(ciphertextPrefix4).slice(0, 4)
+    return {
+      key: deriveBytes(32, senderDataSecret, encodeText('key'), ctx),
+      nonce: deriveBytes(12, senderDataSecret, encodeText('nonce'), ctx),
+    }
+  }),
 }))
 
 vi.mock('../../../../../../utils/storage/EncryptedLocalDatabase', () => ({

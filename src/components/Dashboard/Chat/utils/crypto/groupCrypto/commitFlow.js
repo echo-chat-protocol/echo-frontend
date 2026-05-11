@@ -1,13 +1,15 @@
 import { base64ToBytes, bytesToBase64 } from '../../helpers.js'
 
-// Protocol Imports
 import init, { generate_public_ephemeral_key } from '@mascaro101/echo-protocol'
 
-// TreeKEM math Imports
 import { copath, directPath, leafNode, nodeWidth, resolution } from './treemath.js'
 
-// Key schedule Imports
-import { advanceEpoch, computeConfirmationTag, verifyConfirmationTag } from '../keySchedule.js'
+import {
+  advanceEpoch,
+  computeConfirmationTag,
+  deriveJoinerSecret,
+  verifyConfirmationTag,
+} from '../keySchedule.js'
 import { normalizeGroupState } from './groupState.js'
 import {
   makeCommitAadBytes,
@@ -18,6 +20,7 @@ import {
   wrapPathSecret,
 } from './pathSecrets.js'
 import {
+  applyLeafDataPatch,
   blankNodeAndPath,
   computeLeafCount,
   findLeafIndexForUser,
@@ -26,10 +29,15 @@ import {
   normalizeRoster,
   publicTreeSnapshot,
   resizeNodes,
+  rosterFromLeafData,
 } from './treeState.js'
 import { encodeCommitForSigning, signCommit, signWelcome, verifyCommit } from './commitSigning.js'
 import { verifyRosterCredentials } from './credential.js'
-import { verifyKeyPackage } from './keyPackage.js'
+import {
+  resolveInitKeyB64,
+  resolveRosterIdentityFromKeyPackage,
+  verifyKeyPackage,
+} from './keyPackage.js'
 import {
   computeTreeHash,
   advanceTranscriptHash,
@@ -37,8 +45,9 @@ import {
   computeNodeSubtreeHash,
   computeParentHash,
 } from './groupContext.js'
+import { createProposal, resolveProposalRefs } from './proposals.js'
 
-// Returns prevTH bytes: from state if available, otherwise genesis.
+// Read the previous confirmed transcript hash from state.
 async function resolvePrevTranscriptHash(state) {
   if (
     typeof state.confirmedTranscriptHashB64 === 'string' &&
@@ -46,12 +55,18 @@ async function resolvePrevTranscriptHash(state) {
   ) {
     return base64ToBytes(state.confirmedTranscriptHashB64)
   }
-  return genesisTranscriptHash(state.groupId)
+  return genesisTranscriptHash()
 }
 
-// Builds the update path for a given sender.
-// Generates new path secrets for each node in the direct path and encrypts
-// them for the appropriate copath recipients.
+// Read the previous confirmation tag from state.
+function resolvePrevConfirmationTag(state) {
+  if (typeof state.confirmationTagB64 === 'string' && state.confirmationTagB64.length > 0) {
+    return base64ToBytes(state.confirmationTagB64)
+  }
+  return new Uint8Array(32)
+}
+
+// Build the fresh path secrets and node keys for a commit path.
 export async function buildUpdatePath(treeNodes, senderLeafIndex, leafCount) {
   await init()
 
@@ -59,29 +74,27 @@ export async function buildUpdatePath(treeNodes, senderLeafIndex, leafCount) {
   const pathNodes = [senderNodeIndex, ...directPath(senderNodeIndex, leafCount)]
   const copathNodes = copath(senderNodeIndex, leafCount)
 
-  // Random path secret for the leaf; each parent derives from the one below.
   const pathSecrets = [randomBytes(32)]
-  for (let index = 1; index < pathNodes.length; index++) {
+  for (let i = 1; i < pathNodes.length; i++) {
     const { deriveSecret } = await import('../keySchedule.js')
-    pathSecrets.push(await deriveSecret(pathSecrets[index - 1], 'path'))
+    pathSecrets.push(await deriveSecret(pathSecrets[i - 1], 'path'))
   }
 
   const { deriveSecret, expandWithLabel } = await import('../keySchedule.js')
   const commitSecret = await deriveSecret(pathSecrets[pathSecrets.length - 1], 'path')
 
   const updatePath = []
-  for (let index = 0; index < pathNodes.length; index++) {
-    const nodeIndex = pathNodes[index]
-    const pathSecret = pathSecrets[index]
+  for (let i = 0; i < pathNodes.length; i++) {
+    const nodeIndex = pathNodes[i]
+    const pathSecret = pathSecrets[i]
     const nodePrivBytes = await expandWithLabel(pathSecret, 'node', new Uint8Array(0), 32)
     const nodePubBytes = generate_public_ephemeral_key(nodePrivBytes)
 
     const recipientNodeIndices = new Set()
-    if (index === 0) recipientNodeIndices.add(senderNodeIndex)
-
-    if (index < copathNodes.length) {
-      for (const recipientNodeIdx of resolution(treeNodes, copathNodes[index], leafCount)) {
-        recipientNodeIndices.add(recipientNodeIdx)
+    if (i === 0) recipientNodeIndices.add(senderNodeIndex)
+    if (i < copathNodes.length) {
+      for (const idx of resolution(treeNodes, copathNodes[i], leafCount)) {
+        recipientNodeIndices.add(idx)
       }
     }
 
@@ -89,22 +102,18 @@ export async function buildUpdatePath(treeNodes, senderLeafIndex, leafCount) {
     for (const recipientNodeIdx of recipientNodeIndices) {
       const recipientPubB64 = treeNodes[recipientNodeIdx]?.publicKeyB64
       if (!recipientPubB64) continue
-
       const wrapped = await wrapPathSecret(
         pathSecret,
         recipientPubB64,
         makePathSecretAadBytes(nodeIndex)
       )
-
       encryptedPathSecrets.push({ recipientNodeIdx, ...wrapped })
     }
 
-    // parent_hash = SHA-256(nodePub || subtreeHash(copathNodes[index]))
-    // Binds this node's public key to the state of its copath sibling subtree.
-    // treeNodes is still the pre-commit tree here (buildUpdatePath never writes to it).
     let parentHashB64 = null
-    if (index < copathNodes.length) {
-      const siblingHash = await computeNodeSubtreeHash(treeNodes, copathNodes[index], leafCount)
+    if (i < copathNodes.length) {
+      // Bind each non-root path node to its sibling subtree.
+      const siblingHash = await computeNodeSubtreeHash(treeNodes, copathNodes[i], leafCount)
       const phBytes = await computeParentHash(nodePubBytes, siblingHash)
       parentHashB64 = bytesToBase64(phBytes)
     }
@@ -121,10 +130,9 @@ export async function buildUpdatePath(treeNodes, senderLeafIndex, leafCount) {
   return { updatePath, commitSecret }
 }
 
-// Builds the post-commit tree snapshot from an existing tree + update path.
+// Apply the public part of the update path to a tree snapshot.
 export function deriveCommitTree(treeNodes, updatePath, ownedLeafIndex, senderLeafIndex) {
   const nextTree = resizeNodes(treeNodes, treeNodes.length)
-
   for (const entry of updatePath) {
     nextTree[entry.nodeIndex] = {
       publicKeyB64: entry.publicKeyB64,
@@ -136,16 +144,10 @@ export function deriveCommitTree(treeNodes, updatePath, ownedLeafIndex, senderLe
           : null,
     }
   }
-
   return nextTree
 }
 
-// Apply new pk path nodes into your local tree and try to recover the commitSecret.
-// After decrypting a path secret, re-derives all ancestor path secrets and verifies:
-//   1. Each claimed node publicKeyB64 matches the key derived from the path secret.
-//   2. Each claimed parentHashB64 matches SHA-256(nodePub || subtreeHash(copathSibling)).
-// This closes the gap where a sender could claim arbitrary parent public keys without
-// holding the corresponding private keys or respecting the copath binding.
+// Recover the commit secret for the local member from the update path.
 export async function applyUpdatePath(
   treeNodes,
   updatePath,
@@ -173,10 +175,8 @@ export async function applyUpdatePath(
 
   const { deriveSecret, expandWithLabel } = await import('../keySchedule.js')
 
-  // Re-derives all path secrets upward from pathIndex, verifies each claimed node key
-  // and parent hash, then returns the commit secret. Throws on any mismatch so callers
-  // treat a verified decryption failure differently from a security violation.
   const recoverAndVerify = async (decryptedPathSecret, pathIndex) => {
+    // Re-derive each node key locally and compare it to the claimed path entry.
     let current = decryptedPathSecret
     for (let j = pathIndex; j < pathNodes.length; j++) {
       const nodePriv = await expandWithLabel(current, 'node', new Uint8Array(0), 32)
@@ -184,7 +184,6 @@ export async function applyUpdatePath(
       const expectedPubB64 = bytesToBase64(nodePub)
 
       const pathEntry = updatePath.find((e) => e.nodeIndex === pathNodes[j])
-
       if (pathEntry?.publicKeyB64 && pathEntry.publicKeyB64 !== expectedPubB64) {
         throw new Error(`Node key mismatch at nodeIndex ${pathNodes[j]} — update path is invalid`)
       }
@@ -203,9 +202,7 @@ export async function applyUpdatePath(
         }
       }
 
-      if (j + 1 < pathNodes.length) {
-        current = await deriveSecret(current, 'path')
-      }
+      if (j + 1 < pathNodes.length) current = await deriveSecret(current, 'path')
     }
     return deriveSecret(current, 'path')
   }
@@ -223,17 +220,17 @@ export async function applyUpdatePath(
           makePathSecretAadBytes(pathNodes[0])
         )
       } catch {
-        /* decryption failed, fall through */
+        /* proceed with undefined pathSecret if decryption fails */
       }
       if (pathSecret) return await recoverAndVerify(pathSecret, 0)
     }
   }
 
-  for (let index = 0; index < copathNodes.length; index++) {
-    const res = resolution(treeNodes, copathNodes[index], leafCount)
+  for (let i = 0; i < copathNodes.length; i++) {
+    const res = resolution(treeNodes, copathNodes[i], leafCount)
     if (!res.includes(myNodeIdx)) continue
 
-    const encrypted = updatePath[index]?.encryptedPathSecrets?.find(
+    const encrypted = updatePath[i]?.encryptedPathSecrets?.find(
       (e) => e.recipientNodeIdx === myNodeIdx
     )
     if (!encrypted) continue
@@ -243,54 +240,67 @@ export async function applyUpdatePath(
       pathSecret = await unwrapPathSecret(
         encrypted,
         myPrivKeyB64,
-        makePathSecretAadBytes(pathNodes[index])
+        makePathSecretAadBytes(pathNodes[i])
       )
     } catch {
       continue
-    } // wrong key — try next copath position
+    }
 
-    // Decryption succeeded: verification errors must propagate (not be silenced).
-    return await recoverAndVerify(pathSecret, index)
+    return await recoverAndVerify(pathSecret, i)
   }
 
   return null
 }
 
-// Builds the commit and welcome for adding a new member to the group.
+// Build an add commit for one new member.
 export async function buildAddCommit({ state, newMember, memberInitKeys }) {
   const currentState = normalizeGroupState(state)
   const newMemberUserId = String(newMember?.userId ?? '')
 
   if (!newMemberUserId) throw new Error('New member for add commit is missing userId')
-  if (!Number.isInteger(newMember?.leafIndex)) {
+  if (!Number.isInteger(newMember?.leafIndex))
     throw new Error('New member for add commit is missing leafIndex')
-  }
   if (!currentState.initSecretB64) {
     throw new Error(`Group state is missing initSecretB64 for group ${currentState.groupId}`)
   }
 
-  // Verify any KeyPackages present in memberInitKeys before touching their keys.
   for (const entry of memberInitKeys ?? []) {
-    if (entry.keyPackage) {
-      await verifyKeyPackage(entry.keyPackage)
-    }
+    if (entry.keyPackage) await verifyKeyPackage(entry.keyPackage)
   }
 
   const roster = normalizeRoster(currentState.roster)
-  if (roster.some((member) => String(member.userId) === newMemberUserId)) {
+  if (roster.some((m) => String(m.userId) === newMemberUserId)) {
     throw new Error(`Member ${newMemberUserId} already exists in group ${currentState.groupId}`)
   }
 
-  const newRoster = normalizeRoster([
-    ...roster,
-    {
-      userId: newMemberUserId,
-      username: newMember?.username ?? '',
-      leafIndex: newMember.leafIndex,
-    },
-  ])
+  const newMemberKeyPackage =
+    memberInitKeys?.find((e) => String(e.userId) === newMemberUserId)?.keyPackage ?? null
+  const newMemberIdentity = resolveRosterIdentityFromKeyPackage(newMemberKeyPackage)
 
+  const addProposal = await createProposal(
+    {
+      type: 'add',
+      groupId: currentState.groupId,
+      epoch: currentState.epoch,
+      senderLeafIndex: currentState.selfLeafIndex,
+      keyPackage: newMemberKeyPackage,
+    },
+    currentState.leafSigningPrivKeyB64
+  )
+
+  const newLeafData = applyLeafDataPatch(currentState.tree.leafData, {
+    [String(newMember.leafIndex)]: {
+      userId: newMemberUserId,
+      username: newMember?.username ?? 'Member',
+      leafSigningPubKeyB64:
+        newMemberIdentity?.leafSigningPubKeyB64 ?? newMember?.leafSigningPubKeyB64 ?? null,
+      credential: newMemberIdentity?.credential ?? newMember?.credential ?? null,
+    },
+  })
+
+  const newRoster = rosterFromLeafData(newLeafData)
   const nextEpoch = currentState.epoch + 1
+
   const leafCount = computeLeafCount({
     roster: newRoster,
     treeNodes: currentState.tree.nodes,
@@ -301,9 +311,9 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
   const newTree = resizeNodes(currentState.tree.nodes, width)
   installLeafPublicKeysFromMemberInitKeys(newTree, newRoster, memberInitKeys)
 
-  const newMemberInitKeyB64 = memberInitKeys?.find(
-    (entry) => String(entry.userId) === newMemberUserId
-  )?.initKeyB64
+  const newMemberInitKeyB64 = resolveInitKeyB64(
+    memberInitKeys?.find((entry) => String(entry.userId) === newMemberUserId)
+  )
   if (!newMemberInitKeyB64) {
     throw new Error(
       `Missing initKeyB64 for member ${newMemberUserId} — fetch their KeyPackage first`
@@ -314,9 +324,7 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
     publicKeyB64: newMemberInitKeyB64,
     privateKeyB64: null,
   }
-
   blankNodeAndPath(newTree, newMember.leafIndex, leafCount)
-
   newTree[leafNode(newMember.leafIndex)] = {
     publicKeyB64: newMemberInitKeyB64,
     privateKeyB64: null,
@@ -335,14 +343,15 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
     currentState.selfLeafIndex
   )
   const treePublicNodes = publicTreeSnapshot(nextTree)
-  const treeHash = await computeTreeHash(treePublicNodes)
+
+  const treeHash = await computeTreeHash(treePublicNodes, leafCount, newLeafData)
   const prevTH = await resolvePrevTranscriptHash(currentState)
+  const prevConfirmationTag = resolvePrevConfirmationTag(currentState)
 
   const senderRosterEntry = newRoster.find(
     (m) => String(m.userId) === String(currentState.selfUserId)
   )
 
-  // Build commit with all fields set before computing transcript hash.
   const commit = {
     groupId: currentState.groupId,
     epoch: nextEpoch,
@@ -352,6 +361,7 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
     targetUserId: newMemberUserId,
     targetLeafIndex: newMember.leafIndex,
     roster: newRoster,
+    leafDataPatch: { [String(newMember.leafIndex)]: newLeafData[String(newMember.leafIndex)] },
     leafCount,
     treePublicNodes,
     updatePath: updatePath.map((entry) => ({
@@ -360,16 +370,22 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
       parentHashB64: entry.parentHashB64 ?? null,
       encryptedPathSecrets: entry.encryptedPathSecrets,
     })),
-    proposalRefs: [],
+    proposalRefs: [addProposal.ref],
+    proposals: [addProposal],
   }
 
-  // Transcript hash is computed over the commit content (encodeCommitForSigning does not
-  // include confirmedTranscriptHashB64 or confirmationTagB64, so it's non-circular).
   const commitBytes = encodeCommitForSigning(commit)
-  const newConfirmedTH = await advanceTranscriptHash(prevTH, commitBytes)
+  const newConfirmedTH = await advanceTranscriptHash(prevTH, prevConfirmationTag, commitBytes)
 
-  // Advance epoch with full GroupContext so epochSecret is bound to tree + transcript.
-  const { applicationSecret, nextInitSecret, epochSecret } = await advanceEpoch({
+  const {
+    applicationSecret,
+    nextInitSecret,
+    epochSecret,
+    senderDataSecret,
+    externalSecret,
+    membershipSecret,
+    resumptionPsk,
+  } = await advanceEpoch({
     initSecret: base64ToBytes(currentState.initSecretB64),
     commitSecret,
     groupId: currentState.groupId,
@@ -379,38 +395,57 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
     confirmedTranscriptHash: newConfirmedTH,
   })
 
-  // Confirmation tag proves sender derived the same epoch secrets as receivers will.
   const confirmationTag = await computeConfirmationTag(epochSecret, newConfirmedTH)
   commit.confirmedTranscriptHashB64 = bytesToBase64(newConfirmedTH)
   commit.confirmationTagB64 = bytesToBase64(confirmationTag)
   commit.signature = await signCommit(commit, currentState.leafSigningPrivKeyB64)
 
+  const joinerSecret = await deriveJoinerSecret(
+    base64ToBytes(currentState.initSecretB64),
+    commitSecret
+  )
+
+  // Wrap the joiner secret for the new member, then encrypt the shared group info.
   const aadBytes = makeCommitAadBytes(currentState.groupId, nextEpoch)
-  const wrappedInitSecret = await wrapGroupKey(
-    currentState.initSecretB64,
+  const TEXT_ENC = new TextEncoder()
+  const groupSecretsPlaintext = JSON.stringify({ joinerSecretB64: bytesToBase64(joinerSecret) })
+  const wrappedGroupSecrets = await wrapGroupKey(
+    bytesToBase64(TEXT_ENC.encode(groupSecretsPlaintext)),
     newMemberInitKeyB64,
     aadBytes
   )
-  const wrappedCommitSecret = await wrapGroupKey(
-    bytesToBase64(commitSecret),
-    newMemberInitKeyB64,
-    aadBytes
-  )
+
+  const { deriveWelcomeSecret, deriveWelcomeKeyAndNonce } = await import('../keySchedule.js')
+  const { encrypt_aad_bytes: encAad } = await import('@mascaro101/echo-protocol')
+  const encryptGroupInfo = async (info) => {
+    const ws = await deriveWelcomeSecret(joinerSecret)
+    const { key, nonce } = await deriveWelcomeKeyAndNonce(ws)
+    const pt = TEXT_ENC.encode(JSON.stringify(info))
+    const ct = encAad(pt, key, nonce, new Uint8Array(0))
+    return { encryptedB64: bytesToBase64(ct), nonceB64: bytesToBase64(nonce) }
+  }
+
+  const encryptedGroupInfo = await encryptGroupInfo({
+    roster: newRoster,
+    leafData: newLeafData,
+    treePublicNodes,
+    leafCount,
+    confirmedTranscriptHashB64: bytesToBase64(newConfirmedTH),
+    confirmationTagB64: bytesToBase64(confirmationTag),
+    senderLeafIndex: currentState.selfLeafIndex,
+    senderSigningPubKeyB64: senderRosterEntry?.leafSigningPubKeyB64 ?? null,
+  })
 
   const welcome = {
     groupId: currentState.groupId,
     epoch: nextEpoch,
     cipherSuite: currentState.cipherSuite,
-    roster: newRoster,
     recipientUserId: newMemberUserId,
     recipientLeafIndex: newMember.leafIndex,
-    leafCount,
     senderLeafIndex: currentState.selfLeafIndex,
     senderSigningPubKeyB64: senderRosterEntry?.leafSigningPubKeyB64 ?? null,
-    wrappedInitSecret,
-    wrappedCommitSecret,
-    treePublicNodes,
-    confirmedTranscriptHashB64: bytesToBase64(newConfirmedTH),
+    encryptedGroupSecrets: wrappedGroupSecrets,
+    encryptedGroupInfo,
   }
   welcome.signature = await signWelcome(welcome, currentState.leafSigningPrivKeyB64)
 
@@ -419,19 +454,25 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
     epoch: nextEpoch,
     roster: newRoster,
     applicationSecretB64: bytesToBase64(applicationSecret),
+    senderDataSecretB64: bytesToBase64(senderDataSecret),
+    externalSecretB64: bytesToBase64(externalSecret),
+    membershipSecretB64: bytesToBase64(membershipSecret),
+    resumptionPskB64: bytesToBase64(resumptionPsk),
     initSecretB64: bytesToBase64(nextInitSecret),
+    confirmationTagB64: bytesToBase64(confirmationTag),
     confirmedTranscriptHashB64: bytesToBase64(newConfirmedTH),
     treeHashB64: bytesToBase64(treeHash),
     senderGenerations: {},
     applicationMessageCounter: 0,
-    tree: { nodes: nextTree },
+    tree: { nodes: nextTree, leafData: newLeafData },
     secrets: { initSecretB64: bytesToBase64(nextInitSecret) },
+    pendingProposals: [],
   })
 
   return { commit, welcome, nextState }
 }
 
-// Creates the next-epoch commit for removing a member from the group.
+// Build a remove commit for one target member.
 export async function buildRemoveCommit({ state, targetUserId, memberInitKeys }) {
   const currentState = normalizeGroupState(state)
   const targetUserIdStr = String(targetUserId ?? '')
@@ -441,20 +482,31 @@ export async function buildRemoveCommit({ state, targetUserId, memberInitKeys })
     throw new Error(`Group state is missing initSecretB64 for group ${currentState.groupId}`)
   }
 
-  // Verify any KeyPackages present in memberInitKeys.
   for (const entry of memberInitKeys ?? []) {
-    if (entry.keyPackage) {
-      await verifyKeyPackage(entry.keyPackage)
-    }
+    if (entry.keyPackage) await verifyKeyPackage(entry.keyPackage)
   }
 
   const roster = normalizeRoster(currentState.roster)
-  const targetMember = roster.find((member) => String(member.userId) === targetUserIdStr)
-  if (!targetMember) {
-    throw new Error(`Target userId ${targetUserIdStr} not found in group roster`)
-  }
+  const targetMember = roster.find((m) => String(m.userId) === targetUserIdStr)
+  if (!targetMember) throw new Error(`Target userId ${targetUserIdStr} not found in group roster`)
 
-  const newRoster = roster.filter((member) => String(member.userId) !== targetUserIdStr)
+  const removeProposal = await createProposal(
+    {
+      type: 'remove',
+      groupId: currentState.groupId,
+      epoch: currentState.epoch,
+      senderLeafIndex: currentState.selfLeafIndex,
+      targetLeafIndex: targetMember.leafIndex,
+      targetUserId: targetUserIdStr,
+    },
+    currentState.leafSigningPrivKeyB64
+  )
+
+  const newLeafData = applyLeafDataPatch(currentState.tree.leafData, {
+    [String(targetMember.leafIndex)]: null,
+  })
+
+  const newRoster = rosterFromLeafData(newLeafData)
   const leafCount = computeLeafCount({
     roster,
     treeNodes: currentState.tree.nodes,
@@ -466,7 +518,6 @@ export async function buildRemoveCommit({ state, targetUserId, memberInitKeys })
   blankNodeAndPath(newTree, targetMember.leafIndex, leafCount)
 
   const nextEpoch = currentState.epoch + 1
-
   const { updatePath, commitSecret } = await buildUpdatePath(
     newTree,
     currentState.selfLeafIndex,
@@ -480,8 +531,9 @@ export async function buildRemoveCommit({ state, targetUserId, memberInitKeys })
     currentState.selfLeafIndex
   )
   const treePublicNodes = publicTreeSnapshot(nextTree)
-  const treeHash = await computeTreeHash(treePublicNodes)
+  const treeHash = await computeTreeHash(treePublicNodes, leafCount, newLeafData)
   const prevTH = await resolvePrevTranscriptHash(currentState)
+  const prevConfirmationTag = resolvePrevConfirmationTag(currentState)
 
   const senderRosterEntry = newRoster.find(
     (m) => String(m.userId) === String(currentState.selfUserId)
@@ -496,6 +548,7 @@ export async function buildRemoveCommit({ state, targetUserId, memberInitKeys })
     targetUserId: targetUserIdStr,
     targetLeafIndex: targetMember.leafIndex,
     roster: newRoster,
+    leafDataPatch: { [String(targetMember.leafIndex)]: null },
     leafCount,
     treePublicNodes,
     updatePath: updatePath.map((entry) => ({
@@ -504,13 +557,22 @@ export async function buildRemoveCommit({ state, targetUserId, memberInitKeys })
       parentHashB64: entry.parentHashB64 ?? null,
       encryptedPathSecrets: entry.encryptedPathSecrets,
     })),
-    proposalRefs: [],
+    proposalRefs: [removeProposal.ref],
+    proposals: [removeProposal],
   }
 
   const commitBytes = encodeCommitForSigning(commit)
-  const newConfirmedTH = await advanceTranscriptHash(prevTH, commitBytes)
+  const newConfirmedTH = await advanceTranscriptHash(prevTH, prevConfirmationTag, commitBytes)
 
-  const { applicationSecret, nextInitSecret, epochSecret } = await advanceEpoch({
+  const {
+    applicationSecret,
+    nextInitSecret,
+    epochSecret,
+    senderDataSecret,
+    externalSecret,
+    membershipSecret,
+    resumptionPsk,
+  } = await advanceEpoch({
     initSecret: base64ToBytes(currentState.initSecretB64),
     commitSecret,
     groupId: currentState.groupId,
@@ -526,30 +588,275 @@ export async function buildRemoveCommit({ state, targetUserId, memberInitKeys })
   commit.signature = await signCommit(commit, currentState.leafSigningPrivKeyB64)
 
   const selfStillPresent = newRoster.some(
-    (member) => String(member.userId) === String(currentState.selfUserId)
+    (m) => String(m.userId) === String(currentState.selfUserId)
   )
 
+  // A removed member keeps the new roster view but loses epoch secrets.
   const nextState = normalizeGroupState({
     ...currentState,
     epoch: nextEpoch,
     roster: newRoster,
     selfLeafIndex: selfStillPresent ? currentState.selfLeafIndex : null,
     applicationSecretB64: selfStillPresent ? bytesToBase64(applicationSecret) : null,
+    senderDataSecretB64: selfStillPresent ? bytesToBase64(senderDataSecret) : null,
+    externalSecretB64: selfStillPresent ? bytesToBase64(externalSecret) : null,
+    membershipSecretB64: selfStillPresent ? bytesToBase64(membershipSecret) : null,
+    resumptionPskB64: selfStillPresent ? bytesToBase64(resumptionPsk) : null,
     initSecretB64: selfStillPresent ? bytesToBase64(nextInitSecret) : null,
+    confirmationTagB64: selfStillPresent ? bytesToBase64(confirmationTag) : null,
     confirmedTranscriptHashB64: selfStillPresent ? bytesToBase64(newConfirmedTH) : null,
     treeHashB64: selfStillPresent ? bytesToBase64(treeHash) : null,
     senderGenerations: {},
     applicationMessageCounter: 0,
-    tree: { nodes: nextTree },
-    secrets: {
-      initSecretB64: selfStillPresent ? bytesToBase64(nextInitSecret) : null,
-    },
+    tree: { nodes: nextTree, leafData: newLeafData },
+    secrets: { initSecretB64: selfStillPresent ? bytesToBase64(nextInitSecret) : null },
+    pendingProposals: [],
   })
 
   return { commit, nextState }
 }
 
-// Applies a received commit to derive the next local epoch state.
+// Build a self-update commit that rotates the sender leaf.
+export async function buildUpdateCommit({
+  state,
+  newInitKeyB64,
+  newInitPrivKeyB64,
+  newLeafSigningPrivKeyB64,
+  newLeafSigningPubKeyB64,
+  memberInitKeys,
+}) {
+  const currentState = normalizeGroupState(state)
+
+  const selfMemberEntry = memberInitKeys?.find(
+    (entry) => String(entry.userId) === String(currentState.selfUserId)
+  )
+  const newKeyPackage = selfMemberEntry?.keyPackage ?? null
+  if (newKeyPackage) {
+    await verifyKeyPackage(newKeyPackage)
+    if (String(newKeyPackage.userId) !== String(currentState.selfUserId)) {
+      throw new Error(`Update KeyPackage userId mismatch for ${currentState.selfUserId}`)
+    }
+  }
+  const effectiveNewInitKeyB64 = newKeyPackage?.initKeyB64 ?? newInitKeyB64
+  const effectiveLeafSigningPubKeyB64 =
+    newKeyPackage?.leafSigningPubKeyB64 ?? newLeafSigningPubKeyB64
+  const effectiveCredential = newKeyPackage?.credential ?? null
+
+  if (!currentState.initSecretB64) {
+    throw new Error(`Group state is missing initSecretB64 for group ${currentState.groupId}`)
+  }
+
+  const updateProposal = await createProposal(
+    {
+      type: 'update',
+      groupId: currentState.groupId,
+      epoch: currentState.epoch,
+      senderLeafIndex: currentState.selfLeafIndex,
+      newInitKeyB64: effectiveNewInitKeyB64,
+      newLeafSigningPubKeyB64: effectiveLeafSigningPubKeyB64,
+      keyPackage: newKeyPackage,
+    },
+    currentState.leafSigningPrivKeyB64
+  )
+
+  const leafCount = computeLeafCount({
+    roster: currentState.roster,
+    treeNodes: currentState.tree.nodes,
+  })
+  const newTree = resizeNodes(currentState.tree.nodes, nodeWidth(leafCount))
+  installLeafPublicKeysFromMemberInitKeys(newTree, currentState.roster, memberInitKeys ?? [])
+
+  // Replace the sender leaf key material before building the new path.
+  const selfNodeIdx = leafNode(currentState.selfLeafIndex)
+  newTree[selfNodeIdx] = {
+    publicKeyB64: effectiveNewInitKeyB64,
+    privateKeyB64: newInitPrivKeyB64 ?? null,
+  }
+
+  const { updatePath, commitSecret } = await buildUpdatePath(
+    newTree,
+    currentState.selfLeafIndex,
+    leafCount
+  )
+  const nextTree = deriveCommitTree(
+    newTree,
+    updatePath,
+    currentState.selfLeafIndex,
+    currentState.selfLeafIndex
+  )
+  const treePublicNodes = publicTreeSnapshot(nextTree)
+
+  const newLeafData = applyLeafDataPatch(currentState.tree.leafData, {
+    [String(currentState.selfLeafIndex)]: {
+      ...(currentState.tree.leafData[String(currentState.selfLeafIndex)] ?? {}),
+      leafSigningPubKeyB64: effectiveLeafSigningPubKeyB64,
+      credential:
+        effectiveCredential ??
+        currentState.tree.leafData[String(currentState.selfLeafIndex)]?.credential ??
+        null,
+    },
+  })
+  const newRoster = rosterFromLeafData(newLeafData)
+  const treeHash = await computeTreeHash(treePublicNodes, leafCount, newLeafData)
+
+  const nextEpoch = currentState.epoch + 1
+  const prevTH = await resolvePrevTranscriptHash(currentState)
+  const prevConfirmationTag = resolvePrevConfirmationTag(currentState)
+
+  const commit = {
+    groupId: currentState.groupId,
+    epoch: nextEpoch,
+    type: 'update',
+    senderLeafIndex: currentState.selfLeafIndex,
+    senderSigningPubKeyB64: effectiveLeafSigningPubKeyB64,
+    targetUserId: currentState.selfUserId,
+    targetLeafIndex: currentState.selfLeafIndex,
+    roster: newRoster,
+    leafDataPatch: {
+      [String(currentState.selfLeafIndex)]: newLeafData[String(currentState.selfLeafIndex)],
+    },
+    leafCount,
+    treePublicNodes,
+    updatePath: updatePath.map((e) => ({
+      nodeIndex: e.nodeIndex,
+      publicKeyB64: e.publicKeyB64,
+      parentHashB64: e.parentHashB64 ?? null,
+      encryptedPathSecrets: e.encryptedPathSecrets,
+    })),
+    proposalRefs: [updateProposal.ref],
+    proposals: [updateProposal],
+  }
+
+  const commitBytes = encodeCommitForSigning(commit)
+  const newConfirmedTH = await advanceTranscriptHash(prevTH, prevConfirmationTag, commitBytes)
+
+  const {
+    applicationSecret,
+    nextInitSecret,
+    epochSecret,
+    senderDataSecret,
+    externalSecret,
+    membershipSecret,
+    resumptionPsk,
+  } = await advanceEpoch({
+    initSecret: base64ToBytes(currentState.initSecretB64),
+    commitSecret,
+    groupId: currentState.groupId,
+    epoch: nextEpoch,
+    cipherSuite: currentState.cipherSuite,
+    treeHash,
+    confirmedTranscriptHash: newConfirmedTH,
+  })
+
+  const confirmationTag = await computeConfirmationTag(epochSecret, newConfirmedTH)
+  commit.confirmedTranscriptHashB64 = bytesToBase64(newConfirmedTH)
+  commit.confirmationTagB64 = bytesToBase64(confirmationTag)
+  commit.signature = await signCommit(commit, newLeafSigningPrivKeyB64)
+
+  const nextState = normalizeGroupState({
+    ...currentState,
+    epoch: nextEpoch,
+    roster: newRoster,
+    applicationSecretB64: bytesToBase64(applicationSecret),
+    senderDataSecretB64: bytesToBase64(senderDataSecret),
+    externalSecretB64: bytesToBase64(externalSecret),
+    membershipSecretB64: bytesToBase64(membershipSecret),
+    resumptionPskB64: bytesToBase64(resumptionPsk),
+    initSecretB64: bytesToBase64(nextInitSecret),
+    confirmationTagB64: bytesToBase64(confirmationTag),
+    confirmedTranscriptHashB64: bytesToBase64(newConfirmedTH),
+    treeHashB64: bytesToBase64(treeHash),
+    senderGenerations: {},
+    applicationMessageCounter: 0,
+    tree: { nodes: nextTree, leafData: newLeafData },
+    secrets: { initSecretB64: bytesToBase64(nextInitSecret) },
+    leafSigningPrivKeyB64: newLeafSigningPrivKeyB64,
+    pendingProposals: [],
+  })
+
+  return { commit, nextState }
+}
+
+// Build a ReInit commit that closes the current epoch lineage.
+export async function buildReInitCommit({ state, newGroupId, newCipherSuite }) {
+  const currentState = normalizeGroupState(state)
+
+  const { createReInitProposal } = await import('./proposals.js')
+  const reInitProposal = await createReInitProposal({
+    state: currentState,
+    newGroupId,
+    newCipherSuite,
+  })
+
+  const leafCount = computeLeafCount({
+    roster: currentState.roster,
+    treeNodes: currentState.tree.nodes,
+  })
+  const commitSecret = randomBytes(32)
+  const treePublicNodes = publicTreeSnapshot(currentState.tree.nodes)
+  const treeHash = await computeTreeHash(treePublicNodes, leafCount, currentState.tree.leafData)
+  const nextEpoch = currentState.epoch + 1
+  const prevTH = await resolvePrevTranscriptHash(currentState)
+  const prevConfirmationTag = resolvePrevConfirmationTag(currentState)
+
+  const senderRosterEntry = currentState.roster.find(
+    (m) => String(m.userId) === String(currentState.selfUserId)
+  )
+
+  const commit = {
+    groupId: currentState.groupId,
+    epoch: nextEpoch,
+    type: 'reinit',
+    senderLeafIndex: currentState.selfLeafIndex,
+    senderSigningPubKeyB64: senderRosterEntry?.leafSigningPubKeyB64 ?? null,
+    targetUserId: null,
+    targetLeafIndex: null,
+    roster: currentState.roster,
+    leafDataPatch: {},
+    leafCount,
+    treePublicNodes,
+    updatePath: [],
+    proposalRefs: [reInitProposal.ref],
+    proposals: [reInitProposal],
+    newGroupId: newGroupId ?? currentState.groupId,
+    newCipherSuite: newCipherSuite ?? currentState.cipherSuite,
+  }
+
+  const commitBytes = encodeCommitForSigning(commit)
+  const newConfirmedTH = await advanceTranscriptHash(prevTH, prevConfirmationTag, commitBytes)
+
+  const { epochSecret } = await advanceEpoch({
+    initSecret: base64ToBytes(currentState.initSecretB64),
+    commitSecret,
+    groupId: currentState.groupId,
+    epoch: nextEpoch,
+    cipherSuite: currentState.cipherSuite,
+    treeHash,
+    confirmedTranscriptHash: newConfirmedTH,
+  })
+
+  const confirmationTag = await computeConfirmationTag(epochSecret, newConfirmedTH)
+  commit.confirmedTranscriptHashB64 = bytesToBase64(newConfirmedTH)
+  commit.confirmationTagB64 = bytesToBase64(confirmationTag)
+  commit.signature = await signCommit(commit, currentState.leafSigningPrivKeyB64)
+
+  // ReInit leaves the group shell in place but clears the old epoch secrets.
+  const nextState = normalizeGroupState({
+    ...currentState,
+    epoch: nextEpoch,
+    applicationSecretB64: null,
+    senderDataSecretB64: null,
+    externalSecretB64: null,
+    initSecretB64: null,
+    confirmationTagB64: null,
+    reInit: true,
+    pendingProposals: [],
+  })
+
+  return { commit, nextState, newGroupId: newGroupId ?? currentState.groupId }
+}
+
+// Verify and apply one incoming commit to local state.
 export async function applyCommit({ state, commit, myInitPrivKeyB64 }) {
   const currentState = normalizeGroupState(state)
 
@@ -557,54 +864,115 @@ export async function applyCommit({ state, commit, myInitPrivKeyB64 }) {
   if (String(commit.groupId ?? '') !== String(currentState.groupId)) {
     throw new Error('Commit groupId mismatch')
   }
-  if (commit.epoch !== currentState.epoch + 1) {
-    throw new Error('Invalid commit epoch')
-  }
-  if (!Array.isArray(commit.roster)) throw new Error('Commit is missing roster')
+  if (commit.epoch !== currentState.epoch + 1) throw new Error('Invalid commit epoch')
   if (!Array.isArray(commit.updatePath)) throw new Error('Commit is missing updatePath')
 
-  // Confirmation tag is mandatory — reject commits that omit it (fail closed).
   if (!commit.confirmationTagB64) {
     throw new Error('Commit is missing confirmation tag — rejecting to fail closed')
   }
 
-  // Look up sender in the CURRENT roster (before applying the commit).
+  let resolvedProposals = []
+  if (Array.isArray(commit.proposalRefs) && commit.proposalRefs.length > 0) {
+    // Proposal refs can resolve from inline proposals or locally pending ones.
+    resolvedProposals = resolveProposalRefs(
+      commit.proposalRefs,
+      commit.proposals,
+      currentState.pendingProposals
+    )
+  }
+
   const senderEntry = normalizeRoster(currentState.roster).find(
     (m) => m.leafIndex === commit.senderLeafIndex
   )
   if (!senderEntry?.leafSigningPubKeyB64) {
     throw new Error(`No signing pub key for commit sender at leafIndex ${commit.senderLeafIndex}`)
   }
+  let commitVerifyKeyB64 = senderEntry.leafSigningPubKeyB64
   if (
     commit.senderSigningPubKeyB64 &&
     commit.senderSigningPubKeyB64 !== senderEntry.leafSigningPubKeyB64
   ) {
-    throw new Error('Commit sender signing pub key mismatch')
+    if (commit.type !== 'update') {
+      throw new Error('Commit sender signing pub key mismatch')
+    }
+    const updateProposal = resolvedProposals.find((proposal) => proposal.type === 'update')
+    const proposedSigningKeyB64 =
+      updateProposal?.keyPackage?.leafSigningPubKeyB64 ??
+      updateProposal?.newLeafSigningPubKeyB64 ??
+      commit.leafDataPatch?.[String(commit.targetLeafIndex)]?.leafSigningPubKeyB64 ??
+      null
+    if (!proposedSigningKeyB64 || proposedSigningKeyB64 !== commit.senderSigningPubKeyB64) {
+      throw new Error('Commit sender signing pub key mismatch')
+    }
+    commitVerifyKeyB64 = proposedSigningKeyB64
   }
 
-  // Verify commit signature. encodeCommitForSigning does not include confirmedTranscriptHashB64
-  // or confirmationTagB64, so the signature is stable whether or not those fields are present.
-  await verifyCommit(commit, senderEntry.leafSigningPubKeyB64)
+  await verifyCommit(commit, commitVerifyKeyB64)
 
-  // Verify all credentials in the incoming roster.
-  await verifyRosterCredentials(commit.roster)
+  if (commit.type === 'add') {
+    const addProposal = resolvedProposals.find((proposal) => proposal.type === 'add')
+    const addPatch = commit.leafDataPatch?.[String(commit.targetLeafIndex)]
+    if (addProposal?.keyPackage && addPatch) {
+      if (String(addPatch.userId) !== String(addProposal.keyPackage.userId)) {
+        throw new Error('Add commit leafData userId mismatch')
+      }
+      if (addPatch.leafSigningPubKeyB64 !== addProposal.keyPackage.leafSigningPubKeyB64) {
+        throw new Error('Add commit signing pub key mismatch')
+      }
+      if (
+        JSON.stringify(addPatch.credential ?? null) !==
+        JSON.stringify(addProposal.keyPackage.credential ?? null)
+      ) {
+        throw new Error('Add commit credential mismatch')
+      }
+    }
+  }
+
+  if (commit.type === 'update') {
+    const updateProposal = resolvedProposals.find((proposal) => proposal.type === 'update')
+    const updatePatch = commit.leafDataPatch?.[String(commit.targetLeafIndex)]
+    if (updateProposal?.keyPackage && updatePatch) {
+      if (String(updatePatch.userId) !== String(updateProposal.keyPackage.userId)) {
+        throw new Error('Update commit leafData userId mismatch')
+      }
+      if (updatePatch.leafSigningPubKeyB64 !== updateProposal.keyPackage.leafSigningPubKeyB64) {
+        throw new Error('Update commit signing pub key mismatch')
+      }
+      if (
+        JSON.stringify(updatePatch.credential ?? null) !==
+        JSON.stringify(updateProposal.keyPackage.credential ?? null)
+      ) {
+        throw new Error('Update commit credential mismatch')
+      }
+    }
+  }
+
+  const newLeafData = applyLeafDataPatch(currentState.tree.leafData, commit.leafDataPatch ?? {})
+  const newRoster =
+    rosterFromLeafData(newLeafData).length > 0
+      ? rosterFromLeafData(newLeafData)
+      : normalizeRoster(commit.roster ?? [])
+
+  // Commits are authoritative for tree state, but roster can still migrate from commit.roster.
+  await verifyRosterCredentials(newRoster.filter((m) => m.credential))
 
   const leafCount = Number.isInteger(commit.leafCount)
     ? commit.leafCount
     : computeLeafCount({
-        roster: commit.roster,
+        roster: newRoster,
         treeNodes: currentState.tree.nodes,
         extraLeafIndex: commit.targetLeafIndex,
       })
 
-  const treeNodes = Array.isArray(commit.treePublicNodes)
+  const baseTree = Array.isArray(commit.treePublicNodes)
     ? makeTreeFromPublicNodes(commit.treePublicNodes, currentState.tree.nodes)
     : resizeNodes(currentState.tree.nodes, nodeWidth(leafCount))
+  const candidateTree = [...baseTree]
 
-  const selfLeafIndex = findLeafIndexForUser(commit.roster, currentState.selfUserId)
+  const selfLeafIndex = findLeafIndexForUser(newRoster, currentState.selfUserId)
 
   const commitSecret = await applyUpdatePath(
-    treeNodes,
+    candidateTree,
     commit.updatePath,
     commit.senderLeafIndex,
     leafCount,
@@ -612,11 +980,10 @@ export async function applyCommit({ state, commit, myInitPrivKeyB64 }) {
     myInitPrivKeyB64
   )
 
-  // Compute the transcript hash from our current state and the received commit bytes.
-  // This must match what the committer claimed.
   const prevTH = await resolvePrevTranscriptHash(currentState)
+  const prevConfirmationTag = resolvePrevConfirmationTag(currentState)
   const commitBytes = encodeCommitForSigning(commit)
-  const expectedTH = await advanceTranscriptHash(prevTH, commitBytes)
+  const expectedTH = await advanceTranscriptHash(prevTH, prevConfirmationTag, commitBytes)
 
   if (commit.confirmedTranscriptHashB64) {
     const claimedTH = base64ToBytes(commit.confirmedTranscriptHashB64)
@@ -625,11 +992,10 @@ export async function applyCommit({ state, commit, myInitPrivKeyB64 }) {
     }
   }
 
-  // Compute tree hash from the commit's public tree.
   const treePublicNodes = Array.isArray(commit.treePublicNodes)
     ? commit.treePublicNodes
-    : publicTreeSnapshot(treeNodes)
-  const treeHash = await computeTreeHash(treePublicNodes)
+    : publicTreeSnapshot(candidateTree)
+  const treeHash = await computeTreeHash(treePublicNodes, leafCount, newLeafData)
 
   const nextEpochSecrets =
     commitSecret && currentState.initSecretB64
@@ -644,7 +1010,6 @@ export async function applyCommit({ state, commit, myInitPrivKeyB64 }) {
         })
       : null
 
-  // Verify the confirmation tag if we were able to derive the epoch secrets.
   if (nextEpochSecrets && commit.confirmationTagB64) {
     await verifyConfirmationTag(
       nextEpochSecrets.epochSecret,
@@ -653,22 +1018,44 @@ export async function applyCommit({ state, commit, myInitPrivKeyB64 }) {
     )
   }
 
+  if (commit.type === 'reinit') {
+    return normalizeGroupState({
+      ...currentState,
+      epoch: commit.epoch,
+      roster: newRoster,
+      applicationSecretB64: null,
+      senderDataSecretB64: null,
+      externalSecretB64: null,
+      initSecretB64: null,
+      confirmationTagB64: null,
+      reInit: true,
+      tree: { nodes: candidateTree, leafData: newLeafData },
+      pendingProposals: [],
+    })
+  }
+
   return normalizeGroupState({
     ...currentState,
     epoch: commit.epoch,
-    roster: commit.roster,
+    roster: newRoster,
     selfLeafIndex,
     applicationSecretB64: nextEpochSecrets
       ? bytesToBase64(nextEpochSecrets.applicationSecret)
       : null,
+    senderDataSecretB64: nextEpochSecrets ? bytesToBase64(nextEpochSecrets.senderDataSecret) : null,
+    externalSecretB64: nextEpochSecrets ? bytesToBase64(nextEpochSecrets.externalSecret) : null,
+    membershipSecretB64: nextEpochSecrets ? bytesToBase64(nextEpochSecrets.membershipSecret) : null,
+    resumptionPskB64: nextEpochSecrets ? bytesToBase64(nextEpochSecrets.resumptionPsk) : null,
     initSecretB64: nextEpochSecrets ? bytesToBase64(nextEpochSecrets.nextInitSecret) : null,
+    confirmationTagB64: commit.confirmationTagB64 ?? null,
     confirmedTranscriptHashB64: bytesToBase64(expectedTH),
     treeHashB64: bytesToBase64(treeHash),
     senderGenerations: {},
     applicationMessageCounter: 0,
-    tree: { nodes: treeNodes },
+    tree: { nodes: candidateTree, leafData: newLeafData },
     secrets: {
       initSecretB64: nextEpochSecrets ? bytesToBase64(nextEpochSecrets.nextInitSecret) : null,
     },
+    pendingProposals: [],
   })
 }

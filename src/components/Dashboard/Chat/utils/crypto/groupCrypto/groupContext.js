@@ -1,23 +1,30 @@
 import { base64ToBytes } from '../../helpers.js'
-import { level, left, right, nodeWidth } from './treemath.js'
+import { level, left, right, nodeWidth, root } from './treemath.js'
 
 const TEXT_ENCODER = new TextEncoder()
 
+// Hash one byte sequence with SHA-256.
 export async function sha256(bytes) {
   const buffer = await crypto.subtle.digest('SHA-256', bytes)
   return new Uint8Array(buffer)
 }
 
-// Deterministic hash over the public nodes of a tree.
-// The input is the flat array returned by publicTreeSnapshot (nulls become empty string).
-export async function computeTreeHash(treePublicNodes) {
-  const canonical = (treePublicNodes ?? []).map((k) => k ?? '').join(',')
-  return sha256(TEXT_ENCODER.encode(canonical))
+// Compute the starting transcript hash for a new group.
+export async function genesisTranscriptHash() {
+  return sha256(new Uint8Array(0))
 }
 
-// Encodes the full MLS GroupContext as a deterministic byte string.
-// All fields are length-prefixed so the encoding is unambiguous.
-export async function encodeGroupContext({
+const CIPHER_SUITE_CODES = {
+  'ECHO-MLS/X25519_AES256GCM_SHA256': 0xff01,
+}
+
+// Map app cipher suite names to the numeric code used in the context bytes.
+function cipherSuiteCode(str) {
+  return CIPHER_SUITE_CODES[str] ?? 0xff01
+}
+
+// Serialize the fields that feed the MLS key schedule.
+export function encodeGroupContext({
   groupId,
   epoch,
   cipherSuite,
@@ -25,35 +32,33 @@ export async function encodeGroupContext({
   confirmedTranscriptHash,
 }) {
   const gidBytes = TEXT_ENCODER.encode(groupId)
-  const csBytes = TEXT_ENCODER.encode(cipherSuite)
+  const cs = cipherSuiteCode(cipherSuite)
 
   const buf = new Uint8Array(
-    4 + // epoch (uint32 big-endian)
-      2 +
-      gidBytes.length + // groupId
-      2 +
-      csBytes.length + // cipherSuite
-      2 +
-      treeHash.length + // treeHash
-      2 +
-      confirmedTranscriptHash.length // confirmedTranscriptHash
+    2 + 2 + 2 + gidBytes.length + 8 + 2 + treeHash.length + 2 + confirmedTranscriptHash.length + 2
   )
 
   let o = 0
-  buf[o++] = (epoch >>> 24) & 0xff
-  buf[o++] = (epoch >>> 16) & 0xff
-  buf[o++] = (epoch >>> 8) & 0xff
-  buf[o++] = epoch & 0xff
+
+  buf[o++] = 0x00
+  buf[o++] = 0x01
+
+  buf[o++] = (cs >>> 8) & 0xff
+  buf[o++] = cs & 0xff
 
   buf[o++] = (gidBytes.length >>> 8) & 0xff
   buf[o++] = gidBytes.length & 0xff
   buf.set(gidBytes, o)
   o += gidBytes.length
 
-  buf[o++] = (csBytes.length >>> 8) & 0xff
-  buf[o++] = csBytes.length & 0xff
-  buf.set(csBytes, o)
-  o += csBytes.length
+  buf[o++] = 0
+  buf[o++] = 0
+  buf[o++] = 0
+  buf[o++] = 0
+  buf[o++] = (epoch >>> 24) & 0xff
+  buf[o++] = (epoch >>> 16) & 0xff
+  buf[o++] = (epoch >>> 8) & 0xff
+  buf[o++] = epoch & 0xff
 
   buf[o++] = (treeHash.length >>> 8) & 0xff
   buf[o++] = treeHash.length & 0xff
@@ -63,40 +68,48 @@ export async function encodeGroupContext({
   buf[o++] = (confirmedTranscriptHash.length >>> 8) & 0xff
   buf[o++] = confirmedTranscriptHash.length & 0xff
   buf.set(confirmedTranscriptHash, o)
+  o += confirmedTranscriptHash.length
+
+  buf[o++] = 0x00
+  buf[o++] = 0x00
 
   return buf
 }
 
-// newConfirmedTH = SHA-256(prevConfirmedTH || commitBytes)
-export async function advanceTranscriptHash(prevConfirmedTranscriptHash, commitBytes) {
-  const combined = new Uint8Array(prevConfirmedTranscriptHash.length + commitBytes.length)
-  combined.set(prevConfirmedTranscriptHash, 0)
-  combined.set(commitBytes, prevConfirmedTranscriptHash.length)
-  return sha256(combined)
+// Advance the confirmed transcript hash for one commit.
+export async function advanceTranscriptHash(prevConfirmedTH, prevConfirmationTag, commitBytes) {
+  // Hash the previous transcript state with the previous confirmation tag first.
+  const interim = new Uint8Array(prevConfirmedTH.length + prevConfirmationTag.length)
+  interim.set(prevConfirmedTH, 0)
+  interim.set(prevConfirmationTag, prevConfirmedTH.length)
+  const interimTH = await sha256(interim)
+
+  // Then extend that value with the current commit bytes.
+  const confirmed = new Uint8Array(interimTH.length + commitBytes.length)
+  confirmed.set(interimTH, 0)
+  confirmed.set(commitBytes, interimTH.length)
+  return sha256(confirmed)
 }
 
-// Deterministic epoch-0 starting point for the transcript hash.
-export async function genesisTranscriptHash(groupId) {
-  return sha256(TEXT_ENCODER.encode(`EchoMLS/v1/Genesis|${groupId}`))
+// Compute the root tree hash for a public tree snapshot.
+export async function computeTreeHash(treePublicNodes, leafCount, leafData = {}) {
+  if (!Array.isArray(treePublicNodes) || treePublicNodes.length === 0 || !leafCount) {
+    return sha256(TEXT_ENCODER.encode('EchoMLS/v1/blank'))
+  }
+  const nodes = treePublicNodes.map((k) =>
+    typeof k === 'string' && k.length > 0 ? { publicKeyB64: k } : { publicKeyB64: null }
+  )
+  const rootIdx = root(leafCount)
+  return computeNodeSubtreeHash(nodes, rootIdx, leafCount, leafData)
 }
 
-// ---------------------------------------------------------------------------
-// Parent-hash primitives
-// ---------------------------------------------------------------------------
-
-// Recursive Merkle-like hash of any subtree in the node array.
-//
-// Leaf:   SHA-256("EchoMLS/v1/leaf|"   || pubKeyBytes)
-// Parent: SHA-256("EchoMLS/v1/parent|" || pubLen[2] || pubKey || leftHash || rightHash)
-// Blank:  SHA-256("EchoMLS/v1/blank")
-//
-// Only publicKeyB64 is fed into the hash. The parent_hash extension field is
-// stored separately in the update path (not inside the node), so nodes don't
-// need to carry it for subtree hash computation.
-export async function computeNodeSubtreeHash(nodes, nodeIndex, leafCount) {
+// Leaves bind identity data when present. Parents bind both child hashes.
+export async function computeNodeSubtreeHash(nodes, nodeIndex, leafCount, leafData = {}) {
   const enc = new TextEncoder()
+  const w = nodeWidth(leafCount)
 
-  if (!Array.isArray(nodes) || nodeIndex >= nodeWidth(leafCount)) {
+  if (!Array.isArray(nodes) || nodeIndex >= w) {
+    if (level(nodeIndex) === 0) return sha256(enc.encode('EchoMLS/v1/blank'))
     return sha256(enc.encode('EchoMLS/v1/blank'))
   }
 
@@ -104,15 +117,25 @@ export async function computeNodeSubtreeHash(nodes, nodeIndex, leafCount) {
     const pubKeyB64 = nodes[nodeIndex]?.publicKeyB64 ?? null
     const prefix = enc.encode('EchoMLS/v1/leaf|')
     const pubBytes = pubKeyB64 ? base64ToBytes(pubKeyB64) : new Uint8Array(0)
-    const buf = new Uint8Array(prefix.length + pubBytes.length)
+
+    const leafIndex = nodeIndex / 2
+    const identity = leafData[String(leafIndex)]
+    let idBytes = new Uint8Array(0)
+    if (identity?.userId && identity?.leafSigningPubKeyB64) {
+      // Fold leaf identity into the leaf hash when it is available.
+      idBytes = await sha256(enc.encode(`${identity.userId}|${identity.leafSigningPubKeyB64}`))
+    }
+
+    const buf = new Uint8Array(prefix.length + pubBytes.length + idBytes.length)
     buf.set(prefix, 0)
     buf.set(pubBytes, prefix.length)
+    buf.set(idBytes, prefix.length + pubBytes.length)
     return sha256(buf)
   }
 
   const [leftHash, rightHash] = await Promise.all([
-    computeNodeSubtreeHash(nodes, left(nodeIndex), leafCount),
-    computeNodeSubtreeHash(nodes, right(nodeIndex), leafCount),
+    computeNodeSubtreeHash(nodes, left(nodeIndex), leafCount, leafData),
+    computeNodeSubtreeHash(nodes, right(nodeIndex), leafCount, leafData),
   ])
 
   const pubKeyB64 = nodes[nodeIndex]?.publicKeyB64 ?? null
@@ -132,11 +155,7 @@ export async function computeNodeSubtreeHash(nodes, nodeIndex, leafCount) {
   return sha256(buf)
 }
 
-// parent_hash(P) = SHA-256("EchoMLS/v1/phash|" || pub(P) || subtreeHash(sibling(P)))
-//
-// Binds the parent node's public key to the complete state of its copath sibling
-// subtree at commit time. Any modification to the sibling subtree — or substitution
-// of the parent key with one not derived from the path secret — invalidates this tag.
+// Bind one path node to its sibling subtree hash.
 export async function computeParentHash(nodePubBytes, siblingSubtreeHash) {
   const prefix = TEXT_ENCODER.encode('EchoMLS/v1/phash|')
   const buf = new Uint8Array(prefix.length + nodePubBytes.length + siblingSubtreeHash.length)

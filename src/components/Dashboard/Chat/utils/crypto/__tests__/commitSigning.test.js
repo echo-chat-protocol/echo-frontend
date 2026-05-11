@@ -94,9 +94,9 @@ describe('generateLeafSigningKeypair', () => {
     expect(kp.leafSigningPubKeyB64.length).toBeGreaterThan(0)
   })
 
-  it('private key decodes to 32 bytes (X25519 scalar)', async () => {
+  it('private key decodes to 64 bytes (32-byte seed || 32-byte pub packed for Ed25519)', async () => {
     const kp = await generateLeafSigningKeypair()
-    expect(base64ToBytes(kp.leafSigningPrivKeyB64)).toHaveLength(32)
+    expect(base64ToBytes(kp.leafSigningPrivKeyB64)).toHaveLength(64)
   })
 
   it('public key decodes to 32 bytes (Ed25519 point derived from X25519)', async () => {

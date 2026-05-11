@@ -1,7 +1,6 @@
 import init, * as protocol from '@mascaro101/echo-protocol'
 import { encodeGroupContext } from './groupContext.js'
 
-// SHA-256 output (Nh), AES-256 key length (Nk) and AES-256 nonce length (Nn)
 const NH = 32
 const NK = 32
 const NN = 12
@@ -10,35 +9,23 @@ const TEXT_ENCODER = new TextEncoder()
 const HKDF_EXTRACT_EXPORT = 'hkdf_extract'
 const HKDF_EXPAND_EXPORT = 'hkdf_expand'
 
+// Read the WASM HKDF export by name so tests can stub it cleanly.
 async function hkdfExtract(salt, ikm) {
   const extract = protocol[HKDF_EXTRACT_EXPORT]
-  if (typeof extract === 'function') {
-    return extract(salt, ikm)
-  }
-  console.warn('[HKDF] extract fallback', {
-    expected: HKDF_EXTRACT_EXPORT,
-    actualType: typeof extract,
-    isUndefined: extract === undefined,
-    protocolKeys: Object.keys(protocol).slice(0, 20),
-  })
+  if (typeof extract === 'function') return extract(salt, ikm)
+  console.warn('[HKDF] extract fallback — expected', HKDF_EXTRACT_EXPORT)
   return
 }
 
+// Expand HKDF output using the WASM helper when available.
 async function hkdfExpand(prk, info, length) {
   const expand = protocol[HKDF_EXPAND_EXPORT]
-  if (typeof expand === 'function') {
-    return expand(prk, info, length)
-  }
-  console.warn('[HKDF] expand fallback', {
-    expected: HKDF_EXPAND_EXPORT,
-    actualType: typeof expand,
-    isUndefined: expand === undefined,
-    protocolKeys: Object.keys(protocol).slice(0, 20),
-  })
+  if (typeof expand === 'function') return expand(prk, info, length)
+  console.warn('[HKDF] expand fallback — expected', HKDF_EXPAND_EXPORT)
   return
 }
 
-// Constructs an HKDF label fed into HKDF-Expand for domain separation.
+// Encode one MLS HKDFLabel structure.
 function encodeHKDFLabel(length, label, context) {
   const labelBytes = TEXT_ENCODER.encode('MLS 1.0 ' + label)
   const buf = new Uint8Array(2 + 1 + labelBytes.length + 4 + context.length)
@@ -48,29 +35,77 @@ function encodeHKDFLabel(length, label, context) {
   buf[o++] = labelBytes.length
   buf.set(labelBytes, o)
   o += labelBytes.length
-  const cl = context.length
-  buf[o++] = (cl >>> 24) & 0xff
-  buf[o++] = (cl >>> 16) & 0xff
-  buf[o++] = (cl >>> 8) & 0xff
-  buf[o++] = cl & 0xff
+  buf[o++] = (context.length >>> 24) & 0xff
+  buf[o++] = (context.length >>> 16) & 0xff
+  buf[o++] = (context.length >>> 8) & 0xff
+  buf[o++] = context.length & 0xff
   buf.set(context, o)
   return buf
 }
 
+// Expand one MLS-labeled value from a secret.
 export async function expandWithLabel(secret, label, context, length) {
   await init()
+  // MLS expands from a structured label, not raw caller bytes.
   const info = encodeHKDFLabel(length, label, context)
   return hkdfExpand(secret, info, length)
 }
 
+// Derive one named MLS secret with an empty context.
 export async function deriveSecret(secret, label) {
   return expandWithLabel(secret, label, new Uint8Array(0), NH)
 }
 
-// Advances the epoch key schedule. The full GroupContext (treeHash and
-// confirmedTranscriptHash included) binds the epoch secret to tree state and
-// transcript history. Parameters default to zero-vectors when omitted so
-// existing tests that don't supply them continue to run.
+// Derive the joiner secret from init and commit secrets.
+export async function deriveJoinerSecret(initSecret, commitSecret) {
+  await init()
+  return hkdfExtract(initSecret, commitSecret)
+}
+
+// Derive the full epoch secret set for one group context.
+export async function deriveEpochSecrets(
+  joinerSecret,
+  { groupId, epoch, cipherSuite, treeHash, confirmedTranscriptHash }
+) {
+  await init()
+  // GroupContext binds the epoch secrets to this exact tree and transcript state.
+  const context = encodeGroupContext({
+    groupId,
+    epoch,
+    cipherSuite,
+    treeHash,
+    confirmedTranscriptHash,
+  })
+  const epochSecret = await expandWithLabel(joinerSecret, 'epoch', context, NH)
+
+  const [
+    applicationSecret,
+    senderDataSecret,
+    externalSecret,
+    membershipSecret,
+    resumptionPsk,
+    nextInitSecret,
+  ] = await Promise.all([
+    deriveSecret(epochSecret, 'encryption'),
+    deriveSecret(epochSecret, 'sender data'),
+    deriveSecret(epochSecret, 'external'),
+    deriveSecret(epochSecret, 'membership'),
+    deriveSecret(epochSecret, 'resumption'),
+    deriveSecret(epochSecret, 'init'),
+  ])
+
+  return {
+    epochSecret,
+    applicationSecret,
+    senderDataSecret,
+    externalSecret,
+    membershipSecret,
+    resumptionPsk,
+    nextInitSecret,
+  }
+}
+
+// Advance from one epoch secret set to the next.
 export async function advanceEpoch({
   initSecret,
   commitSecret,
@@ -79,12 +114,18 @@ export async function advanceEpoch({
   cipherSuite,
   treeHash,
   confirmedTranscriptHash,
+  psks = [],
 }) {
   await init()
 
-  const joinerSecret = await hkdfExtract(initSecret, commitSecret)
+  let joinerSecret = await deriveJoinerSecret(initSecret, commitSecret)
 
-  const context = await encodeGroupContext({
+  // Mix in any PSKs before deriving epoch-scoped secrets.
+  for (const psk of psks) {
+    joinerSecret = await hkdfExtract(joinerSecret, psk)
+  }
+
+  const epochSecrets = await deriveEpochSecrets(joinerSecret, {
     groupId,
     epoch,
     cipherSuite: cipherSuite ?? 'ECHO-MLS/X25519_AES256GCM_SHA256',
@@ -92,24 +133,29 @@ export async function advanceEpoch({
     confirmedTranscriptHash: confirmedTranscriptHash ?? new Uint8Array(32),
   })
 
-  const epochSecret = await expandWithLabel(joinerSecret, 'epoch', context, NH)
-
-  const [applicationSecret, senderDataSecret, nextInitSecret] = await Promise.all([
-    deriveSecret(epochSecret, 'encryption'),
-    deriveSecret(epochSecret, 'sender_data'),
-    deriveSecret(epochSecret, 'init'),
-  ])
-
-  return { epochSecret, nextInitSecret, applicationSecret, senderDataSecret }
+  return { joinerSecret, ...epochSecrets }
 }
 
-// Derives the confirmation key from the epoch secret per §8.1.
+// Derive the welcome secret from the joiner secret.
+export async function deriveWelcomeSecret(joinerSecret) {
+  return deriveSecret(joinerSecret, 'welcome')
+}
+
+// Derive the AEAD key and nonce used for GroupInfo.
+export async function deriveWelcomeKeyAndNonce(welcomeSecret) {
+  const [key, nonce] = await Promise.all([
+    expandWithLabel(welcomeSecret, 'key', new Uint8Array(0), NK),
+    expandWithLabel(welcomeSecret, 'nonce', new Uint8Array(0), NN),
+  ])
+  return { key, nonce }
+}
+
+// Derive the confirmation MAC key for one epoch.
 export async function deriveConfirmationKey(epochSecret) {
   return deriveSecret(epochSecret, 'confirm')
 }
 
-// confirmation_tag = HMAC-SHA256(confirmationKey, confirmedTranscriptHash).
-// Proves sender and receiver derived the same epoch secrets.
+// Compute the confirmation tag for one confirmed transcript hash.
 export async function computeConfirmationTag(epochSecret, confirmedTranscriptHashBytes) {
   const confirmationKey = await deriveConfirmationKey(epochSecret)
   const key = await crypto.subtle.importKey(
@@ -123,7 +169,7 @@ export async function computeConfirmationTag(epochSecret, confirmedTranscriptHas
   return new Uint8Array(tag)
 }
 
-// Throws if the confirmation tag doesn't match what we compute from the epoch secret.
+// Compare a claimed confirmation tag with the derived one.
 export async function verifyConfirmationTag(epochSecret, confirmedTranscriptHashBytes, tagBytes) {
   const expected = await computeConfirmationTag(epochSecret, confirmedTranscriptHashBytes)
   if (expected.length !== tagBytes.length || !expected.every((b, i) => b === tagBytes[i])) {
@@ -131,7 +177,7 @@ export async function verifyConfirmationTag(epochSecret, confirmedTranscriptHash
   }
 }
 
-// Derived key is unique per sender and per message generation.
+// Encode the sender leaf and generation for app-secret derivation.
 function encodeAppSecretContext(leafIndex, generation) {
   const buf = new Uint8Array(8)
   buf[0] = (leafIndex >>> 24) & 0xff
@@ -145,6 +191,7 @@ function encodeAppSecretContext(leafIndex, generation) {
   return buf
 }
 
+// App keys are unique per sender leaf and generation.
 export async function deriveAppKeyAndNonce(applicationSecret, senderLeafIndex, generation) {
   const ctx = encodeAppSecretContext(senderLeafIndex, generation)
   const [key, nonce] = await Promise.all([
@@ -154,7 +201,19 @@ export async function deriveAppKeyAndNonce(applicationSecret, senderLeafIndex, g
   return { key, nonce }
 }
 
+// Ratchet one sender application secret forward.
 export async function ratchetAppSecret(applicationSecret, senderLeafIndex, generation) {
   const ctx = encodeAppSecretContext(senderLeafIndex, generation)
   return expandWithLabel(applicationSecret, 'secret', ctx, NH)
+}
+
+// Derive the sender-data key pair for one ciphertext prefix.
+export async function deriveSenderDataKeyAndNonce(senderDataSecret, ciphertextPrefix4) {
+  // Sender-data keys are tied to the first four ciphertext bytes.
+  const ctx = ciphertextPrefix4.slice(0, 4)
+  const [key, nonce] = await Promise.all([
+    expandWithLabel(senderDataSecret, 'key', ctx, NK),
+    expandWithLabel(senderDataSecret, 'nonce', ctx, NN),
+  ])
+  return { key, nonce }
 }

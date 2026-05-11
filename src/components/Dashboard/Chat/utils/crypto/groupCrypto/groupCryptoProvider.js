@@ -1,9 +1,24 @@
 import { createNewGroupState, loadGroupState, saveGroupState } from './groupStateStorage.js'
 import { decryptApplicationMessage, encryptApplicationMessage } from './messageFlow.js'
-import { applyCommit, buildAddCommit, buildRemoveCommit } from './commitFlow.js'
+import {
+  applyCommit,
+  buildAddCommit,
+  buildRemoveCommit,
+  buildUpdateCommit,
+  buildReInitCommit,
+} from './commitFlow.js'
 import { buildInitialWelcomes, processWelcome } from './welcomeFlow.js'
-import { createProposal, verifyProposal } from './proposals.js'
+import {
+  createProposal,
+  verifyProposal,
+  receiveProposal,
+  createUpdateProposal,
+  createExternalInitProposal,
+  createPskProposal,
+  createReInitProposal,
+} from './proposals.js'
 
+// Re-export the group crypto surface from one entry point.
 export {
   saveGroupState,
   loadGroupState,
@@ -14,9 +29,16 @@ export {
   processWelcome,
   buildAddCommit,
   buildRemoveCommit,
+  buildUpdateCommit,
+  buildReInitCommit,
   buildInitialWelcomes,
   createProposal,
   verifyProposal,
+  receiveProposal,
+  createUpdateProposal,
+  createExternalInitProposal,
+  createPskProposal,
+  createReInitProposal,
 }
 
 const groupCryptoProvider = {
@@ -29,9 +51,16 @@ const groupCryptoProvider = {
   processWelcome,
   buildAddCommit,
   buildRemoveCommit,
+  buildUpdateCommit,
+  buildReInitCommit,
   buildInitialWelcomes,
   createProposal,
   verifyProposal,
+  receiveProposal,
+  createUpdateProposal,
+  createExternalInitProposal,
+  createPskProposal,
+  createReInitProposal,
 }
 
 export default groupCryptoProvider
