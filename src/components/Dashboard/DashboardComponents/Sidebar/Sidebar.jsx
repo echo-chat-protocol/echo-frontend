@@ -19,35 +19,12 @@ const NAV = [
 /* Echo logo (matches landing) */
 function EchoMark({ size = 30 }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox='0 0 64 64'
-      fill='none'
-      xmlns='http://www.w3.org/2000/svg'
-    >
-      <defs>
-        <linearGradient id='echoGrad' x1='0' y1='0' x2='64' y2='64'>
-          <stop offset='0%' stopColor='#c084fc' />
-          <stop offset='100%' stopColor='#8b5cf6' />
-        </linearGradient>
-      </defs>
-      <circle
-        cx='32'
-        cy='32'
-        r='29'
-        stroke='url(#echoGrad)'
-        strokeWidth='1.5'
-        fill='rgba(168,85,247,0.05)'
-      />
-      <path
-        d='M32 14 C40 14, 46 22, 46 32 C46 42, 40 50, 32 50 C24 50, 18 42, 18 32 C18 22, 24 14, 32 14 Z M30 22 L42 22 M30 32 L40 32 M30 42 L42 42'
-        stroke='url(#echoGrad)'
-        strokeWidth='1.4'
-        strokeLinecap='round'
-        fill='none'
-      />
-    </svg>
+    <img
+      src='/echo-logo.svg'
+      alt='ECHO Logo'
+      style={{ width: size, height: size }}
+      className='object-contain'
+    />
   )
 }
 
