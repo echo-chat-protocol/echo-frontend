@@ -89,6 +89,9 @@ const Dashboard = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [showMobileChat, setShowMobileChat] = useState(false)
   const [createGroupOpen, setCreateGroupOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    return localStorage.getItem('sidebarCollapsed') === 'true'
+  })
   const GROUP_CACHE_PREFIX = 'group:'
 
   // Hooks personalizados - must be before useEffects that use them
@@ -624,6 +627,7 @@ const Dashboard = () => {
       sharedSocket.off('newGroupMessage', handleNewGroupMessageNotification)
       clearMlsKeyPackageRetry()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, userId])
 
   useEffect(() => {
@@ -870,27 +874,34 @@ const Dashboard = () => {
       {/* Sidebar - Hidden on mobile, shown via menu */}
       <div
         className={`
-        fixed md:relative inset-y-0 left-0 z-50
+        fixed md:relative inset-y-0 left-0 z-50 h-full
         transform ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
         md:translate-x-0 transition-transform duration-300 ease-in-out
       `}
       >
         <Sidebar
-          activeView={activeView}
-          handleViewChange={(view) => {
-            handleViewChange(view)
+          active={activeView === 'friends' ? 'contacts' : activeView}
+          onChange={(view) => {
+            const mappedView = view === 'contacts' ? 'friends' : view
+            handleViewChange(mappedView)
             setIsMobileMenuOpen(false)
           }}
-          handleProfileClick={() => {
+          user={{
+            name: username,
+            avatar: userProfileImage,
+          }}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={() => {
+            const nextVal = !sidebarCollapsed
+            setSidebarCollapsed(nextVal)
+            localStorage.setItem('sidebarCollapsed', String(nextVal))
+          }}
+          onOpenProfile={() => {
             handleProfileClick()
             setIsMobileMenuOpen(false)
           }}
-          handleLogout={handleLogout}
-          profileImage={userProfileImage}
-          username={username}
+          onLogout={handleLogout}
           unreadMessages={unreadMessages}
-          onWallpaperChange={handleWallpaperChange}
-          currentWallpaper={currentWallpaper}
         />
       </div>
 
@@ -898,10 +909,10 @@ const Dashboard = () => {
       <div
         className={`
         ${showMobileChat ? 'hidden' : 'flex'} md:flex
-        w-full md:w-80 bg-black border-r border-gray-700 flex-col
+        w-full md:w-80 bg-black border-r border-white/[0.08] flex-col
       `}
       >
-        <div className='p-4 border-b border-gray-700'>
+        <div className='p-4 border-b border-white/[0.08]'>
           <div className='flex items-center gap-3 mb-4'>
             {/* Mobile menu button */}
             <button
@@ -914,32 +925,38 @@ const Dashboard = () => {
           </div>
 
           <div className='flex gap-2 mb-4'>
-            <div className='relative w-full'>
-              <input
-                data-testid='dashboard-search'
-                type='text'
-                placeholder={
-                  activeView === 'friends' ? 'Search for friends...' : 'Search chats & groups...'
-                }
-                className='w-full px-6 py-3 bg-white/10 border border-gray-700 rounded-full focus:outline-none focus:ring-2 focus:ring-[#8e79f2] focus:border-[#8e79f2] text-white placeholder-gray-400 backdrop-blur-sm transition-all duration-300'
-                value={activeView === 'friends' ? searchTerm : conversationsSearchTerm}
-                onChange={(e) =>
-                  activeView === 'friends'
-                    ? setSearchTerm(e.target.value)
-                    : setConversationsSearchTerm(e.target.value)
-                }
-                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-              />
+            {activeView !== 'settings' ? (
+              <div className='relative w-full'>
+                <input
+                  data-testid='dashboard-search'
+                  type='text'
+                  placeholder={
+                    activeView === 'friends' ? 'Search for friends...' : 'Search chats & groups...'
+                  }
+                  className='w-full px-6 py-3 bg-white/10 border border-white/[0.08] rounded-full focus:outline-none focus:ring-2 focus:ring-[#8e79f2] focus:border-[#8e79f2] text-white placeholder-gray-500 backdrop-blur-sm transition-all duration-300 text-sm'
+                  value={activeView === 'friends' ? searchTerm : conversationsSearchTerm}
+                  onChange={(e) =>
+                    activeView === 'friends'
+                      ? setSearchTerm(e.target.value)
+                      : setConversationsSearchTerm(e.target.value)
+                  }
+                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                />
+                <button
+                  className='absolute right-4 top-3 text-gray-400 hover:text-white'
+                  onClick={handleSearch}
+                >
+                  <Search className='h-5 w-5' />
+                </button>
+              </div>
+            ) : (
+              <div className='text-sm text-gray-400 py-2.5 font-semibold uppercase tracking-wider px-2'>
+                Settings
+              </div>
+            )}
+            {activeView !== 'friends' && activeView !== 'settings' && (
               <button
-                className='absolute right-4 top-3 text-gray-400 hover:text-white'
-                onClick={handleSearch}
-              >
-                <Search className='h-6 w-6' />
-              </button>
-            </div>
-            {activeView !== 'friends' && (
-              <button
-                className='p-2 rounded-full bg-indigo-700 text-white hover:bg-[#8e79f2] transition-colors'
+                className='p-2.5 rounded-full bg-violet-600/10 border border-violet-500/20 text-violet-300 hover:bg-[#8e79f2] hover:text-white transition-all shadow-[0_0_15px_rgba(168,85,247,0.1)]'
                 title='Create group'
                 onClick={() => setCreateGroupOpen(true)}
               >
@@ -949,49 +966,123 @@ const Dashboard = () => {
           </div>
         </div>
 
-        <div className='flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-black'>
+        <div className='flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/[0.05] scrollbar-track-black'>
           {activeView === 'friends' ? (
             <Friends
               token={token}
               onActiveChatChange={handleActiveChatChange}
               searchTerm={searchTerm}
             />
+          ) : activeView === 'settings' ? (
+            <div className='p-4 space-y-6'>
+              <div>
+                <h4 className='text-xs font-semibold text-white/70 mb-3 uppercase tracking-wider'>
+                  Chat Wallpapers
+                </h4>
+                <div className='grid grid-cols-2 gap-3'>
+                  {Object.entries(WALLPAPER_PREVIEWS).map(([id, wp]) => (
+                    <button
+                      key={id}
+                      onClick={() => handleWallpaperChange(id)}
+                      className={`group relative overflow-hidden rounded-xl aspect-square border transition-all ${
+                        currentWallpaper === id
+                          ? 'border-violet-500 ring-1 ring-violet-500/50 shadow-[0_0_15px_rgba(168,85,247,0.3)]'
+                          : 'border-white/[0.08] hover:border-violet-400/30'
+                      }`}
+                      title={wp.name}
+                    >
+                      {wp.type === 'video' ? (
+                        <div className='w-full h-full relative bg-zinc-950'>
+                          <video
+                            loop
+                            muted
+                            playsInline
+                            poster={wp.posterUrl}
+                            className='w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity absolute inset-0'
+                            onMouseEnter={(e) => {
+                              e.currentTarget.currentTime = 0
+                              e.currentTarget.play().catch(() => {})
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.pause()
+                            }}
+                          >
+                            <source src={wp.videoUrl} type='video/mp4' />
+                          </video>
+                          <div className='absolute inset-0 bg-black/10 flex items-center justify-center pointer-events-none'>
+                            <span className='text-lg'>{wp.icon}</span>
+                          </div>
+                        </div>
+                      ) : wp.type === 'image' ? (
+                        <div
+                          className='w-full h-full bg-cover bg-center transition-all duration-300 group-hover:scale-105'
+                          style={{ backgroundImage: `url(${wp.imageUrl})` }}
+                        >
+                          <div className='absolute inset-0 bg-black/10 flex items-center justify-center'>
+                            <span className='text-lg'>{wp.icon}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          className={`w-full h-full ${wp.className} transition-all duration-300 group-hover:scale-105`}
+                        >
+                          <div className='absolute inset-0 bg-black/10 flex items-center justify-center'>
+                            <span className='text-lg'>{wp.icon}</span>
+                          </div>
+                        </div>
+                      )}
+                      <div className='absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-1.5 transition-all'>
+                        <span className='text-[10px] text-white/80 font-medium truncate block'>
+                          {wp.name}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
           ) : (
             <div>
-              {filteredGroups.length > 0 && (
-                <div className='px-4 pt-4 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider'>
-                  Groups
-                </div>
-              )}
-              {filteredGroups.length > 0 && (
-                <GroupList
-                  groups={filteredGroups}
-                  activeChat={activeChat}
-                  onSelect={handleGroupSelect}
-                  unreadByGroupId={unreadGroupMessages}
-                />
+              {activeView !== 'chats' && filteredGroups.length > 0 && (
+                <>
+                  <div className='px-4 pt-4 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider'>
+                    Groups
+                  </div>
+                  <GroupList
+                    groups={filteredGroups}
+                    activeChat={activeChat}
+                    onSelect={handleGroupSelect}
+                    unreadByGroupId={unreadGroupMessages}
+                  />
+                </>
               )}
 
-              {filteredConversations.length > 0 && (
-                <div className='px-4 pt-4 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider'>
-                  Direct messages
-                </div>
-              )}
-              {filteredConversations.length > 0 ? (
-                <ConversationList
-                  conversations={filteredConversations}
-                  activeChat={activeChat}
-                  userId={userId}
-                  handleChatSelect={handleChatSelect}
-                  setIsHovered={setIsChatItemHovered}
-                  ref={conversationsListRef}
-                />
-              ) : (
-                <p className='text-gray-400 text-sm p-4'>
-                  {conversationsSearchTerm
-                    ? 'No conversations match your search'
-                    : 'No recent conversations'}
-                </p>
+              {activeView !== 'groups' && (
+                <>
+                  {filteredConversations.length > 0 && (
+                    <div className='px-4 pt-4 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider'>
+                      Direct messages
+                    </div>
+                  )}
+                  {filteredConversations.length > 0 ? (
+                    <ConversationList
+                      conversations={filteredConversations}
+                      activeChat={activeChat}
+                      userId={userId}
+                      handleChatSelect={handleChatSelect}
+                      setIsHovered={setIsChatItemHovered}
+                      ref={conversationsListRef}
+                    />
+                  ) : (
+                    activeView === 'chats' && (
+                      <p className='text-gray-400 text-sm p-4'>
+                        {conversationsSearchTerm
+                          ? 'No conversations match your search'
+                          : 'No recent conversations'}
+                      </p>
+                    )
+                  )}
+                </>
               )}
             </div>
           )}
