@@ -22,14 +22,14 @@ beforeEach(() => {
 })
 
 describe('chain_key_KDF', () => {
-  it('returns 64 bytes and produces different keys after advancing', () => {
+  it('returns 76 bytes and produces different keys after advancing', () => {
     const ck0 = new Uint8Array(32).fill(5)
 
     const okm0 = chain_key_KDF(ck0)
-    expect(okm0).toHaveLength(64)
+    expect(okm0).toHaveLength(76)
 
     const mk0 = okm0.slice(0, 32)
-    const ck1 = okm0.slice(32)
+    const ck1 = okm0.slice(32, 64)
 
     const okm1 = chain_key_KDF(ck1)
     const mk1 = okm1.slice(0, 32)

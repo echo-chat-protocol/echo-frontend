@@ -1,172 +1,219 @@
-import { base64ToBytes, bytesToBase64 } from '../../helpers.js';
+import { base64ToBytes, bytesToBase64 } from '../../helpers.js'
 
-// Protocol Imports
-import {
-  decrypt_aad_bytes,
-  encrypt_aad_bytes,
-} from '@mascaro101/echo-protocol';
+import { decrypt_aad_bytes, encrypt_aad_bytes } from '@mascaro101/echo-protocol'
 
-// Key schedule Imports
-import { deriveAppKeyAndNonce } from '../keySchedule.js';
-import {
-  normalizeGroupState,
-  resolveApplicationKey,
-} from './groupState.js';
-import {
-  makeHeaderB64,
-  makeHeaderBytes,
-  MLS_HEADER_VERSION,
-  normalizeBytes,
-  normalizePlaintextBytes,
-  parseHeader,
-} from './pathSecrets.js';
+import { deriveAppKeyAndNonce, deriveSenderDataKeyAndNonce } from '../keySchedule.js'
+import { normalizeGroupState, resolveApplicationKey } from './groupState.js'
+import { randomBytes } from './pathSecrets.js'
 
-// This is the function to encrypt application messages using the current epoch application secret
-// and incrementing the sender generation for each message
+export const MLS_HEADER_VERSION = 1
+
+const TEXT_ENCODER = new TextEncoder()
+
+// Sender data carries the sender leaf and generation in a fixed-size blob.
+function encodeSenderData(leafIndex, generation, reuseGuard) {
+  const buf = new Uint8Array(12)
+  buf[0] = (leafIndex >>> 24) & 0xff
+  buf[1] = (leafIndex >>> 16) & 0xff
+  buf[2] = (leafIndex >>> 8) & 0xff
+  buf[3] = leafIndex & 0xff
+  buf[4] = (generation >>> 24) & 0xff
+  buf[5] = (generation >>> 16) & 0xff
+  buf[6] = (generation >>> 8) & 0xff
+  buf[7] = generation & 0xff
+  buf.set(reuseGuard, 8)
+  return buf
+}
+
+// Read sender metadata back out of the fixed sender-data bytes.
+function decodeSenderData(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  return {
+    leafIndex: view.getUint32(0, false),
+    generation: view.getUint32(4, false),
+    reuseGuard: bytes.slice(8, 12),
+  }
+}
+
+// Encrypt the sender metadata that rides alongside the content ciphertext.
+async function encryptSenderData(senderDataSecretBytes, contentCiphertext, leafIndex, generation) {
+  const reuseGuard = randomBytes(4)
+  const senderDataPlaintext = encodeSenderData(leafIndex, generation, reuseGuard)
+  // Sender-data keys are derived from the content ciphertext prefix.
+  const { key, nonce } = await deriveSenderDataKeyAndNonce(
+    senderDataSecretBytes,
+    contentCiphertext.slice(0, 4)
+  )
+  const aad = contentCiphertext.slice(0, 4)
+  const encryptedSenderData = encrypt_aad_bytes(senderDataPlaintext, key, nonce, aad)
+  return { encryptedSenderDataB64: bytesToBase64(encryptedSenderData) }
+}
+
+// Decrypt the sender metadata for one application message.
+async function decryptSenderData(senderDataSecretBytes, contentCiphertext, encryptedSenderDataB64) {
+  const encrypted = base64ToBytes(encryptedSenderDataB64)
+  const { key, nonce } = await deriveSenderDataKeyAndNonce(
+    senderDataSecretBytes,
+    contentCiphertext.slice(0, 4)
+  )
+  const aad = contentCiphertext.slice(0, 4)
+  const plaintext = decrypt_aad_bytes(encrypted, key, nonce, aad)
+  return decodeSenderData(plaintext)
+}
+
+// Encrypt one MLS application message and advance the sender counter.
 export async function encryptApplicationMessage({ state, plaintextBytes, aadBytes }) {
+  const normalizedState = normalizeGroupState(state)
 
-  // normalize group state
-  const normalizedState = normalizeGroupState(state);
-
-
-  // validate groupId and selfLeafIndex
-  if (!normalizedState.groupId) {
-    throw new Error('Group state is missing groupId');
-  }
+  if (!normalizedState.groupId) throw new Error('Group state is missing groupId')
   if (!Number.isInteger(normalizedState.selfLeafIndex)) {
-    throw new Error(`Group state is missing selfLeafIndex for group ${normalizedState.groupId}`);
+    throw new Error(`Group state is missing selfLeafIndex for group ${normalizedState.groupId}`)
   }
 
-  // derive the app key and nonce for this message using the current application secret, self leaf index and sender generation
-  const { applicationSecretB64, keyBytes: appSecret } = resolveApplicationKey(normalizedState);
-
-  // reads self current sender generation counter
-  const generation = normalizedState.senderGenerations[String(normalizedState.selfLeafIndex)] ?? 0;
+  const { keyBytes: appSecret } = resolveApplicationKey(normalizedState)
+  const generation = normalizedState.senderGenerations[String(normalizedState.selfLeafIndex)] ?? 0
   const { key, nonce } = await deriveAppKeyAndNonce(
     appSecret,
     normalizedState.selfLeafIndex,
-    generation,
-  );
+    generation
+  )
 
-  // builds the header for this message, the header includes the groupId, epoch, sender leaf index, sender generation and cipher suite
-  const header = {
-    version: MLS_HEADER_VERSION,
-    groupId: normalizedState.groupId,
-    epoch: normalizedState.epoch,
-    senderLeafIndex: normalizedState.selfLeafIndex,
-    generation,
-    cipherSuite: normalizedState.cipherSuite,
-  };
+  const plaintextInput =
+    typeof plaintextBytes === 'string'
+      ? TEXT_ENCODER.encode(plaintextBytes)
+      : plaintextBytes instanceof Uint8Array
+        ? plaintextBytes
+        : new Uint8Array(plaintextBytes)
 
-  // Chooses AAD, if caller did not pass aadBytes it uses serialzied header bytes
-  // otherwise normalizes provided aadBytes
-  const resolvedAadBytes = aadBytes == null
-    ? makeHeaderBytes(header)
-    : normalizeBytes(aadBytes, 'aadBytes');
+  const contentAad = aadBytes instanceof Uint8Array ? aadBytes : new Uint8Array(0)
+  const ciphertextBytes = encrypt_aad_bytes(plaintextInput, key, nonce, contentAad)
 
-  // encrypts plaintext and base64 encodes the ciphertext
-  const ciphertextB64 = bytesToBase64(
-    encrypt_aad_bytes(normalizePlaintextBytes(plaintextBytes), key, nonce, resolvedAadBytes),
-  );
+  // Keep sender identity encrypted when the epoch has sender-data material.
+  let encryptedSenderDataB64 = null
+  if (normalizedState.senderDataSecretB64) {
+    const sdSecret = base64ToBytes(normalizedState.senderDataSecretB64)
+    const { encryptedSenderDataB64: esd } = await encryptSenderData(
+      sdSecret,
+      ciphertextBytes,
+      normalizedState.selfLeafIndex,
+      generation
+    )
+    encryptedSenderDataB64 = esd
+  }
 
-  // creates new state where your sender generation is incremented by 1
   const newState = normalizeGroupState({
     ...normalizedState,
     senderGenerations: {
       ...normalizedState.senderGenerations,
       [String(normalizedState.selfLeafIndex)]: generation + 1,
     },
-  });
+  })
 
-  // returns headers, ciphertext and state
   return {
-    header,
-    headerB64: makeHeaderB64(header),
-    ciphertextB64,
-    nonceB64: null,
-    newState: {
-      ...newState,
-      groupKeyB64: newState.applicationSecretB64,
+    encryptedSenderDataB64,
+    ciphertextB64: bytesToBase64(ciphertextBytes),
+    header: {
+      version: MLS_HEADER_VERSION,
+      groupId: normalizedState.groupId,
+      epoch: normalizedState.epoch,
+      senderLeafIndex: normalizedState.selfLeafIndex,
+      generation,
+      cipherSuite: normalizedState.cipherSuite,
     },
-  };
+    headerB64: bytesToBase64(
+      TEXT_ENCODER.encode(
+        JSON.stringify({
+          version: MLS_HEADER_VERSION,
+          groupId: normalizedState.groupId,
+          epoch: normalizedState.epoch,
+          senderLeafIndex: normalizedState.selfLeafIndex,
+          generation,
+          cipherSuite: normalizedState.cipherSuite,
+        })
+      )
+    ),
+    newState: { ...newState, groupKeyB64: newState.applicationSecretB64 },
+  }
 }
 
-// This is the function to decrypt application messages using the current epoch application secret
-// and the sender generation in the message header
-export async function decryptApplicationMessage({ state, header, ciphertext, aadBytes, includeNewState = false }) {
+// Decrypt one MLS application message and optionally advance local state.
+export async function decryptApplicationMessage({
+  state,
+  encryptedSenderDataB64 = null,
+  header = null,
+  ciphertext,
+  aadBytes,
+  includeNewState = false,
+}) {
+  const normalizedState = normalizeGroupState(state)
 
-  // normalize group state and paarse header
-  const normalizedState = normalizeGroupState(state);
-  const parsedHeader = parseHeader(header);
-
-  // Validate input fields
-  if (!normalizedState.groupId) {
-    throw new Error('Group state is missing groupId');
-  }
-  if (parsedHeader.version !== MLS_HEADER_VERSION) {
-    throw new Error(`Unsupported MLS header version for group ${normalizedState.groupId}`);
-  }
-  if (String(parsedHeader.groupId ?? '') !== String(normalizedState.groupId)) {
-    throw new Error(`MLS header groupId mismatch for group ${normalizedState.groupId}`);
-  }
-  if (!Number.isInteger(parsedHeader.senderLeafIndex)) {
-    throw new Error(`MLS header is missing senderLeafIndex for group ${normalizedState.groupId}`);
-  }
-  if (!Number.isInteger(parsedHeader.generation)) {
-    throw new Error(`MLS header is missing generation for group ${normalizedState.groupId}`);
-  }
-  if (Number.isInteger(parsedHeader.epoch) && parsedHeader.epoch !== normalizedState.epoch) {
-    throw new Error(`MLS epoch mismatch for group ${normalizedState.groupId}`);
-  }
-  if (parsedHeader.cipherSuite && parsedHeader.cipherSuite !== normalizedState.cipherSuite) {
-    throw new Error(`MLS cipher suite mismatch for group ${normalizedState.groupId}`);
-  }
+  if (!normalizedState.groupId) throw new Error('Group state is missing groupId')
   if (typeof ciphertext !== 'string' || ciphertext.length === 0) {
-    throw new Error(`MLS ciphertext is missing for group ${normalizedState.groupId}`);
+    throw new Error(`MLS ciphertext is missing for group ${normalizedState.groupId}`)
   }
 
-  // validate that the sender generation in the header matches the expected sender generation in the state for this sender
-  // (protects against replay attacks)
-  const expectedGeneration = normalizedState.senderGenerations[String(parsedHeader.senderLeafIndex)] ?? 0;
-  if (parsedHeader.generation !== expectedGeneration) {
+  const ciphertextBytes = base64ToBytes(ciphertext)
+  let senderLeafIndex, generation
+
+  if (encryptedSenderDataB64 && normalizedState.senderDataSecretB64) {
+    // Prefer encrypted sender data when this epoch supports it.
+    const sdSecret = base64ToBytes(normalizedState.senderDataSecretB64)
+    const sd = await decryptSenderData(sdSecret, ciphertextBytes, encryptedSenderDataB64)
+    senderLeafIndex = sd.leafIndex
+    generation = sd.generation
+  } else if (header) {
+    // Fall back to the legacy plaintext header during migration.
+    const parsedHeader =
+      typeof header === 'string'
+        ? JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(base64ToBytes(header)))
+        : header
+    senderLeafIndex = parsedHeader.senderLeafIndex
+    generation = parsedHeader.generation
+
+    if (parsedHeader.version !== MLS_HEADER_VERSION) {
+      throw new Error(`Unsupported MLS header version for group ${normalizedState.groupId}`)
+    }
+    if (String(parsedHeader.groupId ?? '') !== String(normalizedState.groupId)) {
+      throw new Error(`MLS header groupId mismatch for group ${normalizedState.groupId}`)
+    }
+    if (Number.isInteger(parsedHeader.epoch) && parsedHeader.epoch !== normalizedState.epoch) {
+      throw new Error(`MLS epoch mismatch for group ${normalizedState.groupId}`)
+    }
+  } else {
+    throw new Error('decryptApplicationMessage requires encryptedSenderDataB64 or header')
+  }
+
+  if (!Number.isInteger(senderLeafIndex)) {
+    throw new Error(`Cannot determine senderLeafIndex for group ${normalizedState.groupId}`)
+  }
+  if (!Number.isInteger(generation)) {
+    throw new Error(`Cannot determine generation for group ${normalizedState.groupId}`)
+  }
+
+  // Each sender advances one generation per message.
+  const expectedGeneration = normalizedState.senderGenerations[String(senderLeafIndex)] ?? 0
+  if (generation !== expectedGeneration) {
     throw new Error(
-      `MLS generation mismatch for group ${normalizedState.groupId}: expected ${expectedGeneration}, got ${parsedHeader.generation}`,
-    );
+      `MLS generation mismatch for group ${normalizedState.groupId}: ` +
+        `expected ${expectedGeneration}, got ${generation}`
+    )
   }
 
-  // Resolves the application secret form state
-  const { keyBytes: appSecret } = resolveApplicationKey(normalizedState);
+  const { keyBytes: appSecret } = resolveApplicationKey(normalizedState)
+  const { key, nonce } = await deriveAppKeyAndNonce(appSecret, senderLeafIndex, generation)
 
-  // Derives message key + nonce
-  const { key, nonce } = await deriveAppKeyAndNonce(
-    appSecret,
-    parsedHeader.senderLeafIndex,
-    parsedHeader.generation,
-  );
+  const resolvedAad = aadBytes instanceof Uint8Array ? aadBytes : new Uint8Array(0)
+  const plaintextBytes = decrypt_aad_bytes(ciphertextBytes, key, nonce, resolvedAad)
 
-  // Chooses AAD, if caller did not pass aadBytes it uses serialzied header bytes
-  const resolvedAadBytes = aadBytes == null
-    ? makeHeaderBytes(parsedHeader)
-    : normalizeBytes(aadBytes, 'aadBytes');
+  if (!includeNewState) return plaintextBytes
 
-  // Decrypts the ciphertext using the derived key and nonce and the resolved AAD, returns plaintext bytes
-  const plaintextBytes = decrypt_aad_bytes(base64ToBytes(ciphertext), key, nonce, resolvedAadBytes);
-  if (!includeNewState) {
-    return plaintextBytes;
-  }
-
-  // creates new state with nromalized group state and increments the sender generation for this sender
   const newState = normalizeGroupState({
     ...normalizedState,
     senderGenerations: {
       ...normalizedState.senderGenerations,
-      [String(parsedHeader.senderLeafIndex)]: parsedHeader.generation + 1,
+      [String(senderLeafIndex)]: generation + 1,
     },
-  });
+  })
 
-  // returns plaintext and new state with updated sender generation and group key (application secret)
-  return {
-    plaintextBytes,
-    newState,
-  };
+  return { plaintextBytes, newState }
 }

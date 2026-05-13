@@ -1,12 +1,12 @@
-import { arrayBufferToBase64 } from "../helpers";
+import { arrayBufferToBase64 } from '../helpers'
 import init_dh, {
   generate_private_ephemeral_key,
   generate_public_ephemeral_key,
-} from '@mascaro101/echo-protocol';
+} from '@mascaro101/echo-protocol'
 
-import { buildAadBytes, encryptWithAad } from "../crypto/aes";
-import { initializeDoubleRatchet } from "../crypto/dr";
-import { chain_key_KDF, deriveChainKeys } from "../crypto/hkdf";
+import { buildAadBytes, encryptWithAad } from '../crypto/aes'
+import { initializeDoubleRatchet } from '../crypto/dr'
+import { chain_key_KDF, deriveChainKeys } from '../crypto/hkdf'
 import {
   getRootKey,
   setRootKey,
@@ -17,34 +17,34 @@ import {
   getCurrentSendingNumber,
   setCurrentSendingNumber,
   getPreviousSendingNumber,
-} from "./keyManagement";
+} from './keyManagement'
 
 const ensureSocketConnected = async (socket, timeoutMs = 15_000) => {
   // Unit tests pass a dummy `{}` socket; skip connection waiting in that case.
-  if (!socket) return;
-  if (socket.connected) return;
-  if (typeof socket.on !== "function" || typeof socket.connect !== "function") return;
+  if (!socket) return
+  if (socket.connected) return
+  if (typeof socket.on !== 'function' || typeof socket.connect !== 'function') return
 
   await new Promise((resolve, reject) => {
     const t = setTimeout(() => {
-      cleanup();
-      reject(new Error(`Socket did not connect within ${timeoutMs}ms`));
-    }, timeoutMs);
+      cleanup()
+      reject(new Error(`Socket did not connect within ${timeoutMs}ms`))
+    }, timeoutMs)
 
     const cleanup = () => {
-      clearTimeout(t);
-      socket.off?.("connect", onConnect);
-    };
+      clearTimeout(t)
+      socket.off?.('connect', onConnect)
+    }
 
     const onConnect = () => {
-      cleanup();
-      resolve();
-    };
+      cleanup()
+      resolve()
+    }
 
-    socket.on("connect", onConnect);
-    if (typeof socket.connect === "function") socket.connect();
-  });
-};
+    socket.on('connect', onConnect)
+    if (typeof socket.connect === 'function') socket.connect()
+  })
+}
 
 export const encryptOutgoingMessage = async ({
   text,
@@ -56,21 +56,19 @@ export const encryptOutgoingMessage = async ({
   privateKeyArray,
 }) => {
   if (!userId || !targetUserId) {
-    throw new Error("encryptOutgoingMessage requires userId and targetUserId");
+    throw new Error('encryptOutgoingMessage requires userId and targetUserId')
   }
-  await ensureSocketConnected(socket);
+  await ensureSocketConnected(socket)
 
-  const nonceArray = crypto.getRandomValues(new Uint8Array(12));
+  let root_key = await getRootKey(userId, targetUserId)
 
-  let root_key = await getRootKey(userId, targetUserId);
-
-  // If no existing root key, initialize a new session 
+  // If no existing root key, initialize a new session
   if (!root_key) {
-    const randomBytes = crypto.getRandomValues(new Uint8Array(32));
+    const randomBytes = crypto.getRandomValues(new Uint8Array(32))
 
-    await init_dh();
-    const privateEphemeralKey = await generate_private_ephemeral_key(randomBytes);
-    const publicEphemeralKey = await generate_public_ephemeral_key(privateEphemeralKey);
+    await init_dh()
+    const privateEphemeralKey = await generate_private_ephemeral_key(randomBytes)
+    const publicEphemeralKey = await generate_public_ephemeral_key(privateEphemeralKey)
 
     const initResult = await initializeDoubleRatchet(
       socket,
@@ -78,40 +76,41 @@ export const encryptOutgoingMessage = async ({
       privateEphemeralKey,
       publicEphemeralKey,
       privateKeyArray
-    );
+    )
 
-    root_key = initResult.root_key;
-    const spkId = initResult.spkId ?? null;
-    const opkId = initResult.opkId ?? null;
-    const peerIdentityToPin = initResult.peerIdentityToPin ?? null;
-    await setRootKey(userId, targetUserId, root_key);
+    root_key = initResult.root_key
+    const spkId = initResult.spkId ?? null
+    const opkId = initResult.opkId ?? null
+    const peerIdentityToPin = initResult.peerIdentityToPin ?? null
+    await setRootKey(userId, targetUserId, root_key)
 
-    const { sendingChainKey } = deriveChainKeys(root_key, userId, targetUserId);
+    const { sendingChainKey } = deriveChainKeys(root_key, userId, targetUserId)
 
-    const chain_key_material = chain_key_KDF(sendingChainKey);
-    const messageKey = chain_key_material.slice(0, 32);
-    const newChainKey = chain_key_material.slice(32);
+    const chain_key_material = chain_key_KDF(sendingChainKey)
+    const messageKey = chain_key_material.slice(0, 32)
+    const newChainKey = chain_key_material.slice(32, 64)
+    const nonceArray = chain_key_material.slice(64, 76)
 
-    await setSendingChainKey(userId, targetUserId, newChainKey);
+    await setSendingChainKey(userId, targetUserId, newChainKey)
 
-    const publicEphemeralKeyBase64 = arrayBufferToBase64(publicEphemeralKey);
+    const publicEphemeralKeyBase64 = arrayBufferToBase64(publicEphemeralKey)
     await setOwnEphemeralKeys(
       userId,
       targetUserId,
       publicEphemeralKeyBase64,
       arrayBufferToBase64(privateEphemeralKey)
-    );
+    )
 
-    let currentSendingNumber = await getCurrentSendingNumber(targetUserId);
-    if (currentSendingNumber == null) currentSendingNumber = 0;
+    let currentSendingNumber = await getCurrentSendingNumber(targetUserId)
+    if (currentSendingNumber == null) currentSendingNumber = 0
 
-    let previousSendingNumber = await getPreviousSendingNumber(targetUserId);
-    if (previousSendingNumber == null) previousSendingNumber = 0;
+    let previousSendingNumber = await getPreviousSendingNumber(targetUserId)
+    if (previousSendingNumber == null) previousSendingNumber = 0
 
     const payload = JSON.stringify({
-      text: text || "",
+      text: text || '',
       image: imageData || null,
-    });
+    })
 
     const aadBytes = buildAadBytes({
       userId,
@@ -121,11 +120,11 @@ export const encryptOutgoingMessage = async ({
       previousSendingNumber,
       spkId,
       opkId,
-    });
+    })
 
-    const encryptedPayload = await encryptWithAad(payload, messageKey, nonceArray, aadBytes);
+    const encryptedPayload = await encryptWithAad(payload, messageKey, nonceArray, aadBytes)
 
-    await setCurrentSendingNumber(targetUserId, currentSendingNumber + 1);
+    await setCurrentSendingNumber(targetUserId, currentSendingNumber + 1)
 
     return {
       payload: encryptedPayload,
@@ -139,38 +138,43 @@ export const encryptOutgoingMessage = async ({
       spkId,
       opkId,
       ...(peerIdentityToPin ? { peerIdentityToPin } : {}),
-    };
+    }
   }
 
-  let sendingChainKey = await getSendingChainKey(userId, targetUserId);
+  let sendingChainKey = await getSendingChainKey(userId, targetUserId)
   if (!sendingChainKey) {
-    const { sendingChainKey: derivedSendingChainKey } = deriveChainKeys(root_key, userId, targetUserId);
-    sendingChainKey = derivedSendingChainKey;
-    await setSendingChainKey(userId, targetUserId, sendingChainKey);
+    const { sendingChainKey: derivedSendingChainKey } = deriveChainKeys(
+      root_key,
+      userId,
+      targetUserId
+    )
+    sendingChainKey = derivedSendingChainKey
+    await setSendingChainKey(userId, targetUserId, sendingChainKey)
   }
 
-  const chain_key_material = chain_key_KDF(sendingChainKey);
-  const messageKey = chain_key_material.slice(0, 32);
-  const newChainKey = chain_key_material.slice(32);
+  const chain_key_material = chain_key_KDF(sendingChainKey)
+  const messageKey = chain_key_material.slice(0, 32)
+  const newChainKey = chain_key_material.slice(32, 64)
+  const nonceArray = chain_key_material.slice(64, 76)
 
-  await setSendingChainKey(userId, targetUserId, newChainKey);
+  await setSendingChainKey(userId, targetUserId, newChainKey)
 
-  const ownKeys = await getOwnEphemeralKeys(userId, targetUserId);
-  const publicEphemeralKeyBase64 = ownKeys?.public;
+  const ownKeys = await getOwnEphemeralKeys(userId, targetUserId)
+  const publicEphemeralKeyBase64 = ownKeys?.public
   if (!publicEphemeralKeyBase64) {
-    throw new Error("Missing own ephemeral public key for outgoing message");
+    throw new Error('Missing own ephemeral public key for outgoing message')
   }
 
-  let currentSendingNumber = await getCurrentSendingNumber(targetUserId);
-  if (currentSendingNumber == null) currentSendingNumber = 0;
+  let currentSendingNumber = await getCurrentSendingNumber(targetUserId)
+  if (currentSendingNumber == null) currentSendingNumber = 0
 
-  let previousSendingNumber = await getPreviousSendingNumber(targetUserId);
-  if (previousSendingNumber == null) previousSendingNumber = 0;
+  let previousSendingNumber = await getPreviousSendingNumber(targetUserId)
+  if (previousSendingNumber == null) previousSendingNumber = 0
 
   const payload = JSON.stringify({
-    text: text || "",
+    text: text || '',
     image: imageData || null,
-  });
+  })
 
   const aadBytes = buildAadBytes({
     userId,
@@ -178,11 +182,11 @@ export const encryptOutgoingMessage = async ({
     publicEphemeralKey: publicEphemeralKeyBase64,
     sendingNumber: currentSendingNumber,
     previousSendingNumber,
-  });
+  })
 
-  const encryptedPayload = await encryptWithAad(payload, messageKey, nonceArray, aadBytes);
+  const encryptedPayload = await encryptWithAad(payload, messageKey, nonceArray, aadBytes)
 
-  await setCurrentSendingNumber(targetUserId, currentSendingNumber + 1);
+  await setCurrentSendingNumber(targetUserId, currentSendingNumber + 1)
 
   return {
     payload: encryptedPayload,
@@ -193,5 +197,5 @@ export const encryptOutgoingMessage = async ({
     publicEphemeralKey: publicEphemeralKeyBase64,
     sendingNumber: currentSendingNumber,
     previousSendingNumber,
-  };
-};
+  }
+}
