@@ -71,7 +71,7 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
     if (!groupName) return
     const memberIds = selected.map((u) => u.id).filter(Boolean)
     if (memberIds.length === 0) return
-    const cipherSuite = mlsEnabled ? 'MLS-MVP/X25519_AES256GCM_SHA256' : null
+    const cipherSuite = mlsEnabled ? 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256' : null
     const emitWithAck = (event, payload) =>
       new Promise((resolve, reject) => {
         socket.emit(event, payload, (ack) => {

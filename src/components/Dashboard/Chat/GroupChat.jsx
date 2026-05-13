@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PropTypes from 'prop-types'
 import { getSocket } from '../../../socket'
 import DisplayText from './MessageDisplay/displayText'
@@ -27,7 +27,7 @@ const TEXT_ENCODER = new TextEncoder()
 const TEXT_DECODER = new TextDecoder()
 const MLS_UNAVAILABLE_TEXT = '[Unable to decrypt message]'
 const MLS_KEY_MISSING_REASON = 'MLS state is not ready on this device yet'
-const DEFAULT_MLS_CIPHER_SUITE = 'MLS-MVP/X25519_AES256GCM_SHA256'
+const DEFAULT_MLS_CIPHER_SUITE = 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256'
 const GROUP_CACHE_PREFIX = 'group:'
 
 const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
@@ -57,18 +57,21 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
     groupMetaRef.current = groupMeta
   }, [groupMeta])
 
-  const buildRoster = (serverMembers) =>
-    Array.isArray(serverMembers)
-      ? serverMembers.map((member, index) => ({
-          userId: String(member?.userId ?? member?.id ?? ''),
-          username: member?.username ?? 'Member',
-          leafIndex: Number.isInteger(member?.leafIndex) ? member.leafIndex : index,
-        }))
-      : []
+  const buildRoster = useCallback(
+    (serverMembers) =>
+      Array.isArray(serverMembers)
+        ? serverMembers.map((member, index) => ({
+            userId: String(member?.userId ?? member?.id ?? ''),
+            username: member?.username ?? 'Member',
+            leafIndex: Number.isInteger(member?.leafIndex) ? member.leafIndex : index,
+          }))
+        : [],
+    []
+  )
 
-  const getGroupCacheId = (groupId) => `${GROUP_CACHE_PREFIX}${groupId}`
+  const getGroupCacheId = useCallback((groupId) => `${GROUP_CACHE_PREFIX}${groupId}`, [])
 
-  const parseArtifactPayload = (message) => {
+  const parseArtifactPayload = useCallback((message) => {
     if (typeof message?.payload !== 'string' || message.payload.length === 0) return null
 
     try {
@@ -77,58 +80,67 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
       console.error('[GroupChat] Failed to parse stored MLS artifact payload:', err)
       return null
     }
-  }
+  }, [])
 
-  const findMemberByUserId = (roster, memberUserId) =>
-    Array.isArray(roster)
-      ? roster.find((member) => String(member?.userId ?? '') === String(memberUserId ?? ''))
-      : null
+  const findMemberByUserId = useCallback(
+    (roster, memberUserId) =>
+      Array.isArray(roster)
+        ? roster.find((member) => String(member?.userId ?? '') === String(memberUserId ?? ''))
+        : null,
+    []
+  )
 
-  const findMemberByLeafIndex = (roster, leafIndex) =>
-    Array.isArray(roster)
-      ? roster.find(
-          (member) => Number.isInteger(member?.leafIndex) && member.leafIndex === leafIndex
-        )
-      : null
+  const findMemberByLeafIndex = useCallback(
+    (roster, leafIndex) =>
+      Array.isArray(roster)
+        ? roster.find(
+            (member) => Number.isInteger(member?.leafIndex) && member.leafIndex === leafIndex
+          )
+        : null,
+    []
+  )
 
-  const buildCommitSystemMessage = ({ commit, priorState, message, actorUsername }) => {
-    if (!commit || typeof commit !== 'object') return null
+  const buildCommitSystemMessage = useCallback(
+    ({ commit, priorState, message, actorUsername }) => {
+      if (!commit || typeof commit !== 'object') return null
 
-    const createdAt = message?.createdAt || message?.timestamp || new Date().toISOString()
-    const actorName =
-      actorUsername ||
-      findMemberByLeafIndex(priorState?.roster, commit?.senderLeafIndex)?.username ||
-      findMemberByLeafIndex(commit?.roster, commit?.senderLeafIndex)?.username ||
-      'A member'
-    const targetName =
-      findMemberByUserId(priorState?.roster, commit?.targetUserId)?.username ||
-      findMemberByUserId(commit?.roster, commit?.targetUserId)?.username ||
-      'a member'
+      const createdAt = message?.createdAt || message?.timestamp || new Date().toISOString()
+      const actorName =
+        actorUsername ||
+        findMemberByLeafIndex(priorState?.roster, commit?.senderLeafIndex)?.username ||
+        findMemberByLeafIndex(commit?.roster, commit?.senderLeafIndex)?.username ||
+        'A member'
+      const targetName =
+        findMemberByUserId(priorState?.roster, commit?.targetUserId)?.username ||
+        findMemberByUserId(commit?.roster, commit?.targetUserId)?.username ||
+        'a member'
 
-    let text = `${actorName} updated the group`
-    if (commit?.type === 'add') {
-      text = `${actorName} added ${targetName} to the group`
-    } else if (commit?.type === 'remove') {
-      const actorWasTarget =
-        String(commit?.targetUserId ?? '') ===
-        String(findMemberByLeafIndex(priorState?.roster, commit?.senderLeafIndex)?.userId ?? '')
-      text = actorWasTarget
-        ? `${actorName} left the group`
-        : `${actorName} removed ${targetName} from the group`
-    }
+      let text = `${actorName} updated the group`
+      if (commit?.type === 'add') {
+        text = `${actorName} added ${targetName} to the group`
+      } else if (commit?.type === 'remove') {
+        const actorWasTarget =
+          String(commit?.targetUserId ?? '') ===
+          String(findMemberByLeafIndex(priorState?.roster, commit?.senderLeafIndex)?.userId ?? '')
+        text = actorWasTarget
+          ? `${actorName} left the group`
+          : `${actorName} removed ${targetName} from the group`
+      }
 
-    return {
-      _id:
-        message?._id ||
-        `commit:${String(commit?.groupId ?? activeGroupId)}:${String(commit?.epoch ?? createdAt)}`,
-      userId: '',
-      username: '',
-      text,
-      createdAt,
-      seenStatus: true,
-      messageType: 'system',
-    }
-  }
+      return {
+        _id:
+          message?._id ||
+          `commit:${String(commit?.groupId ?? activeGroupId)}:${String(commit?.epoch ?? createdAt)}`,
+        userId: '',
+        username: '',
+        text,
+        createdAt,
+        seenStatus: true,
+        messageType: 'system',
+      }
+    },
+    [activeGroupId, findMemberByLeafIndex, findMemberByUserId]
+  )
 
   const mergeCachedMessages = (cachedMessages, incomingMessages) => {
     const byId = new Map()
@@ -158,180 +170,186 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
     )
   }
 
-  const syncLocalStateFromServer = async ({ roster, responseGroup, responseMembership }) => {
-    const currentState = await loadGroupState(activeGroupId)
-    const serverLeafIndex = Number.isInteger(responseMembership?.leafIndex)
-      ? responseMembership.leafIndex
-      : (roster.find((member) => String(member.userId) === String(userId))?.leafIndex ?? null)
+  const syncLocalStateFromServer = useCallback(
+    async ({ roster, responseGroup, responseMembership }) => {
+      const currentState = await loadGroupState(activeGroupId)
+      const serverLeafIndex = Number.isInteger(responseMembership?.leafIndex)
+        ? responseMembership.leafIndex
+        : (roster.find((member) => String(member.userId) === String(userId))?.leafIndex ?? null)
 
-    if (!currentState) {
-      if (responseGroup?.mlsEnabled && String(responseGroup?.createdBy ?? '') !== String(userId)) {
-        return saveGroupState(activeGroupId, {
-          groupId: activeGroupId,
-          // New members bootstrap from the welcome/commit artifacts in message history.
-          epoch: 0,
-          cipherSuite: responseGroup?.cipherSuite ?? DEFAULT_MLS_CIPHER_SUITE,
-          selfUserId: userId,
-          selfLeafIndex: serverLeafIndex,
-          groupKeyB64: null,
-          applicationMessageCounter: 0,
-          roster,
-          tree: { nodes: [], root: null },
-          secrets: { epochSecretsB64: null, initSecretB64: null },
-          pendingCommits: [],
-        })
-      }
-
-      return createNewGroupState({
-        groupId: activeGroupId,
-        creatorUserId: userId,
-        roster,
-        cipherSuite: responseGroup?.cipherSuite ?? DEFAULT_MLS_CIPHER_SUITE,
-      })
-    }
-
-    // For existing MLS state, only sync membership metadata here.
-    // Epoch/key schedule changes must come from applyCommit/processWelcome so
-    // we do not persist a mixed state with new roster/epoch but old secrets.
-    const nextState = {
-      ...currentState,
-      selfLeafIndex: serverLeafIndex,
-      roster,
-    }
-
-    const rosterChanged = JSON.stringify(currentState.roster ?? []) !== JSON.stringify(roster)
-    const needsSave = rosterChanged || currentState.selfLeafIndex !== nextState.selfLeafIndex
-
-    return needsSave ? saveGroupState(activeGroupId, nextState) : nextState
-  }
-
-  const formatMessage = async (message, cryptoState, meta) => {
-    const createdAt = message?.createdAt || message?.timestamp || new Date().toISOString()
-    const id =
-      message?._id ||
-      `${String(message?.groupId ?? activeGroupId)}:${String(message?.seq ?? createdAt)}`
-    const fromUsername =
-      message?.username || (String(message?.userId) === String(userId) ? username : 'Member')
-
-    let text = ''
-    let nextState = cryptoState
-
-    // Item #3: accept either encrypted sender data (preferred) or legacy plaintext header
-    const hasAppMessage =
-      meta?.mlsEnabled &&
-      message?.contentType === 'application' &&
-      (message?.encryptedSenderDataB64 || message?.headerB64) &&
-      message?.ciphertextB64
-    if (hasAppMessage) {
-      try {
-        const decrypted = await decryptApplicationMessage({
-          state: cryptoState,
-          encryptedSenderDataB64: message.encryptedSenderDataB64 ?? null,
-          header: message.headerB64 ?? null,
-          ciphertext: message.ciphertextB64,
-          includeNewState: true,
-        })
-        const plaintextBytes = decrypted?.plaintextBytes ?? decrypted
-        nextState = decrypted?.newState ?? cryptoState
-        text = TEXT_DECODER.decode(plaintextBytes)
-      } catch (err) {
-        console.error('[GroupChat] Failed to decrypt MLS message:', err)
-        text = MLS_UNAVAILABLE_TEXT
-      }
-    } else if (typeof message?.payload === 'string') {
-      text = message.payload
-    } else if (typeof message?.text === 'string') {
-      text = message.text
-    }
-
-    return {
-      formattedMessage: {
-        _id: id,
-        userId: String(message?.userId ?? ''),
-        username: fromUsername,
-        text,
-        createdAt,
-        seenStatus: true,
-      },
-      nextState,
-    }
-  }
-
-  const replayFetchedMessages = async ({ fetchedMessages, initialState, initialMeta }) => {
-    let replayState = initialState
-    let replayMeta = initialMeta
-    const formattedMessages = []
-    const sortedMessages = [...(Array.isArray(fetchedMessages) ? fetchedMessages : [])].sort(
-      (a, b) => {
-        const seqA = Number.isInteger(a?.seq) ? a.seq : Number.MAX_SAFE_INTEGER
-        const seqB = Number.isInteger(b?.seq) ? b.seq : Number.MAX_SAFE_INTEGER
-        return seqA - seqB
-      }
-    )
-
-    // Load once for all commits/welcomes in this replay
-    const identityKeys = await getIdentityKeys() // add this import at the top
-    const myInitPrivKeyB64 = identityKeys?.privateKeyX25519 ?? null
-
-    for (const message of sortedMessages) {
-      if (initialMeta?.mlsEnabled && message?.contentType === 'commit') {
-        const commit = parseArtifactPayload(message)
-        if (!commit) continue
-        const systemMessage = buildCommitSystemMessage({
-          commit,
-          priorState: replayState,
-          message,
-          actorUsername: message?.username,
-        })
-        if (Number.isInteger(replayState?.epoch) && commit.epoch <= replayState.epoch) {
-          if (systemMessage) formattedMessages.push(systemMessage)
-          continue
-        }
-
-        try {
-          replayState = await applyCommit({ state: replayState, commit, myInitPrivKeyB64 })
-          replayState = await saveGroupState(activeGroupId, replayState)
-          replayMeta = {
-            ...replayMeta,
-            epoch: Number.isInteger(commit?.epoch) ? commit.epoch : replayMeta.epoch,
-          }
-          if (systemMessage) formattedMessages.push(systemMessage)
-        } catch (err) {
-          console.warn('[GroupChat] Skipping stored MLS commit during replay:', err)
-        }
-        continue
-      }
-
-      if (initialMeta?.mlsEnabled && message?.contentType === 'welcome') {
-        const welcome = parseArtifactPayload(message)
-        if (!welcome || String(welcome.recipientUserId ?? '') !== String(userId)) continue
-        const hasKeyMaterial = Boolean(
-          replayState?.applicationSecretB64 || replayState?.groupKeyB64
-        )
+      if (!currentState) {
         if (
-          hasKeyMaterial &&
-          Number.isInteger(replayState?.epoch) &&
-          welcome.epoch <= replayState.epoch
+          responseGroup?.mlsEnabled &&
+          String(responseGroup?.createdBy ?? '') !== String(userId)
         ) {
+          return saveGroupState(activeGroupId, {
+            groupId: activeGroupId,
+            epoch: 0,
+            cipherSuite: responseGroup?.cipherSuite ?? DEFAULT_MLS_CIPHER_SUITE,
+            selfUserId: userId,
+            selfLeafIndex: serverLeafIndex,
+            groupKeyB64: null,
+            applicationMessageCounter: 0,
+            roster,
+            tree: { nodes: [], root: null },
+            secrets: { epochSecretsB64: null, initSecretB64: null },
+            pendingCommits: [],
+          })
+        }
+
+        return createNewGroupState({
+          groupId: activeGroupId,
+          creatorUserId: userId,
+          roster,
+          cipherSuite: responseGroup?.cipherSuite ?? DEFAULT_MLS_CIPHER_SUITE,
+        })
+      }
+
+      const nextState = {
+        ...currentState,
+        selfLeafIndex: serverLeafIndex,
+        roster,
+      }
+
+      const rosterChanged = JSON.stringify(currentState.roster ?? []) !== JSON.stringify(roster)
+      const needsSave = rosterChanged || currentState.selfLeafIndex !== nextState.selfLeafIndex
+
+      return needsSave ? saveGroupState(activeGroupId, nextState) : nextState
+    },
+    [activeGroupId, userId]
+  )
+
+  const formatMessage = useCallback(
+    async (message, cryptoState, meta) => {
+      const createdAt = message?.createdAt || message?.timestamp || new Date().toISOString()
+      const id =
+        message?._id ||
+        `${String(message?.groupId ?? activeGroupId)}:${String(message?.seq ?? createdAt)}`
+      const fromUsername =
+        message?.username || (String(message?.userId) === String(userId) ? username : 'Member')
+
+      let text = ''
+      let nextState = cryptoState
+
+      const hasAppMessage =
+        meta?.mlsEnabled &&
+        message?.contentType === 'application' &&
+        (message?.encryptedSenderDataB64 || message?.headerB64) &&
+        message?.ciphertextB64
+      if (hasAppMessage) {
+        try {
+          const decrypted = await decryptApplicationMessage({
+            state: cryptoState,
+            encryptedSenderDataB64: message.encryptedSenderDataB64 ?? null,
+            header: message.headerB64 ?? null,
+            ciphertext: message.ciphertextB64,
+            includeNewState: true,
+          })
+          const plaintextBytes = decrypted?.plaintextBytes ?? decrypted
+          nextState = decrypted?.newState ?? cryptoState
+          text = TEXT_DECODER.decode(plaintextBytes)
+        } catch (err) {
+          console.error('[GroupChat] Failed to decrypt MLS message:', err)
+          text = MLS_UNAVAILABLE_TEXT
+        }
+      } else if (typeof message?.payload === 'string') {
+        text = message.payload
+      } else if (typeof message?.text === 'string') {
+        text = message.text
+      }
+
+      return {
+        formattedMessage: {
+          _id: id,
+          userId: String(message?.userId ?? ''),
+          username: fromUsername,
+          text,
+          createdAt,
+          seenStatus: true,
+        },
+        nextState,
+      }
+    },
+    [activeGroupId, userId, username]
+  )
+
+  const replayFetchedMessages = useCallback(
+    async ({ fetchedMessages, initialState, initialMeta }) => {
+      let replayState = initialState
+      let replayMeta = initialMeta
+      const formattedMessages = []
+      const sortedMessages = [...(Array.isArray(fetchedMessages) ? fetchedMessages : [])].sort(
+        (a, b) => {
+          const seqA = Number.isInteger(a?.seq) ? a.seq : Number.MAX_SAFE_INTEGER
+          const seqB = Number.isInteger(b?.seq) ? b.seq : Number.MAX_SAFE_INTEGER
+          return seqA - seqB
+        }
+      )
+
+      const identityKeys = await getIdentityKeys()
+      const myInitPrivKeyB64 = identityKeys?.privateKeyX25519 ?? null
+
+      for (const message of sortedMessages) {
+        if (initialMeta?.mlsEnabled && message?.contentType === 'commit') {
+          const commit = parseArtifactPayload(message)
+          if (!commit) continue
+          const systemMessage = buildCommitSystemMessage({
+            commit,
+            priorState: replayState,
+            message,
+            actorUsername: message?.username,
+          })
+          if (Number.isInteger(replayState?.epoch) && commit.epoch <= replayState.epoch) {
+            if (systemMessage) formattedMessages.push(systemMessage)
+            continue
+          }
+
+          try {
+            replayState = await applyCommit({ state: replayState, commit, myInitPrivKeyB64 })
+            replayState = await saveGroupState(activeGroupId, replayState)
+            replayMeta = {
+              ...replayMeta,
+              epoch: Number.isInteger(commit?.epoch) ? commit.epoch : replayMeta.epoch,
+            }
+            if (systemMessage) formattedMessages.push(systemMessage)
+          } catch (err) {
+            console.warn('[GroupChat] Skipping stored MLS commit during replay:', err)
+          }
           continue
         }
 
-        try {
-          replayState = await processWelcome({ welcome, selfUserId: userId, myInitPrivKeyB64 })
-          replayState = await saveGroupState(activeGroupId, replayState)
-        } catch (err) {
-          console.warn('[GroupChat] Skipping stored MLS welcome during replay:', err)
+        if (initialMeta?.mlsEnabled && message?.contentType === 'welcome') {
+          const welcome = parseArtifactPayload(message)
+          if (!welcome || String(welcome.recipientUserId ?? '') !== String(userId)) continue
+          const hasKeyMaterial = Boolean(
+            replayState?.applicationSecretB64 || replayState?.groupKeyB64
+          )
+          if (
+            hasKeyMaterial &&
+            Number.isInteger(replayState?.epoch) &&
+            welcome.epoch <= replayState.epoch
+          ) {
+            continue
+          }
+
+          try {
+            replayState = await processWelcome({ welcome, selfUserId: userId, myInitPrivKeyB64 })
+            replayState = await saveGroupState(activeGroupId, replayState)
+          } catch (err) {
+            console.warn('[GroupChat] Skipping stored MLS welcome during replay:', err)
+          }
+          continue
         }
-        continue
+
+        const formatted = await formatMessage(message, replayState, replayMeta)
+        replayState = formatted.nextState ?? replayState
+        formattedMessages.push(formatted.formattedMessage)
       }
 
-      const formatted = await formatMessage(message, replayState, replayMeta)
-      replayState = formatted.nextState ?? replayState
-      formattedMessages.push(formatted.formattedMessage)
-    }
-
-    return { formattedMessages, replayState, replayMeta }
-  }
+      return { formattedMessages, replayState, replayMeta }
+    },
+    [activeGroupId, buildCommitSystemMessage, formatMessage, parseArtifactPayload, userId]
+  )
 
   useEffect(() => {
     if (!activeGroupId) return
@@ -582,7 +600,18 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
       socket.off('groupMemberRemoved', handleMembershipChanged)
       window.removeEventListener('localStorageUpdated', handleStoredGroupMessage)
     }
-  }, [activeGroupId, socket, userId, username])
+  }, [
+    activeGroupId,
+    buildCommitSystemMessage,
+    buildRoster,
+    formatMessage,
+    getGroupCacheId,
+    replayFetchedMessages,
+    socket,
+    syncLocalStateFromServer,
+    userId,
+    username,
+  ])
 
   useEffect(() => {
     if (!messagesEndRef.current) return
@@ -604,9 +633,6 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
         state: currentState,
         plaintextBytes: TEXT_ENCODER.encode(text),
       })
-      // Item #3: include encryptedSenderDataB64 in both the pending cache and the wire
-      // payload so that the server and all recipients can use it for decryption instead
-      // of the plaintext headerB64.
       const pendingOutgoingMessage = {
         groupId: activeGroupId,
         encryptedSenderDataB64: encrypted.encryptedSenderDataB64 ?? null,
@@ -626,7 +652,6 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
             nonce: encrypted.nonceB64,
             messageType: 'text',
             contentType: 'application',
-            // Item #3: send encrypted sender identity alongside ciphertext
             encryptedSenderDataB64: encrypted.encryptedSenderDataB64 ?? null,
             headerB64: encrypted.headerB64,
             ciphertextB64: encrypted.ciphertextB64,

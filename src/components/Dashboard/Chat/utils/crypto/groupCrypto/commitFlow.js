@@ -1,6 +1,9 @@
 import { base64ToBytes, bytesToBase64 } from '../../helpers.js'
 
-import init, { generate_public_ephemeral_key } from '@mascaro101/echo-protocol'
+import init, {
+  generate_public_ephemeral_key,
+  encrypt_aad_bytes as encAad,
+} from '@mascaro101/echo-protocol'
 
 import { copath, directPath, leafNode, nodeWidth, resolution } from './treemath.js'
 
@@ -47,6 +50,13 @@ import {
 } from './groupContext.js'
 import { createProposal, resolveProposalRefs } from './proposals.js'
 
+import {
+  deriveSecret,
+  expandWithLabel,
+  deriveWelcomeSecret,
+  deriveWelcomeKeyAndNonce,
+} from '../keySchedule.js'
+
 // Read the previous confirmed transcript hash from state.
 async function resolvePrevTranscriptHash(state) {
   if (
@@ -74,13 +84,13 @@ export async function buildUpdatePath(treeNodes, senderLeafIndex, leafCount) {
   const pathNodes = [senderNodeIndex, ...directPath(senderNodeIndex, leafCount)]
   const copathNodes = copath(senderNodeIndex, leafCount)
 
+  // Fresh random secret
   const pathSecrets = [randomBytes(32)]
+
   for (let i = 1; i < pathNodes.length; i++) {
-    const { deriveSecret } = await import('../keySchedule.js')
     pathSecrets.push(await deriveSecret(pathSecrets[i - 1], 'path'))
   }
 
-  const { deriveSecret, expandWithLabel } = await import('../keySchedule.js')
   const commitSecret = await deriveSecret(pathSecrets[pathSecrets.length - 1], 'path')
 
   const updatePath = []
@@ -172,8 +182,6 @@ export async function applyUpdatePath(
   ) {
     return null
   }
-
-  const { deriveSecret, expandWithLabel } = await import('../keySchedule.js')
 
   const recoverAndVerify = async (decryptedPathSecret, pathIndex) => {
     // Re-derive each node key locally and compare it to the claimed path entry.
@@ -415,8 +423,6 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
     aadBytes
   )
 
-  const { deriveWelcomeSecret, deriveWelcomeKeyAndNonce } = await import('../keySchedule.js')
-  const { encrypt_aad_bytes: encAad } = await import('@mascaro101/echo-protocol')
   const encryptGroupInfo = async (info) => {
     const ws = await deriveWelcomeSecret(joinerSecret)
     const { key, nonce } = await deriveWelcomeKeyAndNonce(ws)

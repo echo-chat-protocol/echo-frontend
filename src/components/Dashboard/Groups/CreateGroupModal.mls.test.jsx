@@ -112,7 +112,7 @@ describe('CreateGroupModal MLS initialization', () => {
       {
         groupId: 'group-1',
         epoch: 0,
-        cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+        cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
         roster: [
           { userId: 'alice', username: 'Member', leafIndex: 0 },
           { userId: 'bob', username: 'Bob', leafIndex: 1 },
@@ -195,7 +195,7 @@ describe('CreateGroupModal MLS initialization', () => {
         name: 'Project Team',
         memberIds: ['bob'],
         mlsEnabled: true,
-        cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+        cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
       },
       expect.any(Function)
     )
@@ -207,7 +207,7 @@ describe('CreateGroupModal MLS initialization', () => {
         { userId: 'alice', username: 'Member', leafIndex: 0 },
         { userId: 'bob', username: 'Bob', leafIndex: 1 },
       ],
-      cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
       memberInitKeys: [
         { userId: 'alice', leafIndex: 0, initKeyB64: 'alice-init-pub-b64' },
         { userId: 'bob', leafIndex: 1, initKeyB64: 'bob-init-key-b64' },
@@ -232,7 +232,7 @@ describe('CreateGroupModal MLS initialization', () => {
       welcome: {
         groupId: 'group-1',
         epoch: 0,
-        cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+        cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
         roster: [
           { userId: 'alice', username: 'Member', leafIndex: 0 },
           { userId: 'bob', username: 'Bob', leafIndex: 1 },
@@ -267,7 +267,7 @@ describe('CreateGroupModal MLS initialization', () => {
       name: 'Project Team',
       mlsEnabled: true,
       epoch: 0,
-      cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
     })
     expect(onClose).toHaveBeenCalled()
   })

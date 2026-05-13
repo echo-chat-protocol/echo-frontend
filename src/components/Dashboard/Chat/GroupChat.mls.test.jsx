@@ -74,7 +74,7 @@ function makeOpenGroupResponse(overrides = {}) {
       createdBy: 'alice',
       mlsEnabled: true,
       epoch: 2,
-      cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
       ...(overrides.group ?? {}),
     },
     members: [
@@ -179,7 +179,7 @@ describe('GroupChat MLS state lifecycle', () => {
     const localState = {
       groupId: 'group-1',
       epoch: 2,
-      cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
       selfUserId: 'alice',
       selfLeafIndex: 0,
       groupKeyB64: 'group-key',
@@ -245,7 +245,7 @@ describe('GroupChat MLS state lifecycle', () => {
     loadGroupStateMock.mockResolvedValue({
       groupId: 'group-1',
       epoch: 2,
-      cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
       selfUserId: 'alice',
       selfLeafIndex: 0,
       groupKeyB64: 'group-key-latest',
@@ -345,7 +345,7 @@ describe('GroupChat MLS state lifecycle', () => {
     const localState = {
       groupId: 'group-1',
       epoch: 2,
-      cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
       selfUserId: 'alice',
       selfLeafIndex: 0,
       groupKeyB64: 'group-key',
@@ -440,7 +440,7 @@ describe('GroupChat MLS state lifecycle', () => {
     const welcomeState = {
       groupId: 'group-1',
       epoch: 2,
-      cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
       selfUserId: 'bob',
       selfLeafIndex: 1,
       groupKeyB64: 'welcome-group-key',
@@ -513,7 +513,7 @@ describe('GroupChat MLS state lifecycle', () => {
         welcome: {
           groupId: 'group-1',
           epoch: 2,
-          cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+          cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
           roster: [
             { userId: 'alice', username: 'Alice', leafIndex: 0 },
             { userId: 'bob', username: 'Bob', leafIndex: 1 },
@@ -531,7 +531,7 @@ describe('GroupChat MLS state lifecycle', () => {
         welcome: {
           groupId: 'group-1',
           epoch: 2,
-          cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+          cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
           roster: [
             { userId: 'alice', username: 'Alice', leafIndex: 0 },
             { userId: 'bob', username: 'Bob', leafIndex: 1 },
@@ -593,7 +593,7 @@ describe('GroupChat MLS state lifecycle', () => {
     const localState = {
       groupId: 'group-1',
       epoch: 2,
-      cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
       selfUserId: 'alice',
       selfLeafIndex: 0,
       groupKeyB64: 'group-key',
@@ -685,7 +685,7 @@ describe('GroupChat MLS state lifecycle', () => {
     const localState = {
       groupId: 'group-1',
       epoch: 2,
-      cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
       selfUserId: 'alice',
       selfLeafIndex: 0,
       groupKeyB64: 'group-key',
@@ -769,7 +769,7 @@ describe('GroupChat MLS state lifecycle', () => {
     const localState = {
       groupId: 'group-1',
       epoch: 2,
-      cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
       selfUserId: 'bob',
       selfLeafIndex: 1,
       groupKeyB64: 'group-key',
@@ -853,7 +853,7 @@ describe('GroupChat MLS state lifecycle', () => {
     const localState = {
       groupId: 'group-1',
       epoch: 2,
-      cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
       selfUserId: 'alice',
       selfLeafIndex: 0,
       groupKeyB64: 'group-key',
@@ -886,7 +886,7 @@ describe('GroupChat MLS state lifecycle', () => {
               createdBy: 'alice',
               mlsEnabled: true,
               epoch: 2,
-              cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+              cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
             },
             members: [
               { userId: 'alice', username: 'Alice', leafIndex: 0, status: 'active' },
@@ -910,7 +910,7 @@ describe('GroupChat MLS state lifecycle', () => {
             createdBy: 'alice',
             mlsEnabled: true,
             epoch: 3,
-            cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+            cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
           },
           members: [
             { userId: 'alice', username: 'Alice', leafIndex: 0, status: 'active' },
@@ -961,7 +961,7 @@ describe('GroupChat MLS state lifecycle', () => {
       'group-1',
       expect.objectContaining({
         epoch: 2,
-        cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+        cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
         senderGenerations: { 0: 1 },
         roster: [
           { userId: 'alice', username: 'Alice', leafIndex: 0 },
@@ -982,7 +982,7 @@ describe('GroupChat MLS state lifecycle', () => {
     const welcomeState = {
       groupId: 'group-1',
       epoch: 2,
-      cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
       selfUserId: 'bob',
       selfLeafIndex: 1,
       groupKeyB64: 'welcome-key',
@@ -1041,7 +1041,7 @@ describe('GroupChat MLS state lifecycle', () => {
               payload: JSON.stringify({
                 groupId: 'group-1',
                 epoch: 2,
-                cipherSuite: 'MLS-MVP/X25519_AES256GCM_SHA256',
+                cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
                 roster: [
                   { userId: 'alice', username: 'Alice', leafIndex: 0 },
                   { userId: 'bob', username: 'Bob', leafIndex: 1 },
