@@ -5,7 +5,7 @@ import { Lock, Eye, EyeOff, Edit, X, Check, Trash2, Key, Shield, ArrowLeft } fro
 import { jwtDecode } from 'jwt-decode'
 import { getSocket } from '../../services/socket'
 import Toast from '../common/Toast'
-import ParticlesBackground from '../HomepageComponents/ParticlesBackground.jsx'
+import ParticlesBackground from '@/components/animations/ParticlesBackground.jsx'
 
 const UserProfile = () => {
   const { t } = useTranslation()
