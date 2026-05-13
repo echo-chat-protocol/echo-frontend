@@ -1,5 +1,19 @@
 import init, * as protocol from '@mascaro101/echo-protocol'
 import { encodeGroupContext } from './groupContext.js'
+import {
+  LABEL_EPOCH,
+  LABEL_ENCRYPTION,
+  LABEL_SENDER_DATA,
+  LABEL_EXTERNAL,
+  LABEL_MEMBERSHIP,
+  LABEL_RESUMPTION,
+  LABEL_INIT,
+  LABEL_WELCOME,
+  LABEL_KEY,
+  LABEL_NONCE,
+  LABEL_CONFIRM,
+  LABEL_SECRET,
+} from './labels.js'
 
 const NH = 32
 const NK = 32
@@ -76,7 +90,7 @@ export async function deriveEpochSecrets(
     treeHash,
     confirmedTranscriptHash,
   })
-  const epochSecret = await expandWithLabel(joinerSecret, 'epoch', context, NH)
+  const epochSecret = await expandWithLabel(joinerSecret, LABEL_EPOCH, context, NH)
 
   const [
     applicationSecret,
@@ -86,12 +100,12 @@ export async function deriveEpochSecrets(
     resumptionPsk,
     nextInitSecret,
   ] = await Promise.all([
-    deriveSecret(epochSecret, 'encryption'),
-    deriveSecret(epochSecret, 'sender data'),
-    deriveSecret(epochSecret, 'external'),
-    deriveSecret(epochSecret, 'membership'),
-    deriveSecret(epochSecret, 'resumption'),
-    deriveSecret(epochSecret, 'init'),
+    deriveSecret(epochSecret, LABEL_ENCRYPTION),
+    deriveSecret(epochSecret, LABEL_SENDER_DATA),
+    deriveSecret(epochSecret, LABEL_EXTERNAL),
+    deriveSecret(epochSecret, LABEL_MEMBERSHIP),
+    deriveSecret(epochSecret, LABEL_RESUMPTION),
+    deriveSecret(epochSecret, LABEL_INIT),
   ])
 
   return {
@@ -138,21 +152,21 @@ export async function advanceEpoch({
 
 // Derive the welcome secret from the joiner secret.
 export async function deriveWelcomeSecret(joinerSecret) {
-  return deriveSecret(joinerSecret, 'welcome')
+  return deriveSecret(joinerSecret, LABEL_WELCOME)
 }
 
 // Derive the AEAD key and nonce used for GroupInfo.
 export async function deriveWelcomeKeyAndNonce(welcomeSecret) {
   const [key, nonce] = await Promise.all([
-    expandWithLabel(welcomeSecret, 'key', new Uint8Array(0), NK),
-    expandWithLabel(welcomeSecret, 'nonce', new Uint8Array(0), NN),
+    expandWithLabel(welcomeSecret, LABEL_KEY, new Uint8Array(0), NK),
+    expandWithLabel(welcomeSecret, LABEL_NONCE, new Uint8Array(0), NN),
   ])
   return { key, nonce }
 }
 
 // Derive the confirmation MAC key for one epoch.
 export async function deriveConfirmationKey(epochSecret) {
-  return deriveSecret(epochSecret, 'confirm')
+  return deriveSecret(epochSecret, LABEL_CONFIRM)
 }
 
 // Compute the confirmation tag for one confirmed transcript hash.
@@ -195,8 +209,8 @@ function encodeAppSecretContext(leafIndex, generation) {
 export async function deriveAppKeyAndNonce(applicationSecret, senderLeafIndex, generation) {
   const ctx = encodeAppSecretContext(senderLeafIndex, generation)
   const [key, nonce] = await Promise.all([
-    expandWithLabel(applicationSecret, 'key', ctx, NK),
-    expandWithLabel(applicationSecret, 'nonce', ctx, NN),
+    expandWithLabel(applicationSecret, LABEL_KEY, ctx, NK),
+    expandWithLabel(applicationSecret, LABEL_NONCE, ctx, NN),
   ])
   return { key, nonce }
 }
@@ -204,7 +218,7 @@ export async function deriveAppKeyAndNonce(applicationSecret, senderLeafIndex, g
 // Ratchet one sender application secret forward.
 export async function ratchetAppSecret(applicationSecret, senderLeafIndex, generation) {
   const ctx = encodeAppSecretContext(senderLeafIndex, generation)
-  return expandWithLabel(applicationSecret, 'secret', ctx, NH)
+  return expandWithLabel(applicationSecret, LABEL_SECRET, ctx, NH)
 }
 
 // Derive the sender-data key pair for one ciphertext prefix.
@@ -212,8 +226,8 @@ export async function deriveSenderDataKeyAndNonce(senderDataSecret, ciphertextPr
   // Sender-data keys are tied to the first four ciphertext bytes.
   const ctx = ciphertextPrefix4.slice(0, 4)
   const [key, nonce] = await Promise.all([
-    expandWithLabel(senderDataSecret, 'key', ctx, NK),
-    expandWithLabel(senderDataSecret, 'nonce', ctx, NN),
+    expandWithLabel(senderDataSecret, LABEL_KEY, ctx, NK),
+    expandWithLabel(senderDataSecret, LABEL_NONCE, ctx, NN),
   ])
   return { key, nonce }
 }

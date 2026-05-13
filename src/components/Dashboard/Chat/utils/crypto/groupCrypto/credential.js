@@ -1,5 +1,6 @@
 import { base64ToBytes } from '../../helpers.js'
 import { signBytes, verifyBytes } from './commitSigning.js'
+import { DOMAIN_CREDENTIAL, PROTOCOL_VERSION } from './labels.js'
 
 const TEXT_ENCODER = new TextEncoder()
 
@@ -17,7 +18,7 @@ function lp(bytes) {
 
 // Encode the credential fields that are covered by the signature.
 export function encodeCredentialForSigning(userId, leafSigningPubKeyB64) {
-  const domain = lp(TEXT_ENCODER.encode('EchoMLS/v1/Credential'))
+  const domain = lp(TEXT_ENCODER.encode(DOMAIN_CREDENTIAL))
   const uid = lp(TEXT_ENCODER.encode(String(userId ?? '')))
   const pub = lp(leafSigningPubKeyB64 ? base64ToBytes(leafSigningPubKeyB64) : new Uint8Array(0))
   const buf = new Uint8Array(domain.length + uid.length + pub.length)
@@ -32,7 +33,7 @@ export async function issueCredential(userId, leafSigningPrivKeyB64, leafSigning
   const message = encodeCredentialForSigning(String(userId), leafSigningPubKeyB64)
   const signature = await signBytes(message, leafSigningPrivKeyB64)
   return {
-    version: 'EchoMLS/v1',
+    version: PROTOCOL_VERSION,
     userId: String(userId),
     leafSigningPubKeyB64,
     signature,

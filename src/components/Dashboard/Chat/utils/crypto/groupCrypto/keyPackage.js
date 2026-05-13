@@ -1,6 +1,7 @@
 import { base64ToBytes } from '../../helpers.js'
 import { generateLeafSigningKeypair, signBytes, verifyBytes } from './commitSigning.js'
 import { issueCredential, verifyCredential } from './credential.js'
+import { DOMAIN_KEY_PACKAGE, PROTOCOL_VERSION } from './labels.js'
 
 const TEXT_ENCODER = new TextEncoder()
 const KP_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
@@ -45,7 +46,7 @@ function encodeUint64(n) {
 // Encode the signed portion of a KeyPackage.
 export function encodeKeyPackageForSigning(kp) {
   const fields = [
-    lp(TEXT_ENCODER.encode('EchoMLS/v1/KeyPackage')),
+    lp(TEXT_ENCODER.encode(DOMAIN_KEY_PACKAGE)),
     lp(TEXT_ENCODER.encode(kp.version ?? '')),
     lp(TEXT_ENCODER.encode(kp.cipherSuite ?? '')),
     lp(TEXT_ENCODER.encode(String(kp.userId ?? ''))),
@@ -72,7 +73,7 @@ export async function generateKeyPackage({ userId, initKeyB64, cipherSuite }) {
 
   const now = Date.now()
   const kp = {
-    version: 'EchoMLS/v1',
+    version: PROTOCOL_VERSION,
     cipherSuite,
     userId: String(userId),
     initKeyB64,

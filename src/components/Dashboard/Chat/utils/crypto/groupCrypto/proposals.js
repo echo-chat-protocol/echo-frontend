@@ -3,13 +3,14 @@ import { signBytes, verifyBytes } from './commitSigning.js'
 import { verifyKeyPackage } from './keyPackage.js'
 import { sha256 } from './groupContext.js'
 import { normalizeGroupState } from './groupState.js'
+import { DOMAIN_PROPOSAL, PROTOCOL_VERSION } from './labels.js'
 
 const TEXT_ENCODER = new TextEncoder()
 
 // Keep proposal signing stable across runtimes.
 export function encodeProposalForSigning(proposal) {
   const base = [
-    'EchoMLS/v1/Proposal',
+    DOMAIN_PROPOSAL,
     proposal.type,
     String(proposal.groupId ?? ''),
     String(proposal.epoch ?? ''),
@@ -64,7 +65,7 @@ export function encodeProposalForSigning(proposal) {
 
 // Sign a proposal and attach its stable reference.
 export async function createProposal(proposalFields, leafSigningPrivKeyB64) {
-  const base = { version: 'EchoMLS/v1', ...proposalFields }
+  const base = { version: PROTOCOL_VERSION, ...proposalFields }
   const message = encodeProposalForSigning(base)
   base.signature = await signBytes(message, leafSigningPrivKeyB64)
   base.ref = bytesToBase64(await sha256(message))

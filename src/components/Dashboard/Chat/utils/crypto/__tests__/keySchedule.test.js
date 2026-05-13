@@ -176,41 +176,41 @@ describe('keySchedule advanceEpoch', () => {
     expect(wasm.hkdf_expand).toHaveBeenNthCalledWith(
       1,
       joinerSecret,
-      encodeHKDFLabel(32, 'epoch', groupContext),
+      encodeHKDFLabel(32, 'Echo/v1/epoch', groupContext),
       32
     )
 
     const epochSecret = wasm.hkdf_expand.mock.results[0].value
 
-    // Calls 2–7: six epoch-level secrets (RFC 9420 §8.4 labels, parallel Promise.all)
+    // Calls 2–7: six epoch-level secrets (Echo/v1/ labels, parallel Promise.all)
     expect(wasm.hkdf_expand).toHaveBeenCalledWith(
       epochSecret,
-      encodeHKDFLabel(32, 'encryption', new Uint8Array(0)),
+      encodeHKDFLabel(32, 'Echo/v1/encryption', new Uint8Array(0)),
       32
     )
     expect(wasm.hkdf_expand).toHaveBeenCalledWith(
       epochSecret,
-      encodeHKDFLabel(32, 'sender data', new Uint8Array(0)),
+      encodeHKDFLabel(32, 'Echo/v1/sender-data', new Uint8Array(0)),
       32
     )
     expect(wasm.hkdf_expand).toHaveBeenCalledWith(
       epochSecret,
-      encodeHKDFLabel(32, 'external', new Uint8Array(0)),
+      encodeHKDFLabel(32, 'Echo/v1/external', new Uint8Array(0)),
       32
     )
     expect(wasm.hkdf_expand).toHaveBeenCalledWith(
       epochSecret,
-      encodeHKDFLabel(32, 'membership', new Uint8Array(0)),
+      encodeHKDFLabel(32, 'Echo/v1/membership', new Uint8Array(0)),
       32
     )
     expect(wasm.hkdf_expand).toHaveBeenCalledWith(
       epochSecret,
-      encodeHKDFLabel(32, 'resumption', new Uint8Array(0)),
+      encodeHKDFLabel(32, 'Echo/v1/resumption', new Uint8Array(0)),
       32
     )
     expect(wasm.hkdf_expand).toHaveBeenCalledWith(
       epochSecret,
-      encodeHKDFLabel(32, 'init', new Uint8Array(0)),
+      encodeHKDFLabel(32, 'Echo/v1/init', new Uint8Array(0)),
       32
     )
 
@@ -233,13 +233,13 @@ describe('keySchedule deriveAppKeyAndNonce', () => {
     expect(wasm.hkdf_expand).toHaveBeenNthCalledWith(
       1,
       applicationSecret,
-      encodeHKDFLabel(32, 'key', context),
+      encodeHKDFLabel(32, 'Echo/v1/key', context),
       32
     )
     expect(wasm.hkdf_expand).toHaveBeenNthCalledWith(
       2,
       applicationSecret,
-      encodeHKDFLabel(12, 'nonce', context),
+      encodeHKDFLabel(12, 'Echo/v1/nonce', context),
       12
     )
 
@@ -260,7 +260,7 @@ describe('keySchedule ratchetAppSecret', () => {
     expect(wasm.hkdf_expand).toHaveBeenCalledTimes(1)
     expect(wasm.hkdf_expand).toHaveBeenCalledWith(
       applicationSecret,
-      encodeHKDFLabel(32, 'secret', encodeAppSecretContext(2, 11)),
+      encodeHKDFLabel(32, 'Echo/v1/secret', encodeAppSecretContext(2, 11)),
       32
     )
     expect(result).toEqual(wasm.hkdf_expand.mock.results[0].value)
