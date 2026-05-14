@@ -45,3 +45,11 @@ src-tauri/target/
 
 # OS
 Thumbs.db
+
+# Playwright
+playwright-report/
+test-results/
+.playwright/
+
+# Vitest / Istanbul coverage output
+coverage/

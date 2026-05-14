@@ -38,4 +38,20 @@ export default defineConfig({
       },
     },
   },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./vitest.setup.js'],
+    css: true,
+    include: ['src/**/*.test.{js,jsx,ts,tsx}', 'src/**/*.spec.{js,jsx,ts,tsx}'],
+    exclude: ['tests/**', 'node_modules/**', 'dist/**', 'playwright-report/**', 'test-results/**'],
+    coverage: {
+      provider: 'istanbul',
+      all: false,
+      reporter: ['text', 'lcov', 'html'],
+      reportsDirectory: './coverage',
+      include: ['src/pages/**/*.{js,jsx}'],
+      exclude: ['src/**/*.test.{js,jsx}', 'src/**/*.spec.{js,jsx}', 'src/**/test/**'],
+    },
+  },
 })
