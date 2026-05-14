@@ -1,4 +1,4 @@
-import { Github, Linkedin, Twitter, Mail, ArrowUpRight } from 'lucide-react'
+import { Github, Linkedin, X, Mail, ArrowUpRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ParticlesBackground from '@/components/animations/ParticlesBackground'
 
@@ -64,7 +64,7 @@ export default function Footer() {
               {[
                 { icon: Github, label: 'github' },
                 { icon: Linkedin, label: 'linkedin' },
-                { icon: Twitter, label: 'twitter' },
+                { icon: X, label: 'x' },
                 { icon: Mail, label: 'email' },
               ].map(({ icon: Icon, label }) => (
                 <a

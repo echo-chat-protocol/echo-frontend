@@ -1,9 +1,8 @@
-import React from "react";
 import {
   Users,
   MessageSquare,
   Github,
-  Twitter,
+  X,
   Calendar,
   Rss,
   Send,
@@ -30,7 +29,7 @@ const CHANNELS = [
     cta: "Subscribe",
   },
   {
-    icon: Twitter,
+    icon: X,
     name: "@echoprivacy on X",
     sub: "Engineering threads, audit drops",
     cta: "Follow",
