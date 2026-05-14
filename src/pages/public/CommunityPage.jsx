@@ -1,35 +1,28 @@
-import {
-  Users,
-  MessageSquare,
-  Github,
-  X,
-  Calendar,
-  Rss,
-  Send,
-} from "lucide-react";
+import { FaGithub, FaXTwitter } from "react-icons/fa6";
+import { FiUsers, FiMessageSquare, FiCalendar, FiRss, FiSend } from "react-icons/fi";
 import PageShell from "@/components/layout/PageShell";
 
 const CHANNELS = [
   {
-    icon: MessageSquare,
+    icon: FiMessageSquare,
     name: "Matrix #echo:echo.io",
     sub: "12,400 members · always-on chat",
     cta: "Join Matrix",
   },
   {
-    icon: Github,
+    icon: FaGithub,
     name: "GitHub Discussions",
     sub: "Protocol RFCs, plugin showcase, Q&A",
     cta: "Open Discussions",
   },
   {
-    icon: Send,
+    icon: FiSend,
     name: "Telegram (mirrored)",
     sub: "Read-only announcements channel",
     cta: "Subscribe",
   },
   {
-    icon: X,
+    icon: FaXTwitter,
     name: "@echoprivacy on X",
     sub: "Engineering threads, audit drops",
     cta: "Follow",
@@ -58,7 +51,7 @@ export default function CommunityPage() {
   return (
     <PageShell
       eyebrow="Resources · Community"
-      icon={Users}
+      icon={FiUsers}
       title={
         <>
           A community that{" "}
@@ -91,7 +84,7 @@ export default function CommunityPage() {
 
       <section className="mt-20">
         <div className="flex items-center gap-2">
-          <Calendar className="h-5 w-5 text-[#c4a8ff]" />
+          <FiCalendar className="h-5 w-5 text-[#c4a8ff]" />
           <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight">
             Upcoming events
           </h2>
@@ -117,7 +110,7 @@ export default function CommunityPage() {
 
       <section className="mt-16 glass cyber-border rounded-2xl p-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
         <div className="flex items-start gap-4">
-          <Rss className="h-6 w-6 text-[#c4a8ff]" />
+          <FiRss className="h-6 w-6 text-[#c4a8ff]" />
           <div>
             <h2 className="text-xl font-semibold">Stay in the loop</h2>
             <p className="mt-1 text-sm text-[#b9b9c4]">
