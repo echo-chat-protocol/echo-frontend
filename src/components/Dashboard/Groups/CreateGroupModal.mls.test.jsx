@@ -155,12 +155,9 @@ describe('CreateGroupModal MLS initialization', () => {
 
     const nameInput = container.querySelector('input[placeholder="Group name"]')
     const searchInput = container.querySelector('input[placeholder="Search username to add..."]')
-    const mlsCheckbox = container.querySelector('input[type="checkbox"]')
-
     await act(async () => {
       setInputValue(nameInput, 'Project Team')
       setInputValue(searchInput, 'Bob')
-      mlsCheckbox.click()
       await flush()
     })
 
@@ -320,12 +317,9 @@ describe('CreateGroupModal MLS initialization', () => {
 
     const nameInput = container.querySelector('input[placeholder="Group name"]')
     const searchInput = container.querySelector('input[placeholder="Search username to add..."]')
-    const mlsCheckbox = container.querySelector('input[type="checkbox"]')
-
     await act(async () => {
       setInputValue(nameInput, 'Project Team')
       setInputValue(searchInput, 'Bob')
-      mlsCheckbox.click()
       await flush()
     })
 
