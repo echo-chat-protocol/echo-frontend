@@ -1,40 +1,20 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import wasm from 'vite-plugin-wasm'
+import topLevelAwait from 'vite-plugin-top-level-await'
 
-import path, { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import path, { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
-// Inline plugin: make Vite treat src/index.js as JSX
-// (avoids renaming the file while keeping all other .js handling untouched)
-const jsxInJs = {
-  name: 'jsx-in-js',
-  enforce: 'pre',
-  transform(code, id) {
-    if (/\/src\/index\.js$/.test(id)) {
-      // Hand off to the React plugin by returning with the jsx loader hint
-      return { code, map: null }
-    }
-  },
-  options(o) {
-    // Tell Rollup to treat the file as jsx for the purpose of the entry point
-    if (o?.input) {
-      const inputs = Array.isArray(o.input) ? o.input : Object.values(o.input);
-      inputs.forEach((f) => {
-        if (/index\.js$/.test(f)) {
-          // Mark the extension for Rollup
-          this.addWatchFile?.(f);
-        }
-      });
-    }
-  },
-};
+import pkg from './package.json'
 
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   plugins: [
     react({
       // Parse JSX in both .jsx and plain .js files
@@ -90,4 +70,4 @@ export default defineConfig({
       exclude: ['src/**/*.test.*', 'src/**/__tests__/**', 'src/**/*.spec.*'],
     },
   },
-});
+})
