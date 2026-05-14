@@ -1,7 +1,6 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { User, Lock, Eye, EyeOff, ArrowRight } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import { connectWithoutAuth } from "../../socket";
 import { jwtDecode } from "jwt-decode";
 import init from "@mascaro101/echo-protocol";
@@ -9,12 +8,10 @@ import eld from "../../utils/storage/EncryptedLocalDatabase";
 import AuthLayout from "@/features/auth/AuthLayout";
 
 export default function LoginPage() {
-  const { t } = useTranslation();
   const navigate = useNavigate();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
-  const [remember, setRemember] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -137,18 +134,7 @@ export default function LoginPage() {
           }
         />
 
-        <div className="flex items-center justify-between text-sm">
-          <label className="inline-flex items-center gap-2 text-[#cfcfdc] cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={remember}
-              onChange={(e) => setRemember(e.target.checked)}
-              data-testid="login-remember"
-              className="h-4 w-4 rounded border-white/20 bg-black/40 accent-[#a855f7]"
-            />
-            Remember this device
-          </label>
-        </div>
+
 
         {error && (
           <div
@@ -171,12 +157,12 @@ export default function LoginPage() {
       </form>
 
       <p className="mt-6 text-[11px] text-[#7a7a8a] leading-relaxed">
-        By continuing, you agree to ECHO's{" "}
-        <a href="#" className="underline">
+        By continuing, you agree to ECHO&apos;s{" "}
+        <a href="/terms" className="underline hover:text-white">
           Terms
         </a>{" "}
         and{" "}
-        <a href="#" className="underline">
+        <a href="/privacy" className="underline hover:text-white">
           Privacy Policy
         </a>
         . Your password is hashed with Argon2id on this device — it never

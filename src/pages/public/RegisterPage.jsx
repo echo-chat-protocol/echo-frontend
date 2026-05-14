@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Buffer } from "buffer";
 import {
@@ -9,7 +9,6 @@ import {
   ArrowRight,
   Check,
 } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import AuthLayout from "@/features/auth/AuthLayout";
 import eld from "../../utils/storage/EncryptedLocalDatabase";
 import { connectWithoutAuth } from "../../socket";
@@ -39,7 +38,6 @@ const STRENGTH = [
 ];
 
 export default function RegisterPage() {
-  const { t } = useTranslation();
   const navigate = useNavigate();
 
   const [username, setUsername] = useState("");
@@ -344,11 +342,11 @@ export default function RegisterPage() {
           />
           <span>
             I accept the{" "}
-            <a href="#" className="underline hover:text-white">
+            <a href="/terms" className="underline hover:text-white">
               Terms of Service
             </a>{" "}
             and{" "}
-            <a href="#" className="underline hover:text-white">
+            <a href="/privacy" className="underline hover:text-white">
               Privacy Policy
             </a>
             . I understand that ECHO cannot recover my account if I lose my
@@ -385,10 +383,10 @@ export default function RegisterPage() {
 
         <ul className="grid grid-cols-2 gap-2 text-[11px] text-[#a0a0a0]">
           {[
-            "Curve25519 keypair on-device",
-            "Zero-knowledge by design",
-            "No phone number ever",
-            "Export & rotate any time",
+            "Curve25519 keys via WASM",
+            "Zero-knowledge local DB",
+            "No phone number required",
+            "Argon2id local hashing",
           ].map((t) => (
             <li key={t} className="flex items-center gap-1.5">
               <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gradient-to-br from-[#7c3aed] to-[#a855f7]">
