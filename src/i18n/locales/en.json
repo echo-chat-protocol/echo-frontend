@@ -877,5 +877,98 @@
         "body": "API & WebSocket updated. ~4 min downtime at 03:00 UTC."
       }
     ]
+  },
+  "common": {
+    "back": "Back",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success"
+  },
+  "settings": {
+    "title": "Your vault",
+    "subtitle": "Configure ECHO to your taste — everything stays on this device.",
+    "notifications": "Notifications",
+    "notifications.desc": "In-app sounds, banners, badges.",
+    "privacy": "Privacy",
+    "privacy.desc": "Read receipts, last seen, typing.",
+    "security": "Security & keys",
+    "security.desc": "Identity keys, backups, sessions.",
+    "devices": "Linked devices",
+    "devices.desc": "Manage devices using your identity.",
+    "appearance": "Appearance",
+    "appearance.desc": "Theme, density, accent.",
+    "language": "Language",
+    "language.desc": "EN · ES · DE · FR · PT · 38 more.",
+    "export": "Export data",
+    "export.desc": "Sealed JSON export of your local vault.",
+    "search": "Search...",
+    "noMatch": "No match found.",
+    "backToOverview": "Back to Vault Overview",
+    "appearance": {
+      "themes": "Themes",
+      "themesHint": "Select a curated theme preset",
+      "customize": "Customize",
+      "chatColor": "Chat Colour",
+      "wallpaper": "Wallpaper",
+      "preview": "Live Preview"
+    },
+    "language": {
+      "search": "Search languages..."
+    },
+    "notifications": {
+      "allow": "Allow notifications",
+      "allowDesc": "Receive new message banners on this device.",
+      "sound": "Sound",
+      "soundDesc": "Play a chime on new messages.",
+      "preview": "Message preview",
+      "previewDesc": "Show sender name and snippet in banners.",
+      "mentions": "Mentions only (groups)",
+      "mentionsDesc": "Mute groups except when you're @mentioned.",
+      "vibrate": "Vibrate",
+      "vibrateDesc": "Vibrate device on incoming messages."
+    },
+    "privacy": {
+      "readReceipts": "Read receipts",
+      "readReceiptsDesc": "Let contacts know when you've read their messages.",
+      "lastSeen": "Show last seen",
+      "lastSeenDesc": "Display when you were last active.",
+      "typing": "Typing indicator",
+      "typingDesc": "Show 'typing…' to contacts when you're composing.",
+      "blockScreenshots": "Block screenshots",
+      "blockScreenshotsDesc": "Prevent screen capture inside chats.",
+      "disappearing": "Disappearing messages",
+      "disappearingDesc": "Default to 24h auto-delete in new chats.",
+      "metadata": "Strip metadata on share",
+      "metadataDesc": "Remove EXIF/location from attachments."
+    },
+    "security": {
+      "identity": "Cryptographic identity",
+      "verified": "verified",
+      "keysDesc": "Keys live on this device only. Argon2id · X25519 · Ed25519.",
+      "showQr": "Show QR",
+      "rotateKeys": "Rotate session keys",
+      "appLock": "App lock",
+      "appLockDesc": "Require biometrics or passcode to open ECHO.",
+      "safetyChange": "Safety number changes",
+      "safetyChangeDesc": "Alert me when a contact's safety number changes.",
+      "lockOnSleep": "Auto-lock on sleep",
+      "lockOnSleepDesc": "Lock the app when the screen turns off."
+    },
+    "devices": {
+      "thisDevice": "this device",
+      "revoke": "Revoke",
+      "desc": "Each device holds an independent identity key. Revoking forces it to re-pair."
+    },
+    "export": {
+      "title": "Sealed JSON export",
+      "desc": "Generates a portable JSON of your vault metadata. Your private keys stay on this device and are never included.",
+      "btn": "Export vault",
+      "exported": "Exported",
+      "info": "·  ~ 1 KB, .json"
+    }
   }
 }
+

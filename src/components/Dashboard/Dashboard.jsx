@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Search, Plus, Lock, MessageCircle, Menu, ArrowLeft } from 'lucide-react'
+import { Search, Plus, Lock, MessageCircle, Menu, ArrowLeft, UsersRound, ShieldCheck } from 'lucide-react'
 import PropTypes from 'prop-types'
 import Friends from './Friends/Friends'
 import Chat from './Chat/Chat'
@@ -9,6 +9,8 @@ import Sidebar from './DashboardComponents/Sidebar/Sidebar'
 import ChatHeader from './DashboardComponents/Header/ChatHeader'
 import GroupHeader from './DashboardComponents/Header/GroupHeader'
 import ConversationList from './DashboardComponents/Conversations/ConversationList'
+import SettingsView from './Settings/Settings'
+import { useTheme } from '@/contexts/ThemeContext'
 
 import { useConversations } from './DashboardComponents/hooks/useConversations'
 import { useGroups } from './DashboardComponents/hooks/useGroups'
@@ -41,6 +43,7 @@ import GroupChat from './Chat/GroupChat'
 
 const Dashboard = () => {
   const { t } = useTranslation()
+  const { wallpaper } = useTheme()
   const token = localStorage.getItem('token')
   const navigate = useNavigate()
   const { username, userId, profileImage } = getUserData(token)
@@ -908,7 +911,8 @@ const Dashboard = () => {
       {/* Navigation Panel - Full width on mobile when chat not shown */}
       <div
         className={`
-        ${showMobileChat ? 'hidden' : 'flex'} md:flex
+        ${(showMobileChat || activeView === 'settings') ? 'hidden' : 'flex'} 
+        ${activeView === 'settings' ? 'md:hidden' : 'md:flex'}
         w-full md:w-80 bg-black border-r border-white/[0.08] flex-col
       `}
       >
@@ -973,75 +977,7 @@ const Dashboard = () => {
               onActiveChatChange={handleActiveChatChange}
               searchTerm={searchTerm}
             />
-          ) : activeView === 'settings' ? (
-            <div className='p-4 space-y-6'>
-              <div>
-                <h4 className='text-xs font-semibold text-white/70 mb-3 uppercase tracking-wider'>
-                  Chat Wallpapers
-                </h4>
-                <div className='grid grid-cols-2 gap-3'>
-                  {Object.entries(WALLPAPER_PREVIEWS).map(([id, wp]) => (
-                    <button
-                      key={id}
-                      onClick={() => handleWallpaperChange(id)}
-                      className={`group relative overflow-hidden rounded-xl aspect-square border transition-all ${
-                        currentWallpaper === id
-                          ? 'border-violet-500 ring-1 ring-violet-500/50 shadow-[0_0_15px_rgba(168,85,247,0.3)]'
-                          : 'border-white/[0.08] hover:border-violet-400/30'
-                      }`}
-                      title={wp.name}
-                    >
-                      {wp.type === 'video' ? (
-                        <div className='w-full h-full relative bg-zinc-950'>
-                          <video
-                            loop
-                            muted
-                            playsInline
-                            poster={wp.posterUrl}
-                            className='w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity absolute inset-0'
-                            onMouseEnter={(e) => {
-                              e.currentTarget.currentTime = 0
-                              e.currentTarget.play().catch(() => {})
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.pause()
-                            }}
-                          >
-                            <source src={wp.videoUrl} type='video/mp4' />
-                          </video>
-                          <div className='absolute inset-0 bg-black/10 flex items-center justify-center pointer-events-none'>
-                            <span className='text-lg'>{wp.icon}</span>
-                          </div>
-                        </div>
-                      ) : wp.type === 'image' ? (
-                        <div
-                          className='w-full h-full bg-cover bg-center transition-all duration-300 group-hover:scale-105'
-                          style={{ backgroundImage: `url(${wp.imageUrl})` }}
-                        >
-                          <div className='absolute inset-0 bg-black/10 flex items-center justify-center'>
-                            <span className='text-lg'>{wp.icon}</span>
-                          </div>
-                        </div>
-                      ) : (
-                        <div
-                          className={`w-full h-full ${wp.className} transition-all duration-300 group-hover:scale-105`}
-                        >
-                          <div className='absolute inset-0 bg-black/10 flex items-center justify-center'>
-                            <span className='text-lg'>{wp.icon}</span>
-                          </div>
-                        </div>
-                      )}
-                      <div className='absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-1.5 transition-all'>
-                        <span className='text-[10px] text-white/80 font-medium truncate block'>
-                          {wp.name}
-                        </span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          ) : (
+          ) : activeView === 'settings' ? null : (
             <div>
               {activeView !== 'chats' && filteredGroups.length > 0 && (
                 <>
@@ -1096,7 +1032,9 @@ const Dashboard = () => {
         flex-1 flex-col bg-black
       `}
       >
-        {activeChat ? (
+        {activeView === 'settings' ? (
+          <SettingsView />
+        ) : activeChat ? (
           <div className='flex flex-col h-full'>
             {/* Mobile back button integrated with ChatHeader */}
             <div className='flex items-center md:block'>
