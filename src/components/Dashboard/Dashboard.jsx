@@ -1,4 +1,6 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, lazy, Suspense } from 'react'
+
+const DeviceSyncModal = lazy(() => import('../../features/devices/DeviceSyncModal'))
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Search, Plus, Lock, MessageCircle, Menu, ArrowLeft } from 'lucide-react'
@@ -89,6 +91,7 @@ const Dashboard = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [showMobileChat, setShowMobileChat] = useState(false)
   const [createGroupOpen, setCreateGroupOpen] = useState(false)
+  const [showDeviceSync, setShowDeviceSync] = useState(false)
   const GROUP_CACHE_PREFIX = 'group:'
 
   // Hooks personalizados - must be before useEffects that use them
@@ -854,6 +857,13 @@ const Dashboard = () => {
 
   return (
     <div className='flex h-screen bg-black text-white'>
+      {/* Device Sync overlay */}
+      {showDeviceSync && (
+        <Suspense fallback={null}>
+          <DeviceSyncModal onClose={() => setShowDeviceSync(false)} />
+        </Suspense>
+      )}
+
       {/* Incoming Call Notification */}
       {incomingCall && (
         <IncomingCallNotification callData={incomingCall} onClose={() => setIncomingCall(null)} />
@@ -883,6 +893,10 @@ const Dashboard = () => {
           }}
           handleProfileClick={() => {
             handleProfileClick()
+            setIsMobileMenuOpen(false)
+          }}
+          handleDeviceSync={() => {
+            setShowDeviceSync(true)
             setIsMobileMenuOpen(false)
           }}
           handleLogout={handleLogout}

@@ -1,4 +1,4 @@
-import { MessageCircle, User, Users, LogOut, PaintbrushVertical } from 'lucide-react'
+import { MessageCircle, User, Users, LogOut, PaintbrushVertical, Smartphone } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { WALLPAPER_PREVIEWS } from '../utils/wallpaper.jsx'
@@ -90,6 +90,7 @@ const Sidebar = ({
   activeView,
   handleViewChange,
   handleProfileClick,
+  handleDeviceSync,
   handleLogout,
   profileImage,
   username,
@@ -98,19 +99,19 @@ const Sidebar = ({
   currentWallpaper,
 }) => {
   const { t } = useTranslation()
-  const [showWallpaperMenu, setShowWallpaperMenu] = useState(false);
-  const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const wallpaperMenuRef = useRef(null);
-  const profileMenuRef = useRef(null);
-  const totalUnread = Object.values(unreadMessages).reduce((a, b) => a + b, 0);
+  const [showWallpaperMenu, setShowWallpaperMenu] = useState(false)
+  const [showProfileMenu, setShowProfileMenu] = useState(false)
+  const wallpaperMenuRef = useRef(null)
+  const profileMenuRef = useRef(null)
+  const totalUnread = Object.values(unreadMessages).reduce((a, b) => a + b, 0)
 
   useClickOutside(wallpaperMenuRef, () => {
     setShowWallpaperMenu(false)
   })
 
   useClickOutside(profileMenuRef, () => {
-    setShowProfileMenu(false);
-  });
+    setShowProfileMenu(false)
+  })
 
   return (
     <div className='w-16 h-full bg-[#303030] flex flex-col items-center py-4 space-y-6 border-r border-gray-800 relative'>
@@ -118,7 +119,7 @@ const Sidebar = ({
       <nav className='flex flex-col items-center space-y-6 flex-grow'>
         {/* Botón de chats */}
         <button
-          data-testid="nav-chats"
+          data-testid='nav-chats'
           className={`relative p-3 rounded-xl transition-colors duration-200 ${
             activeView === 'chats'
               ? 'bg-[#8e79f2] text-white'
@@ -136,7 +137,7 @@ const Sidebar = ({
 
         {/* Botón de amigos */}
         <button
-          data-testid="nav-friends"
+          data-testid='nav-friends'
           className={`p-3 rounded-xl transition-colors duration-200 ${
             activeView === 'friends'
               ? 'bg-[#8e79f2] text-white'
@@ -186,10 +187,10 @@ const Sidebar = ({
       </nav>
 
       {/* Sección inferior - Profile with dropdown menu */}
-      <div className="relative" ref={profileMenuRef}>
+      <div className='relative' ref={profileMenuRef}>
         {/* Avatar de usuario */}
         <div
-          className="relative w-10 h-10 rounded-full overflow-hidden border-2 border-black cursor-pointer hover:border-[#8e79f2] transition-colors"
+          className='relative w-10 h-10 rounded-full overflow-hidden border-2 border-black cursor-pointer hover:border-[#8e79f2] transition-colors'
           onClick={() => setShowProfileMenu(!showProfileMenu)}
         >
           <img
@@ -207,29 +208,39 @@ const Sidebar = ({
 
         {/* Profile dropdown menu */}
         {showProfileMenu && (
-          <div className="absolute left-full bottom-0 ml-2 w-40 bg-[#404040] rounded-lg shadow-xl z-50 overflow-hidden border border-gray-600">
-            <div className="p-2 border-b border-gray-600">
-              <p className="text-xs font-semibold text-white truncate">{username}</p>
+          <div className='absolute left-full bottom-0 ml-2 w-40 bg-[#404040] rounded-lg shadow-xl z-50 overflow-hidden border border-gray-600'>
+            <div className='p-2 border-b border-gray-600'>
+              <p className='text-xs font-semibold text-white truncate'>{username}</p>
             </div>
-            <div className="py-1">
+            <div className='py-1'>
               <button
-                className="w-full px-3 py-2 text-sm text-gray-300 hover:bg-[#8e79f2] hover:text-white flex items-center gap-2 transition-colors"
+                className='w-full px-3 py-2 text-sm text-gray-300 hover:bg-[#8e79f2] hover:text-white flex items-center gap-2 transition-colors'
                 onClick={() => {
-                  handleProfileClick();
-                  setShowProfileMenu(false);
+                  handleProfileClick()
+                  setShowProfileMenu(false)
                 }}
               >
-                <User className="w-4 h-4" />
+                <User className='w-4 h-4' />
                 Profile
               </button>
               <button
-                className="w-full px-3 py-2 text-sm text-gray-300 hover:bg-red-600 hover:text-white flex items-center gap-2 transition-colors"
+                className='w-full px-3 py-2 text-sm text-gray-300 hover:bg-[#8e79f2] hover:text-white flex items-center gap-2 transition-colors'
                 onClick={() => {
-                  handleLogout();
-                  setShowProfileMenu(false);
+                  handleDeviceSync?.()
+                  setShowProfileMenu(false)
                 }}
               >
-                <LogOut className="w-4 h-4" />
+                <Smartphone className='w-4 h-4' />
+                Device Sync
+              </button>
+              <button
+                className='w-full px-3 py-2 text-sm text-gray-300 hover:bg-red-600 hover:text-white flex items-center gap-2 transition-colors'
+                onClick={() => {
+                  handleLogout()
+                  setShowProfileMenu(false)
+                }}
+              >
+                <LogOut className='w-4 h-4' />
                 Logout
               </button>
             </div>

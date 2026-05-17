@@ -1,0 +1,338 @@
+import init, {
+  generate_private_ephemeral_key,
+  generate_public_ephemeral_key,
+  diffie_hellman,
+  hkdf_derive,
+  encrypt as wasmEncrypt,
+  decrypt as wasmDecrypt,
+} from '@mascaro101/echo-protocol'
+import eld from '@/utils/storage/EncryptedLocalDatabase'
+
+const QR_VERSION = 'echo-qr-v1'
+const QR_INFO = new TextEncoder().encode(QR_VERSION)
+const LS_IK_KEY = 'echo_device_ik'
+
+// ── Base64 helpers ──────────────────────────────────────────────────────────
+
+function b64enc(u8) {
+  let bin = ''
+  for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i])
+  return btoa(bin)
+}
+
+export function encodeKeyBase64(u8) {
+  return b64enc(u8)
+}
+
+function b64dec(str) {
+  const bin = atob(str)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+
+// ── IK resolution ───────────────────────────────────────────────────────────
+// Priority: account IK from ELD (same across all logged-in devices of this
+// account) → device-local IK in localStorage → freshly generated IK.
+
+export async function getOrCreateDeviceIK() {
+  await init()
+
+  // Account IK — available when ELD is unlocked (user is logged in)
+  if (eld.isUnlocked?.()) {
+    try {
+      const keys = await eld.getIdentityKeys()
+      if (keys?.privateKeyX25519 && keys?.publicKeyX25519) {
+        return {
+          priv: b64dec(keys.privateKeyX25519),
+          pub: b64dec(keys.publicKeyX25519),
+          source: 'eld',
+        }
+      }
+    } catch {}
+  }
+
+  // Device-local IK — persists across app opens without requiring login
+  const stored = localStorage.getItem(LS_IK_KEY)
+  if (stored) {
+    try {
+      const { priv, pub } = JSON.parse(stored)
+      return { priv: b64dec(priv), pub: b64dec(pub), source: 'local' }
+    } catch {}
+  }
+
+  // First open — generate and persist a fresh X25519 key pair
+  const rand = crypto.getRandomValues(new Uint8Array(32))
+  const priv = await generate_private_ephemeral_key(rand)
+  const pub = await generate_public_ephemeral_key(priv)
+
+  localStorage.setItem(LS_IK_KEY, JSON.stringify({ priv: b64enc(priv), pub: b64enc(pub) }))
+
+  return { priv, pub, source: 'local' }
+}
+
+// ── Encryption ──────────────────────────────────────────────────────────────
+// Returns a JSON-serialisable object safe to embed in the QR code.
+//
+// Protocol:
+//   1. Generate ephemeral X25519 pair  (ek_priv, ek_pub)
+//   2. DH: shared = X25519(ek_priv, IK_pub)         ← ek_priv × IK_priv × G
+//   3. HKDF(shared, salt, info="echo-qr-v1") → 32-byte sym_key
+//   4. AES-256-GCM(sym_key, nonce, message)  → ciphertext
+
+export async function encryptQRPayload(message, ik, recipientPub = ik.pub) {
+  await init()
+
+  const rand = crypto.getRandomValues(new Uint8Array(32))
+  const ekPriv = await generate_private_ephemeral_key(rand)
+  const ekPub = await generate_public_ephemeral_key(ekPriv)
+
+  const dhOut = await diffie_hellman(ekPriv, recipientPub)
+
+  const salt = crypto.getRandomValues(new Uint8Array(32))
+  const symKey = await hkdf_derive(dhOut, salt, QR_INFO, 32)
+
+  const nonce = crypto.getRandomValues(new Uint8Array(12))
+  const ct = await wasmEncrypt(message, symKey, nonce) // returns hex string
+
+  return {
+    v: QR_VERSION,
+    senderIkPub: b64enc(ik.pub),
+    recipientIkPub: b64enc(recipientPub),
+    epk: b64enc(ekPub),
+    ct, // hex ciphertext from WASM
+    s: b64enc(salt),
+    n: b64enc(nonce),
+  }
+}
+
+// ── Decryption ──────────────────────────────────────────────────────────────
+// Protocol (mirror of encryption):
+//   DH: shared = X25519(IK_priv, ek_pub)   ← same scalar as above
+//   HKDF(shared, salt, info) → sym_key
+//   AES-256-GCM decrypt → plaintext
+
+export async function decryptQRPayload(payload, ik) {
+  await init()
+
+  if (payload?.v !== QR_VERSION) throw new Error('Not an ECHO QR payload')
+
+  const ekPub = b64dec(payload.epk)
+  const salt = b64dec(payload.s)
+  const nonce = b64dec(payload.n)
+
+  const dhOut = await diffie_hellman(ik.priv, ekPub)
+  const symKey = await hkdf_derive(dhOut, salt, QR_INFO, 32)
+
+  return await wasmDecrypt(payload.ct, symKey, nonce) // returns plaintext string
+}
+
+// ── Payload detection ────────────────────────────────────────────────────────
+
+export function parseQRPayload(raw) {
+  try {
+    const obj = JSON.parse(raw)
+    if (obj?.v === QR_VERSION && obj.epk && obj.ct && obj.s && obj.n) return obj
+  } catch {}
+  return null
+}
+
+// ── Device sync protocol ─────────────────────────────────────────────────────
+// Desktop shows QR → Mobile scans → Mobile logs in.
+//
+// Because this is a one-way channel (desktop→mobile), we cannot do X25519 DH:
+// DH requires each party to know the other's public key in advance, which
+// would need a prior key exchange in the opposite direction.  Instead, we
+// generate a fresh 256-bit random key, encrypt the credentials with
+// AES-256-GCM, and embed the key alongside the ciphertext in the QR.
+// Security: the QR code itself is the secret channel — only the person who
+// physically scans it can obtain the key and ciphertext.
+
+const SYNC_VERSION = 'echo-sync-v1'
+
+export async function generateSyncPayload(credentials) {
+  await init()
+  const key = crypto.getRandomValues(new Uint8Array(32))
+  const nonce = crypto.getRandomValues(new Uint8Array(12))
+  const ct = await wasmEncrypt(JSON.stringify(credentials), key, nonce)
+  return { v: SYNC_VERSION, k: b64enc(key), ct, n: b64enc(nonce) }
+}
+
+export async function decryptSyncPayload(payload) {
+  await init()
+  if (payload?.v !== SYNC_VERSION) throw new Error('Not an ECHO sync payload')
+  const pt = await wasmDecrypt(payload.ct, b64dec(payload.k), b64dec(payload.n))
+  return JSON.parse(pt)
+}
+
+export async function decryptSyncPayloadDebug(payload) {
+  await init()
+  if (payload?.v !== SYNC_VERSION) throw new Error('Not an ECHO sync payload')
+
+  const key = b64dec(payload.k)
+  const nonce = b64dec(payload.n)
+  const debug = {
+    mode: 'sync',
+    version: SYNC_VERSION,
+    key,
+    nonce,
+    ct: payload.ct,
+  }
+
+  try {
+    const pt = await wasmDecrypt(payload.ct, key, nonce)
+    return { credentials: JSON.parse(pt), debug }
+  } catch (e) {
+    debug.error = e.message
+    const err = new Error(e.message)
+    err.debug = debug
+    throw err
+  }
+}
+
+export function parseSyncPayload(raw) {
+  try {
+    const obj = JSON.parse(raw)
+    if (obj?.v === SYNC_VERSION && obj.k && obj.ct && obj.n) return obj
+  } catch {}
+  return null
+}
+
+// ── Debug helpers ────────────────────────────────────────────────────────────
+// Formats a Uint8Array as space-separated hex, truncated after `limit` bytes.
+
+export function hexBytes(u8, limit = 16) {
+  if (!u8) return '(null)'
+  const slice = Array.from(u8).slice(0, limit)
+  const hex = slice.map((b) => b.toString(16).padStart(2, '0')).join(' ')
+  return u8.length > limit ? `${hex} … (${u8.length}B)` : `${hex} (${u8.length}B)`
+}
+
+export function decodeKeyInput(value) {
+  const trimmed = String(value || '').trim()
+  if (!trimmed) throw new Error('Missing key')
+
+  const hex = trimmed
+    .replace(/\([^)]+\)/g, '')
+    .replace(/….*$/u, '')
+    .replace(/[^0-9a-fA-F]/g, '')
+
+  if (hex.length === 64) {
+    const out = new Uint8Array(32)
+    for (let i = 0; i < 32; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+    return out
+  }
+
+  try {
+    const decoded = b64dec(trimmed)
+    if (decoded.length === 32) return decoded
+  } catch {}
+
+  throw new Error('Expected a 32-byte public key as hex or base64')
+}
+
+export async function generatePairingEphemeralDebug() {
+  await init()
+  const rand = crypto.getRandomValues(new Uint8Array(32))
+  const ekPriv = await generate_private_ephemeral_key(rand)
+  const ekPub = await generate_public_ephemeral_key(ekPriv)
+  return { ekPriv, ekPub }
+}
+
+export async function derivePairingDhDebug(privateKey, publicKey, dhOp) {
+  await init()
+  const dhShared = await diffie_hellman(privateKey, publicKey)
+  return { dhOp, dhShared }
+}
+
+// ── encryptQRPayloadDebug ────────────────────────────────────────────────────
+// Identical to encryptQRPayload but also returns every intermediate crypto value
+// so the UI can display the full computation for debugging / course demonstration.
+
+export async function encryptQRPayloadDebug(
+  message,
+  ik,
+  recipientPub = ik.pub,
+  recipientLabel = 'own IK'
+) {
+  await init()
+
+  const rand = crypto.getRandomValues(new Uint8Array(32))
+  const ekPriv = await generate_private_ephemeral_key(rand)
+  const ekPub = await generate_public_ephemeral_key(ekPriv)
+  const dhShared = await diffie_hellman(ekPriv, recipientPub)
+  const salt = crypto.getRandomValues(new Uint8Array(32))
+  const symKey = await hkdf_derive(dhShared, salt, QR_INFO, 32)
+  const nonce = crypto.getRandomValues(new Uint8Array(12))
+  const ct = await wasmEncrypt(message, symKey, nonce)
+
+  return {
+    payload: {
+      v: QR_VERSION,
+      senderIkPub: b64enc(ik.pub),
+      recipientIkPub: b64enc(recipientPub),
+      epk: b64enc(ekPub),
+      ct,
+      s: b64enc(salt),
+      n: b64enc(nonce),
+    },
+    debug: {
+      ikSource: ik.source,
+      ikPub: ik.pub,
+      senderIkPub: ik.pub,
+      recipientLabel,
+      recipientPub,
+      ekPub,
+      dhOp: 'DH(ek_priv, scanner_IK_pub)',
+      dhShared,
+      salt,
+      hkdfInfo: QR_VERSION,
+      symKey,
+      nonce,
+      ct,
+    },
+  }
+}
+
+// ── decryptQRPayloadDebug ────────────────────────────────────────────────────
+// Identical to decryptQRPayload but returns every intermediate value.
+// On decryption failure the error is thrown with a .debug property attached.
+
+export async function decryptQRPayloadDebug(payload, ik) {
+  await init()
+  if (payload?.v !== QR_VERSION) throw new Error('Not an ECHO QR payload')
+
+  const ekPub = b64dec(payload.epk)
+  const salt = b64dec(payload.s)
+  const nonce = b64dec(payload.n)
+  const senderIkPub = payload.senderIkPub ? b64dec(payload.senderIkPub) : null
+  const recipientIkPub = payload.recipientIkPub ? b64dec(payload.recipientIkPub) : null
+  const dhShared = await diffie_hellman(ik.priv, ekPub)
+  const symKey = await hkdf_derive(dhShared, salt, QR_INFO, 32)
+
+  const debug = {
+    ikSource: ik.source,
+    ikPriv: ik.priv,
+    ikPub: ik.pub,
+    senderIkPub,
+    recipientIkPub,
+    ekPub,
+    dhOp: 'DH(IK_priv, epk)',
+    dhShared,
+    salt,
+    hkdfInfo: QR_VERSION,
+    symKey,
+    nonce,
+    ct: payload.ct,
+  }
+
+  try {
+    const text = await wasmDecrypt(payload.ct, symKey, nonce)
+    return { text, debug }
+  } catch (e) {
+    debug.error = e.message
+    const err = new Error(e.message)
+    err.debug = debug
+    throw err
+  }
+}
