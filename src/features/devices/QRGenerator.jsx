@@ -8,9 +8,11 @@ import {
   generatePairingEphemeralDebug,
   getOrCreateDeviceIK,
   hexBytes,
+  encryptHistoryPackageChunks,
 } from './qrCrypto'
 import { deviceService } from './deviceService'
 import { resolveApiBase } from '@/utils/network/apiBase'
+import { buildHistoryPackage } from './historyPackage'
 
 function Row({ label, value, mono = true }) {
   return (
@@ -44,7 +46,8 @@ export default function QRGenerator() {
   const [setupQr, setSetupQr] = useState(null)
   const [scannerPubKey, setScannerPubKey] = useState('')
   const [dhDebug, setDhDebug] = useState(null)
-  const [qrText, setQrText] = useState('')
+  const [historySummary, setHistorySummary] = useState(null)
+  const [transferStatus, setTransferStatus] = useState('idle')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -64,9 +67,8 @@ export default function QRGenerator() {
       targetAccessToken: session.targetAccessToken,
       serverUrl,
       ekPub: encodeKeyBase64(ephemeral.ekPub),
-      text: qrText.trim(),
     })
-  }, [ephemeral?.ekPub, qrText, serverUrl, session])
+  }, [ephemeral?.ekPub, serverUrl, session])
 
   useEffect(() => {
     if (!setupPayload) {
@@ -122,6 +124,55 @@ export default function QRGenerator() {
     return () => clearInterval(timer)
   }, [dhDebug, ephemeral?.ekPriv, session?.sessionId, session?.targetAccessToken])
 
+  useEffect(() => {
+    if (!dhDebug?.dhShared || !session?.sessionId || !session?.targetAccessToken) return
+    let cancelled = false
+
+    const transferHistory = async () => {
+      setTransferStatus('compiling')
+      setError(null)
+      try {
+        const historyPackage = await buildHistoryPackage()
+        const { chunks } = await encryptHistoryPackageChunks(
+          historyPackage,
+          dhDebug.dhShared,
+          session.sessionId
+        )
+
+        if (cancelled) return
+        setHistorySummary({
+          chats: historyPackage.chats.length,
+          groups: historyPackage.groups.length,
+          messages: historyPackage.messages.length,
+          chunks: chunks.length,
+        })
+        setTransferStatus('uploading')
+
+        for (const chunk of chunks) {
+          if (cancelled) return
+          await deviceService.transferDhChunk({
+            sessionId: session.sessionId,
+            targetAccessToken: session.targetAccessToken,
+            chunk,
+          })
+        }
+
+        if (!cancelled) setTransferStatus('ready')
+      } catch (e) {
+        if (!cancelled) {
+          setTransferStatus('error')
+          setError(e.message || 'Failed to compile and upload chat history.')
+        }
+      }
+    }
+
+    transferHistory()
+
+    return () => {
+      cancelled = true
+    }
+  }, [dhDebug?.dhShared, session?.sessionId, session?.targetAccessToken])
+
   const createSetupQr = async () => {
     setBusy(true)
     setError(null)
@@ -135,8 +186,8 @@ export default function QRGenerator() {
       const created = await deviceService.createDhSession({
         targetEphemeralPubKey: encodeKeyBase64(eph.ekPub),
         origin: window.location.origin,
-        version: 'echo-dh-debug-v1',
-        targetDevice: { role: 'main-device', text: qrText.trim() },
+        version: 'echo-history-package-v1',
+        targetDevice: { role: 'main-device' },
       })
       if (!created?.sessionId || !created?.targetAccessToken) {
         throw new Error(
@@ -158,8 +209,9 @@ export default function QRGenerator() {
     setSetupQr(null)
     setScannerPubKey('')
     setDhDebug(null)
+    setHistorySummary(null)
+    setTransferStatus('idle')
     setError(null)
-    setQrText('')
   }
 
   return (
@@ -169,10 +221,9 @@ export default function QRGenerator() {
           ■ MAIN DEVICE DH SETUP
         </p>
         <p className='text-xs text-[#6f6f7e]'>
-          The QR gives the scanner <span className='font-mono text-[#b9b9c4]'>ek_pub</span>. When
-          scanned, the scanner sends its
-          <span className='font-mono text-[#b9b9c4]'> IK_pub</span> through the server so this
-          device can compute the same shared secret.
+          The QR gives the scanner <span className='font-mono text-[#b9b9c4]'>ek_pub</span>. After
+          scan, this device derives the shared secret, encrypts a full local chat history package,
+          and uploads it for the phone to import.
         </p>
       </div>
 
@@ -185,10 +236,23 @@ export default function QRGenerator() {
             Scan this from the mobile device. Its IK public key will be sent back through the
             server.
           </p>
-          {qrText.trim() && (
+          {transferStatus !== 'idle' && (
             <div className='w-full rounded-xl border border-white/10 bg-black/60 p-3'>
-              <p className='text-[9px] uppercase tracking-widest text-[#6f6f7e] mb-1'>Text in QR</p>
-              <p className='text-sm text-white break-words'>{qrText.trim()}</p>
+              <p className='text-[9px] uppercase tracking-widest text-[#6f6f7e] mb-1'>
+                History package
+              </p>
+              <p className='text-sm text-white'>
+                {transferStatus === 'compiling' && 'Compiling local chats…'}
+                {transferStatus === 'uploading' && 'Encrypting and uploading chunks…'}
+                {transferStatus === 'ready' && 'Encrypted history is ready on the phone.'}
+                {transferStatus === 'error' && 'History transfer failed.'}
+              </p>
+              {historySummary && (
+                <p className='mt-1 text-[10px] text-[#6f6f7e]'>
+                  {historySummary.messages} messages · {historySummary.chats} chats ·{' '}
+                  {historySummary.groups} groups · {historySummary.chunks} chunks
+                </p>
+              )}
             </div>
           )}
           <p className='text-[10px] font-mono text-[#4a4a5a] break-all text-center'>
@@ -197,16 +261,9 @@ export default function QRGenerator() {
         </div>
       ) : (
         <div className='flex flex-col gap-3'>
-          <div className='rounded-2xl border border-white/10 bg-black/70 p-4'>
-            <label className='block text-[10px] font-semibold uppercase tracking-widest text-[#a855f7] mb-2'>
-              Text to include in QR
-            </label>
-            <textarea
-              value={qrText}
-              onChange={(event) => setQrText(event.target.value)}
-              placeholder='Type the text the scanning device should receive'
-              className='min-h-24 w-full resize-y rounded-xl border border-white/10 bg-black/60 px-3 py-2 text-sm text-white placeholder:text-[#4a4a5a] outline-none focus:border-[#a855f7]/60'
-            />
+          <div className='rounded-2xl border border-white/10 bg-black/70 p-4 text-xs text-[#6f6f7e]'>
+            A full history package will be compiled from this device after the phone scans and
+            returns its public key.
           </div>
           <button
             onClick={createSetupQr}
@@ -214,7 +271,7 @@ export default function QRGenerator() {
             className='btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2'
           >
             {busy && <Loader2 className='h-4 w-4 animate-spin' />}
-            {busy ? 'Creating QR…' : 'Create EK Public Key QR'}
+            {busy ? 'Creating QR…' : 'Create History Sync QR'}
           </button>
         </div>
       )}
@@ -240,9 +297,15 @@ export default function QRGenerator() {
               }
             />
           </Section>
-          {qrText.trim() && (
-            <Section icon={Key} title='Text carried in QR' color='#f59e0b'>
-              <Row label='text' value={qrText.trim()} mono={false} />
+          {historySummary && (
+            <Section icon={Key} title='Encrypted history package' color='#f59e0b'>
+              <Row
+                label='contents'
+                value={`${historySummary.messages} messages, ${historySummary.chats} chats, ${historySummary.groups} groups`}
+                mono={false}
+              />
+              <Row label='chunks' value={String(historySummary.chunks)} mono={false} />
+              <Row label='status' value={transferStatus} mono={false} />
             </Section>
           )}
           {dhDebug && (

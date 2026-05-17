@@ -19,11 +19,13 @@ import {
   derivePairingDhDebug,
   parseSyncPayload,
   decryptSyncPayloadDebug,
+  decryptHistoryPackageChunks,
   hexBytes,
   encodeKeyBase64,
 } from './qrCrypto'
 import QRScanner from './QRScanner'
 import { deviceService } from './deviceService'
+import { importHistoryPackage } from './historyPackage'
 import ParticlesBackground from '@/components/animations/ParticlesBackground'
 
 function Row({ label, value, mono = true }) {
@@ -258,6 +260,23 @@ export default function MobileSyncView({ onBack, onSynced }) {
       .catch(() => {})
   }, [])
 
+  const waitForHistoryChunks = async ({ serverUrl, sessionId, targetAccessToken }) => {
+    const deadline = Date.now() + 90_000
+
+    while (Date.now() < deadline) {
+      const result = await deviceService.listDhChunksFromServer(serverUrl, {
+        sessionId,
+        targetAccessToken,
+      })
+      const chunks = result?.chunks || []
+      const totalCount = result?.session?.totalChunkCount || chunks[0]?.totalCount || 0
+      if (totalCount > 0 && chunks.length === totalCount) return chunks
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+    }
+
+    throw new Error('Timed out waiting for encrypted history from the desktop.')
+  }
+
   const handleRawScan = async (raw) => {
     const input = typeof raw === 'string' ? raw.trim() : ''
     if (!input) {
@@ -318,16 +337,34 @@ export default function MobileSyncView({ onBack, onSynced }) {
           dhOp: dh?.dhOp || null,
           sessionId: pairingPayload.sessionId,
         })
-        setMessage(
-          pairingPayload.text?.trim() ||
-            'Scanner IK public key sent to desktop. Shared secret computed locally.'
+        if (!dh?.dhShared) {
+          setMessage('Scanner IK public key sent to desktop. Shared secret computed locally.')
+          setPhase('message')
+          return
+        }
+
+        const chunks = await waitForHistoryChunks({
+          serverUrl: pairingPayload.serverUrl,
+          sessionId: pairingPayload.sessionId,
+          targetAccessToken: pairingPayload.targetAccessToken,
+        })
+        const { historyPackage, key: historyKey } = await decryptHistoryPackageChunks(
+          chunks,
+          dh.dhShared,
+          pairingPayload.sessionId
         )
-        setPhase('message')
+        const unlockSecret = encodeKeyBase64(historyKey)
+        const importResult = await importHistoryPackage(historyPackage, { unlockSecret })
+        setSynced({
+          username: historyPackage.user?.username,
+          history: importResult,
+        })
+        setPhase('synced')
       } catch (e) {
         setError(
           e.message === 'Failed to fetch'
             ? 'Failed to reach the desktop pairing server. Make sure the QR contains a LAN-reachable server URL, not localhost/127.0.0.1.'
-            : e.message || 'Failed to send scanner public key to desktop.'
+            : e.message || 'Failed to sync encrypted history from desktop.'
         )
         setPhase('error')
       }
@@ -478,6 +515,15 @@ export default function MobileSyncView({ onBack, onSynced }) {
                 <div className='glass cyber-border rounded-2xl px-6 py-4 text-center'>
                   <p className='text-xs text-[#a0a0a0] mb-1'>Logged in as</p>
                   <p className='text-lg font-semibold text-white'>{synced.username}</p>
+                </div>
+              )}
+              {synced?.history && (
+                <div className='glass cyber-border rounded-2xl px-6 py-4 text-center'>
+                  <p className='text-xs text-[#a0a0a0] mb-1'>History imported</p>
+                  <p className='text-sm text-white'>
+                    {synced.history.importedMessages} messages · {synced.history.chats} chats ·{' '}
+                    {synced.history.groups} groups
+                  </p>
                 </div>
               )}
               <ScannerCryptoTrace debug={debug} />

@@ -4,7 +4,7 @@ import { argon2id } from '@noble/hashes/argon2.js'
 
 // Constants
 const DB_NAME = 'EchoEncryptedDB'
-const DB_VERSION = 10
+const DB_VERSION = 11
 
 const STORES = {
   META: 'meta',
@@ -138,6 +138,13 @@ class EncryptedLocalDatabase {
         if (!db.objectStoreNames.contains(STORES.MLS_GROUP_STATES)) {
           const store = db.createObjectStore(STORES.MLS_GROUP_STATES, { keyPath: 'id' })
           store.createIndex('groupId', 'groupId', { unique: true })
+          store.createIndex('userId', 'userId', { unique: false })
+        } else {
+          const tx = event.target.transaction
+          const store = tx.objectStore(STORES.MLS_GROUP_STATES)
+          if (!store.indexNames.contains('userId')) {
+            store.createIndex('userId', 'userId', { unique: false })
+          }
         }
       }
     })
@@ -204,6 +211,14 @@ class EncryptedLocalDatabase {
       request.onsuccess = () => resolve(request.result || [])
       request.onerror = () => reject(request.error)
     })
+  }
+
+  async _deleteAllByIndex(storeName, indexName, value) {
+    const records = await this._getAllByIndex(storeName, indexName, value)
+    for (const record of records) {
+      if (record?.id != null) await this._delete(storeName, record.id)
+    }
+    return records.length
   }
 
   // Convert Uint8Array to Base64 string
@@ -292,6 +307,43 @@ class EncryptedLocalDatabase {
     await this.initializeDB()
     const meta = await this._get(STORES.META, `user-${userId}`)
     return !!meta
+  }
+
+  async resetUser(userId) {
+    if (userId == null || userId === '') {
+      throw new Error('Missing userId.')
+    }
+
+    await this.initializeDB()
+
+    if (this.currentUserId === userId) {
+      this.lock()
+    }
+
+    const storesWithUserId = [
+      STORES.IDENTITY_KEYS,
+      STORES.PEER_IDENTITY_KEYS,
+      STORES.SESSION_KEYS,
+      STORES.MESSAGES,
+      STORES.MEDIA,
+      STORES.ROOT_KEYS,
+      STORES.SENDING_CHAIN_KEYS,
+      STORES.RECEIVING_CHAIN_KEYS,
+      STORES.CURRENT_SENDING_NUMBER,
+      STORES.CURRENT_RECEIVING_NUMBER,
+      STORES.PREVIOUS_SENDING_NUMBER,
+      STORES.SKIPPED_MESSAGE_KEYS,
+      STORES.OPK_PRIVATE_KEYS,
+      STORES.MLS_GROUP_STATES,
+    ]
+
+    for (const storeName of storesWithUserId) {
+      if (!this.db.objectStoreNames.contains(storeName)) continue
+      await this._deleteAllByIndex(storeName, 'userId', userId)
+    }
+
+    await this._delete(STORES.META, `user-${userId}`)
+    await this._delete(STORES.META, `verify-${userId}`)
   }
 
   // First-time setup for a new user
@@ -630,6 +682,53 @@ class EncryptedLocalDatabase {
     return messages.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0))
   }
 
+  async exportMessagesForCurrentUser() {
+    this._ensureUnlocked()
+    const records = await this._getAllByIndex(STORES.MESSAGES, 'userId', this.currentUserId)
+    const messages = []
+
+    for (const record of records) {
+      try {
+        const decrypted = await this._decrypt(record.ciphertext, record.nonce)
+        messages.push({
+          peerId: this._peerIdFromConversationId(record.conversationId),
+          conversationId: record.conversationId,
+          message: JSON.parse(decrypted),
+        })
+      } catch {
+        console.warn('[ELD] Failed to decrypt message during export')
+      }
+    }
+
+    return messages.sort(
+      (a, b) => new Date(a.message?.createdAt || 0) - new Date(b.message?.createdAt || 0)
+    )
+  }
+
+  async importMessagesForCurrentUser(entries) {
+    this._ensureUnlocked()
+    if (!Array.isArray(entries)) return 0
+
+    let imported = 0
+    for (const entry of entries) {
+      const peerId = entry?.peerId || this._peerIdFromConversationId(entry?.conversationId)
+      if (!peerId || !entry?.message) continue
+      await this.storeMessage(peerId, entry.message)
+      imported += 1
+    }
+
+    return imported
+  }
+
+  _peerIdFromConversationId(conversationId) {
+    if (!conversationId || !this.currentUserId) return null
+    const prefix = `${this.currentUserId}-`
+    const suffix = `-${this.currentUserId}`
+    if (conversationId.startsWith(prefix)) return conversationId.slice(prefix.length)
+    if (conversationId.endsWith(suffix)) return conversationId.slice(0, -suffix.length)
+    return conversationId
+  }
+
   // ============== EPHEMERAL KEYS ==============
 
   async storeEphemeralData(peerId, data) {
@@ -831,6 +930,37 @@ class EncryptedLocalDatabase {
     if (!record) return null
     const decrypted = await this._decrypt(record.ciphertext, record.nonce)
     return JSON.parse(decrypted)
+  }
+
+  async exportMlsGroupStatesForCurrentUser() {
+    this._ensureUnlocked()
+    const records = await this._getAllByIndex(STORES.MLS_GROUP_STATES, 'userId', this.currentUserId)
+    const states = []
+
+    for (const record of records) {
+      try {
+        const decrypted = await this._decrypt(record.ciphertext, record.nonce)
+        states.push({ groupId: record.groupId, state: JSON.parse(decrypted) })
+      } catch {
+        console.warn('[ELD] Failed to decrypt MLS group state during export')
+      }
+    }
+
+    return states
+  }
+
+  async importMlsGroupStatesForCurrentUser(entries) {
+    this._ensureUnlocked()
+    if (!Array.isArray(entries)) return 0
+
+    let imported = 0
+    for (const entry of entries) {
+      if (!entry?.groupId || entry.state == null) continue
+      await this.storeMlsGroupState(entry.groupId, entry.state)
+      imported += 1
+    }
+
+    return imported
   }
 
   async deleteMlsGroupState(groupId) {

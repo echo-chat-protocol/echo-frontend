@@ -105,4 +105,17 @@ export const deviceService = {
       'GET',
       `/sync/dh-session/${sessionId}?targetAccessToken=${encodeURIComponent(targetAccessToken)}`
     ),
+  transferDhChunk: ({ sessionId, targetAccessToken, chunk }) =>
+    requestWithLoopbackFallback('POST', '/sync/dh-transfer-chunk', {
+      sessionId,
+      targetAccessToken,
+      chunk,
+    }),
+  listDhChunksFromServer: (serverUrl, { sessionId, targetAccessToken }) =>
+    request(
+      'GET',
+      `/sync/sessions/${sessionId}/chunks?targetAccessToken=${encodeURIComponent(targetAccessToken)}`,
+      undefined,
+      resolveApiBase(serverUrl)
+    ),
 }

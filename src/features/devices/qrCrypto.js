@@ -149,6 +149,9 @@ export function parseQRPayload(raw) {
 // physically scans it can obtain the key and ciphertext.
 
 const SYNC_VERSION = 'echo-sync-v1'
+const HISTORY_PACKAGE_VERSION = 'echo-history-package-v1'
+const HISTORY_INFO = new TextEncoder().encode(HISTORY_PACKAGE_VERSION)
+const HISTORY_CHUNK_CHAR_LIMIT = 120_000
 
 export async function generateSyncPayload(credentials) {
   await init()
@@ -196,6 +199,70 @@ export function parseSyncPayload(raw) {
     if (obj?.v === SYNC_VERSION && obj.k && obj.ct && obj.n) return obj
   } catch {}
   return null
+}
+
+async function sha256Hex(text) {
+  const bytes = new TextEncoder().encode(text)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+export async function deriveHistoryPackageKey(dhShared, sessionId) {
+  await init()
+  const salt = new TextEncoder().encode(`echo-history:${sessionId}`)
+  return hkdf_derive(dhShared, salt, HISTORY_INFO, 32)
+}
+
+export async function encryptHistoryPackageChunks(historyPackage, dhShared, sessionId) {
+  await init()
+  const key = await deriveHistoryPackageKey(dhShared, sessionId)
+  const json = JSON.stringify(historyPackage)
+  const pieces = []
+
+  for (let offset = 0; offset < json.length; offset += HISTORY_CHUNK_CHAR_LIMIT) {
+    pieces.push(json.slice(offset, offset + HISTORY_CHUNK_CHAR_LIMIT))
+  }
+
+  const chunks = []
+  for (let index = 0; index < pieces.length; index += 1) {
+    const nonce = crypto.getRandomValues(new Uint8Array(12))
+    const ciphertext = await wasmEncrypt(pieces[index], key, nonce)
+    chunks.push({
+      index,
+      totalCount: pieces.length,
+      ciphertext,
+      nonce: b64enc(nonce),
+      digest: await sha256Hex(pieces[index]),
+    })
+  }
+
+  return { chunks, key }
+}
+
+export async function decryptHistoryPackageChunks(chunks, dhShared, sessionId) {
+  await init()
+  if (!Array.isArray(chunks) || chunks.length === 0) {
+    throw new Error('History package has no chunks yet.')
+  }
+
+  const key = await deriveHistoryPackageKey(dhShared, sessionId)
+  const ordered = [...chunks].sort((a, b) => a.index - b.index)
+  const expectedTotal = ordered[0]?.totalCount
+  if (!Number.isInteger(expectedTotal) || ordered.length !== expectedTotal) {
+    throw new Error('History package is incomplete.')
+  }
+
+  let json = ''
+  for (const chunk of ordered) {
+    const plaintext = await wasmDecrypt(chunk.ciphertext, key, b64dec(chunk.nonce))
+    const digest = await sha256Hex(plaintext)
+    if (digest !== chunk.digest) throw new Error('History package chunk digest mismatch.')
+    json += plaintext
+  }
+
+  return { historyPackage: JSON.parse(json), key }
 }
 
 // ── Debug helpers ────────────────────────────────────────────────────────────

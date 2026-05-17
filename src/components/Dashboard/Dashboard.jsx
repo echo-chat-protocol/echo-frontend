@@ -14,6 +14,7 @@ import ConversationList from './DashboardComponents/Conversations/ConversationLi
 
 import { useConversations } from './DashboardComponents/hooks/useConversations'
 import { useGroups } from './DashboardComponents/hooks/useGroups'
+import { useTauri } from '@/hooks/useTauri'
 
 import {
   getUserData,
@@ -45,6 +46,7 @@ const Dashboard = () => {
   const { t } = useTranslation()
   const token = localStorage.getItem('token')
   const navigate = useNavigate()
+  const { isMobile } = useTauri()
   const { username, userId, profileImage } = getUserData(token)
 
   // Estados
@@ -101,6 +103,11 @@ const Dashboard = () => {
   const conversationsListRef = useRef(null)
   const hasRefreshedProfiles = useRef(false)
   const activeChatRef = useRef(activeChat)
+  const activeViewRef = useRef(activeView)
+  const showMobileChatRef = useRef(showMobileChat)
+  const isMobileMenuOpenRef = useRef(isMobileMenuOpen)
+  const createGroupOpenRef = useRef(createGroupOpen)
+  const showDeviceSyncRef = useRef(showDeviceSync)
   const recentConversationsRef = useRef(recentConversations)
   const userIdRef = useRef(userId)
   const mlsKeyPackagePublishedRef = useRef(false)
@@ -132,6 +139,52 @@ const Dashboard = () => {
   useEffect(() => {
     activeChatRef.current = activeChat
   }, [activeChat])
+
+  useEffect(() => {
+    activeViewRef.current = activeView
+  }, [activeView])
+
+  useEffect(() => {
+    showMobileChatRef.current = showMobileChat
+  }, [showMobileChat])
+
+  useEffect(() => {
+    isMobileMenuOpenRef.current = isMobileMenuOpen
+  }, [isMobileMenuOpen])
+
+  useEffect(() => {
+    createGroupOpenRef.current = createGroupOpen
+  }, [createGroupOpen])
+
+  useEffect(() => {
+    showDeviceSyncRef.current = showDeviceSync
+  }, [showDeviceSync])
+
+  useEffect(() => {
+    if (!isMobile) return undefined
+
+    window.history.pushState({ echoDashboardBackGuard: true }, '', window.location.href)
+
+    const handlePopState = () => {
+      if (showDeviceSyncRef.current) {
+        setShowDeviceSync(false)
+      } else if (createGroupOpenRef.current) {
+        setCreateGroupOpen(false)
+      } else if (isMobileMenuOpenRef.current) {
+        setIsMobileMenuOpen(false)
+      } else if (showMobileChatRef.current || activeChatRef.current) {
+        setShowMobileChat(false)
+      } else if (activeViewRef.current !== 'chats') {
+        setActiveView('chats')
+        localStorage.setItem('dashboardView', 'chats')
+      }
+
+      window.history.pushState({ echoDashboardBackGuard: true }, '', window.location.href)
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [isMobile])
 
   useEffect(() => {
     recentConversationsRef.current = recentConversations
