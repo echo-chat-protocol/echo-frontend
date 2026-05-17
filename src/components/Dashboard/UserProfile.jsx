@@ -6,6 +6,7 @@ import { jwtDecode } from 'jwt-decode'
 import { getSocket } from '../../services/socket'
 import Toast from '../common/Toast'
 import ParticlesBackground from '@/components/animations/ParticlesBackground.jsx'
+import { tokenStorage } from '@services/api'
 
 const UserProfile = () => {
   const { t } = useTranslation()
@@ -19,11 +20,12 @@ const UserProfile = () => {
 
   // Get logged in user ID from token
   let loggedInUserId = ''
-  const token = localStorage.getItem('token')
+  const token = tokenStorage.getAccess()
   if (token) {
     try {
       const decoded = jwtDecode(token)
       loggedInUserId = decoded.id || decoded.userId || decoded._id
+      // eslint-disable-next-line no-empty
     } catch {}
   }
 
@@ -87,6 +89,7 @@ const UserProfile = () => {
         setOriginalAbout(parsed.aboutme || '')
         setProfileImage(parsed.profilePicture || '')
         setOriginalProfileImage(parsed.profilePicture || '')
+        // eslint-disable-next-line no-empty
       } catch {}
     }
 

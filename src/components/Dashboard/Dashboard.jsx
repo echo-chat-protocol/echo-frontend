@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Search, Plus, Lock, MessageCircle, Menu, ArrowLeft, UsersRound, ShieldCheck } from 'lucide-react'
+import { Search, Plus, Lock, MessageCircle, Menu, ArrowLeft } from 'lucide-react'
 import PropTypes from 'prop-types'
 import Friends from './Friends/Friends'
 import Chat from './Chat/Chat'
@@ -10,7 +10,6 @@ import ChatHeader from './DashboardComponents/Header/ChatHeader'
 import GroupHeader from './DashboardComponents/Header/GroupHeader'
 import ConversationList from './DashboardComponents/Conversations/ConversationList'
 import SettingsView from './Settings/Settings'
-import { useTheme } from '@/contexts/ThemeContext'
 
 import { useConversations } from './DashboardComponents/hooks/useConversations'
 import { useGroups } from './DashboardComponents/hooks/useGroups'
@@ -40,11 +39,11 @@ import eld from '../../utils/storage/EncryptedLocalDatabase'
 import GroupList from './DashboardComponents/Groups/GroupList'
 import CreateGroupModal from './Groups/CreateGroupModal'
 import GroupChat from './Chat/GroupChat'
+import { tokenStorage } from '@services/api'
 
 const Dashboard = () => {
   const { t } = useTranslation()
-  const { wallpaper } = useTheme()
-  const token = localStorage.getItem('token')
+  const token = tokenStorage.getAccess()
   const navigate = useNavigate()
   const { username, userId, profileImage } = getUserData(token)
 
@@ -82,10 +81,11 @@ const Dashboard = () => {
     }
     return unread
   })
-  const [currentWallpaper, setCurrentWallpaper] = useState(() => {
+  const currentWallpaper = (() => {
     const saved = localStorage.getItem('chatWallpaper')
     return saved && WALLPAPER_PREVIEWS[saved] ? saved : 'default'
-  })
+  })()
+
   const [userProfileImage, setUserProfileImage] = useState(profileImage)
   const [socket, setSocket] = useState(null)
   const [incomingCall, setIncomingCall] = useState(null)
@@ -737,13 +737,6 @@ const Dashboard = () => {
     setShowMobileChat(false)
   }
 
-  const handleWallpaperChange = (wallpaper) => {
-    if (WALLPAPER_PREVIEWS[wallpaper]) {
-      setCurrentWallpaper(wallpaper)
-      localStorage.setItem('chatWallpaper', wallpaper)
-    }
-  }
-
   const handleActiveChatChange = (friendData) => {
     handleChatSelect(friendData)
     updateRecentConversations(friendData)
@@ -769,7 +762,7 @@ const Dashboard = () => {
     eld.lock()
 
     sessionStorage.removeItem(`eld-pass-${userId}`)
-    localStorage.removeItem('token')
+    tokenStorage.clear()
     localStorage.removeItem('userId')
     localStorage.removeItem('username')
 
@@ -911,7 +904,7 @@ const Dashboard = () => {
       {/* Navigation Panel - Full width on mobile when chat not shown */}
       <div
         className={`
-        ${(showMobileChat || activeView === 'settings') ? 'hidden' : 'flex'} 
+        ${showMobileChat || activeView === 'settings' ? 'hidden' : 'flex'} 
         ${activeView === 'settings' ? 'md:hidden' : 'md:flex'}
         w-full md:w-80 bg-black border-r border-white/[0.08] flex-col
       `}

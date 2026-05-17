@@ -45,7 +45,7 @@ export function getSocket() {
  * Safe to call multiple times — won't reconnect if already connected.
  */
 export function connectSocket() {
-  const token = localStorage.getItem('token')
+  const token = localStorage.getItem('echo_access_token')
   const s = getSocket()
   s.auth = token ? { token } : {}
   if (!s.connected) {
