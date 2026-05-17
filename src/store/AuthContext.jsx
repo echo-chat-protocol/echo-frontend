@@ -1,14 +1,17 @@
 import { createContext, useContext, useState, useCallback, useMemo } from 'react'
 import { jwtDecode } from 'jwt-decode'
+import PropTypes from 'prop-types'
+import { tokenStorage } from '@services/api'
 
 /**
  * Global auth context.
  *
- * Replaces all scattered `localStorage.getItem('token')` calls across components.
+ * Token storage is delegated to `tokenStorage` (from api.js) so that
+ * the HTTP client and the UI always share the same keys.
  *
  * Usage:
  *   import { useAuth } from '@store/AuthContext';
- *   const { token, user, login, logout, isAuthenticated } = useAuth();
+ *   const { user, login, logout, isAuthenticated } = useAuth();
  */
 
 const AuthContext = createContext(null)
@@ -23,26 +26,36 @@ function getUserFromToken(token) {
 }
 
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => localStorage.getItem('token'))
-  const [user, setUser] = useState(() => getUserFromToken(localStorage.getItem('token')))
+  const [token, setToken] = useState(() => tokenStorage.getAccess())
+  const [user, setUser] = useState(() => getUserFromToken(tokenStorage.getAccess()))
 
   /**
    * Call after successful login/register.
-   * @param {string} newToken  - JWT from server
-   * @param {object} [userData] - Optional extra user data to merge
+   *
+   * @param {string}  accessToken
+   * @param {string}  refreshToken
+   * @param {string}  [userId]     - if provided, stored in localStorage as 'userId'
+   * @param {object}  [extra]      - extra fields to merge into decoded user object
    */
-  const login = useCallback((newToken, userData = null) => {
-    localStorage.setItem('token', newToken)
-    const decoded = getUserFromToken(newToken)
-    setToken(newToken)
-    setUser(userData ? { ...decoded, ...userData } : decoded)
+  const login = useCallback((accessToken, refreshToken, userId = null, extra = null) => {
+    tokenStorage.setTokenPair(accessToken, refreshToken)
+    const decoded = getUserFromToken(accessToken)
+    const resolvedUserId = userId || decoded?.id || decoded?.userId || decoded?.sub || ''
+    if (resolvedUserId) localStorage.setItem('userId', resolvedUserId)
+    setToken(accessToken)
+    setUser(
+      extra
+        ? { ...decoded, userId: resolvedUserId, ...extra }
+        : { ...decoded, userId: resolvedUserId }
+    )
   }, [])
 
   /**
    * Clears all auth state and localStorage.
    */
   const logout = useCallback(() => {
-    localStorage.clear()
+    tokenStorage.clear()
+    localStorage.removeItem('userId')
     setToken(null)
     setUser(null)
   }, [])
@@ -55,6 +68,10 @@ export function AuthProvider({ children }) {
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+}
+
+AuthProvider.propTypes = {
+  children: PropTypes.node.isRequired,
 }
 
 /**
