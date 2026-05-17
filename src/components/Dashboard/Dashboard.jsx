@@ -51,6 +51,7 @@ import {
 } from '../../utils/deviceForward'
 import wasmInit, { diffie_hellman } from '@mascaro101/echo-protocol'
 import { deviceService } from '../../features/devices/deviceService'
+import { getDeviceMetadata } from '../../features/devices/deviceMetadata'
 import GroupList from './DashboardComponents/Groups/GroupList'
 import CreateGroupModal from './Groups/CreateGroupModal'
 import GroupChat from './Chat/GroupChat'
@@ -740,15 +741,28 @@ const Dashboard = () => {
         try {
           const keys = await getIdentityKeys()
           if (keys?.publicKeyX25519) {
-            const newDeviceId = crypto.randomUUID()
-            await deviceService.registerDeviceKeys(newDeviceId, {
+            const deviceMetadata = getDeviceMetadata()
+            await deviceService.registerDeviceKeys(deviceMetadata.deviceId, {
+              ...deviceMetadata,
               publicIdentityKeyX25519: keys.publicKeyX25519,
             })
-            localStorage.setItem('echo-device-id', newDeviceId)
             invalidatePairedDevicesCache()
           }
         } catch {
           // non-fatal — retry on next mount
+        }
+      } else {
+        try {
+          const keys = await getIdentityKeys()
+          if (keys?.publicKeyX25519) {
+            const deviceMetadata = getDeviceMetadata()
+            await deviceService.registerDeviceKeys(deviceMetadata.deviceId, {
+              ...deviceMetadata,
+              publicIdentityKeyX25519: keys.publicKeyX25519,
+            })
+          }
+        } catch {
+          // non-fatal — lastSeen and metadata refresh on next successful touch
         }
       }
 
@@ -958,6 +972,8 @@ const Dashboard = () => {
     localStorage.removeItem('token')
     localStorage.removeItem('userId')
     localStorage.removeItem('username')
+    localStorage.removeItem('echo-device-id')
+    localStorage.removeItem('echo_sync_account')
 
     if (socket) {
       socket.disconnect()

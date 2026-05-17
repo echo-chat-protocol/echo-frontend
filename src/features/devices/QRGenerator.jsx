@@ -39,7 +39,7 @@ function Section({ icon: Icon, title, color, children }) {
   )
 }
 
-export default function QRGenerator() {
+export default function QRGenerator({ onDeviceLinked = null }) {
   const [ik, setIk] = useState(null)
   const [session, setSession] = useState(null)
   const [ephemeral, setEphemeral] = useState(null)
@@ -172,6 +172,40 @@ export default function QRGenerator() {
       cancelled = true
     }
   }, [dhDebug?.dhShared, session?.sessionId, session?.targetAccessToken])
+
+  useEffect(() => {
+    if (transferStatus !== 'ready' || !session?.sessionId || !session?.targetAccessToken) return
+
+    let cancelled = false
+    const timer = setInterval(async () => {
+      try {
+        const result = await deviceService.getDhSession({
+          sessionId: session.sessionId,
+          targetAccessToken: session.targetAccessToken,
+        })
+        if (result.session?.status !== 'completed') return
+
+        if (!cancelled) {
+          onDeviceLinked?.()
+          clearInterval(timer)
+        }
+      } catch (error) {
+        if (error?.code === 'sync_session_completed' || /already completed/i.test(error?.message)) {
+          if (!cancelled) {
+            onDeviceLinked?.()
+            clearInterval(timer)
+          }
+          return
+        }
+        // Keep polling; the phone may still be completing the target side.
+      }
+    }, 1500)
+
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [onDeviceLinked, session?.sessionId, session?.targetAccessToken, transferStatus])
 
   const createSetupQr = async () => {
     setBusy(true)

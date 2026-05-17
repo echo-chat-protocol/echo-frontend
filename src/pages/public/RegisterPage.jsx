@@ -10,6 +10,7 @@ import {
   Check,
 } from "lucide-react";
 import AuthLayout from "@/features/auth/AuthLayout";
+import { getDeviceMetadata } from "@/features/devices/deviceMetadata";
 import eld from "../../utils/storage/EncryptedLocalDatabase";
 import { connectWithoutAuth } from "../../socket";
 import { generateOneTimePreKeys } from "@/components/Dashboard/Chat/utils/crypto/opk";
@@ -165,12 +166,14 @@ export default function RegisterPage() {
       };
 
       const socket = connectWithoutAuth();
+      const deviceMetadata = getDeviceMetadata();
       socket.emit(
         "register",
-        { username, password, keyBundle, aboutme: "", profilePicture: "" },
+        { username, password, keyBundle, aboutme: "", profilePicture: "", ...deviceMetadata },
         async (response) => {
           if (response.success) {
             try {
+              if (response.deviceId) localStorage.setItem("echo-device-id", response.deviceId);
               await eld.createUser(response.userId, password);
 
               try {

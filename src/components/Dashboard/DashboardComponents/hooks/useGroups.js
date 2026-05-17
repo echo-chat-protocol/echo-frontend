@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 
 export const useGroups = (userId) => {
   const [groups, setGroups] = useState([])
-  const isInitialized = useRef(false) // prevents overwrite on re-renders
+  const initializedUserId = useRef(null) // prevents overwrite before the active user loads
+  const skipNextSave = useRef(false)
 
   const resolveGroupName = (incomingName, existingName) => {
     if (typeof incomingName === 'string' && incomingName.trim() && incomingName !== 'Group') {
@@ -14,26 +15,40 @@ export const useGroups = (userId) => {
     return incomingName || existingName || 'Group'
   }
 
-  // Load only once when userId becomes available
+  // Load whenever the active account changes. This prevents one user's group list
+  // from being persisted under the next synced/logged-in account.
   useEffect(() => {
-    if (!userId || isInitialized.current) return
+    if (!userId) {
+      initializedUserId.current = null
+      setGroups([])
+      return
+    }
+
+    if (initializedUserId.current === userId) return
 
     const saved = localStorage.getItem(`groups-${userId}`)
+    let nextGroups = []
     if (saved) {
       try {
         const parsed = JSON.parse(saved)
-        if (Array.isArray(parsed)) setGroups(parsed)
+        if (Array.isArray(parsed)) nextGroups = parsed
       } catch (e) {
         console.error('Failed to parse localStorage groups', e)
       }
     }
 
-    isInitialized.current = true
+    skipNextSave.current = true
+    setGroups(nextGroups)
+    initializedUserId.current = userId
   }, [userId])
 
   // Save to localStorage **only after initial load**
   useEffect(() => {
-    if (!userId || !isInitialized.current) return
+    if (!userId || initializedUserId.current !== userId) return
+    if (skipNextSave.current) {
+      skipNextSave.current = false
+      return
+    }
     localStorage.setItem(`groups-${userId}`, JSON.stringify(groups))
   }, [groups, userId])
 

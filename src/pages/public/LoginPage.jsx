@@ -1,15 +1,14 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { User, Lock, Eye, EyeOff, ArrowRight } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import { connectWithoutAuth } from "../../socket";
 import { jwtDecode } from "jwt-decode";
 import init from "@mascaro101/echo-protocol";
 import eld from "../../utils/storage/EncryptedLocalDatabase";
 import AuthLayout from "@/features/auth/AuthLayout";
+import { getDeviceMetadata } from "@/features/devices/deviceMetadata";
 
 export default function LoginPage() {
-  const { t } = useTranslation();
   const navigate = useNavigate();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -32,11 +31,13 @@ export default function LoginPage() {
     try {
       await init();
       const socket = connectWithoutAuth();
+      const deviceMetadata = getDeviceMetadata();
 
       socket.once("connect", () => {
-        socket.emit("login", { username, password }, async (response) => {
+        socket.emit("login", { username, password, ...deviceMetadata }, async (response) => {
           if (response.success) {
             localStorage.setItem("token", response.token);
+            if (response.deviceId) localStorage.setItem("echo-device-id", response.deviceId);
 
             const resolvedUserId =
               response.userId ||
@@ -171,7 +172,7 @@ export default function LoginPage() {
       </form>
 
       <p className="mt-6 text-[11px] text-[#7a7a8a] leading-relaxed">
-        By continuing, you agree to ECHO's{" "}
+        By continuing, you agree to ECHO&apos;s{" "}
         <a href="#" className="underline">
           Terms
         </a>{" "}

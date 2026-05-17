@@ -27,6 +27,7 @@ import QRScanner from './QRScanner'
 import { deviceService } from './deviceService'
 import { importHistoryPackage } from './historyPackage'
 import { generateAndUploadDeviceKeyBundle } from './deviceKeyBundle'
+import { getDeviceMetadata, resetDeviceId } from './deviceMetadata'
 import ParticlesBackground from '@/components/animations/ParticlesBackground'
 
 function Row({ label, value, mono = true }) {
@@ -299,16 +300,17 @@ export default function MobileSyncView({ onBack, onSynced }) {
           ? await derivePairingDhDebug(ik.priv, receivedEpk, 'DH(scanner_IK_priv, ek_pub)')
           : null
         const keyB64 = encodeKeyBase64(ik.pub)
-        const deviceId =
-          localStorage.getItem('echo-device-id') || crypto.randomUUID?.() || `mobile-${Date.now()}`
-        localStorage.setItem('echo-device-id', deviceId)
+        if (!localStorage.getItem('userId')) resetDeviceId()
+
+        let scannerDeviceMetadata = getDeviceMetadata()
+        let deviceId = scannerDeviceMetadata.deviceId
 
         if (pairingPayload.type === 'echo_dh_pairing') {
           await deviceService.submitDhIdentityToServer(pairingPayload.serverUrl, {
             sessionId: pairingPayload.sessionId,
             targetAccessToken: pairingPayload.targetAccessToken,
             sourceIdentityPubKey: keyB64,
-            sourceDevice: { role: 'scanner-device', deviceId },
+            sourceDevice: { role: 'scanner-device', ...scannerDeviceMetadata },
           })
         } else {
           const submit = pairingPayload.serverUrl
@@ -318,13 +320,15 @@ export default function MobileSyncView({ onBack, onSynced }) {
           await submit(pairingPayload.serverUrl, {
             sessionId: pairingPayload.sessionId,
             newDeviceId: deviceId,
-            newDeviceName: navigator.userAgent?.includes('Mobile')
-              ? 'Mobile scanner'
-              : 'Scanner device',
+            newDeviceName: scannerDeviceMetadata.deviceName,
             newDevicePublicIdentityKeyX25519: keyB64,
             newDevicePublicIdentityKeyEd25519: keyB64,
             newDeviceSignedPreKey: keyB64,
             newDeviceSignedPreKeySignature: keyB64,
+            platform: scannerDeviceMetadata.platform,
+            userAgent: scannerDeviceMetadata.userAgent,
+            locale: scannerDeviceMetadata.locale,
+            timezone: scannerDeviceMetadata.timezone,
             challengeResponse: pairingPayload.challenge || '',
           })
         }
@@ -355,6 +359,17 @@ export default function MobileSyncView({ onBack, onSynced }) {
           pairingPayload.sessionId
         )
         const unlockSecret = encodeKeyBase64(historyKey)
+        const importedUserId = historyPackage.auth?.userId || historyPackage.user?.userId || null
+        const currentUserId = localStorage.getItem('userId')
+
+        if (
+          importedUserId &&
+          (!currentUserId || String(importedUserId) !== String(currentUserId))
+        ) {
+          resetDeviceId()
+          scannerDeviceMetadata = getDeviceMetadata()
+          deviceId = scannerDeviceMetadata.deviceId
+        }
 
         // Complete the sync session to get a device-specific JWT, then import history.
         let deviceJwt = null
@@ -363,11 +378,16 @@ export default function MobileSyncView({ onBack, onSynced }) {
             sessionId: pairingPayload.sessionId,
             targetAccessToken: pairingPayload.targetAccessToken,
             targetDevice: {
-              deviceId,
-              platform: navigator.userAgent?.includes('Mobile') ? 'mobile' : 'web',
+              ...scannerDeviceMetadata,
             },
           })
           deviceJwt = completeResult?.auth || null
+          const resolvedDeviceId = completeResult?.session?.targetDevice?.deviceId
+          if (resolvedDeviceId && resolvedDeviceId !== deviceId) {
+            localStorage.setItem('echo-device-id', resolvedDeviceId)
+            scannerDeviceMetadata = getDeviceMetadata()
+            deviceId = resolvedDeviceId
+          }
         } catch {
           // Non-fatal — fall back to primary JWT from history package.
         }
@@ -424,14 +444,20 @@ export default function MobileSyncView({ onBack, onSynced }) {
     if (syncPayload) {
       try {
         const { credentials, debug: trace } = await decryptSyncPayloadDebug(syncPayload)
+        const previousUserId = localStorage.getItem('userId')
+        if (
+          credentials.userId &&
+          (!previousUserId || String(credentials.userId) !== String(previousUserId))
+        ) {
+          resetDeviceId()
+        }
+
         localStorage.setItem('echo_sync_account', JSON.stringify(credentials))
         if (credentials.token) localStorage.setItem('token', credentials.token)
         if (credentials.userId) localStorage.setItem('userId', credentials.userId)
         if (credentials.username) localStorage.setItem('username', credentials.username)
 
-        const currentDeviceId =
-          localStorage.getItem('echo-device-id') || crypto.randomUUID?.() || `mobile-${Date.now()}`
-        localStorage.setItem('echo-device-id', currentDeviceId)
+        const currentDeviceId = getDeviceMetadata().deviceId
 
         try {
           await generateAndUploadDeviceKeyBundle(currentDeviceId)

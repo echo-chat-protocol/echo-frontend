@@ -12,6 +12,7 @@ import init, {
 } from '@mascaro101/echo-protocol'
 import { getOrCreateDeviceIK, encodeKeyBase64 } from './qrCrypto'
 import { deviceService } from './deviceService'
+import { getDeviceMetadata } from './deviceMetadata'
 
 const OTK_COUNT = 20
 const LS_DEVICE_SPK_KEY = 'echo-device-spk'
@@ -60,6 +61,7 @@ export async function generateAndUploadDeviceKeyBundle(deviceId) {
   }
 
   const keyBundle = {
+    ...getDeviceMetadata(),
     publicIdentityKeyX25519: ikPubB64,
     publicIdentityKeyEd25519: ikPubB64,
     signedPreKey: spkPubB64,
