@@ -275,7 +275,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
   )
 
   const replayFetchedMessages = useCallback(
-    async ({ fetchedMessages, initialState, initialMeta }) => {
+    async ({ fetchedMessages, initialState, initialMeta, cachedMessages = [] }) => {
       let replayState = initialState
       let replayMeta = initialMeta
       const formattedMessages = []
@@ -285,6 +285,15 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
           const seqB = Number.isInteger(b?.seq) ? b.seq : Number.MAX_SAFE_INTEGER
           return seqA - seqB
         }
+      )
+
+      // Messages already decrypted and saved on a previous visit. The persisted
+      // senderGenerations already accounts for them, so re-decrypting would fail
+      // with a generation mismatch. Use cached plaintext instead.
+      const cachedById = new Map(
+        (Array.isArray(cachedMessages) ? cachedMessages : [])
+          .filter((m) => m?._id && m.text && m.text !== MLS_UNAVAILABLE_TEXT)
+          .map((m) => [String(m._id), m])
       )
 
       const identityKeys = await getIdentityKeys()
@@ -339,6 +348,15 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
           } catch (err) {
             console.warn('[GroupChat] Skipping stored MLS welcome during replay:', err)
           }
+          continue
+        }
+
+        // If we already have the decrypted plaintext in cache, use it directly.
+        // Attempting to re-decrypt would fail because senderGenerations has
+        // already been advanced past this message's generation.
+        const msgId = String(message?._id ?? '')
+        if (msgId && cachedById.has(msgId)) {
+          formattedMessages.push(cachedById.get(msgId))
           continue
         }
 
@@ -410,13 +428,17 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
           fetchedMessages: msgRes.messages,
           initialState: localState,
           initialMeta: nextMeta,
+          cachedMessages,
         })
         const persistedReplayState = replayed.replayState
           ? await saveGroupState(activeGroupId, replayed.replayState)
           : replayed.replayState
         const mergedMessages = mergeCachedMessages(cachedMessages, replayed.formattedMessages)
 
-        for (const message of replayed.formattedMessages) {
+        // Save using mergedMessages so cached plaintext is never overwritten by a
+        // decryption failure text from the replay pass.
+        for (const message of mergedMessages) {
+          if (!message?._id) continue
           await updateSavedMessages(userId, getGroupCacheId(activeGroupId), message)
         }
 
@@ -501,6 +523,17 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
           })
           formattedMessage = decrypted.formattedMessage
           nextState = decrypted.nextState ?? currentState
+
+          // Let Dashboard update the sidebar preview without touching crypto state.
+          window.dispatchEvent(
+            new CustomEvent('groupMessagePreview', {
+              detail: {
+                groupId,
+                text: formattedMessage?.text ?? '',
+                timestamp: formattedMessage?.createdAt ?? new Date().toISOString(),
+              },
+            })
+          )
         } else {
           const formatted = await formatMessage(message, currentState, currentMeta)
           formattedMessage = formatted.formattedMessage

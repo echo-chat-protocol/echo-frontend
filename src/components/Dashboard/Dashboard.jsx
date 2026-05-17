@@ -32,6 +32,11 @@ import {
 } from './Chat/utils/chat/keyManagement'
 
 import { decryptIncomingGroupMessage } from './Chat/utils/chat/groupMessageDecryption'
+import {
+  loadGroupState,
+  saveGroupState,
+  processWelcome,
+} from './Chat/utils/crypto/groupCryptoProvider'
 import { decryptIncomingMessage } from './Chat/utils/chat/messageDecryption'
 import { base64ToArrayBuffer } from './Chat/utils/helpers'
 import { generateOneTimePreKeys } from './Chat/utils/crypto/opk'
@@ -677,11 +682,53 @@ const Dashboard = () => {
       }
     }
 
+    // Process group Welcomes immediately so MLS state is in ELD before the chat
+    // is opened — this lets background decryption work from the first message.
+    const handleGroupWelcomeBackground = async ({ groupId, welcome }) => {
+      if (!groupId || !welcome) return
+      const gid = String(groupId)
+
+      const thisDeviceId = localStorage.getItem('echo-device-id')
+      const targetClientId = welcome.recipientClientId ?? null
+      if (targetClientId !== null && targetClientId !== thisDeviceId) return
+
+      try {
+        const existing = await loadGroupState(gid)
+        if (existing?.applicationSecretB64) return // already have key material
+
+        const identityKeys = await getIdentityKeys()
+        const myInitPrivKeyB64 =
+          localStorage.getItem('echo-device-mls-priv') || identityKeys?.privateKeyX25519 || null
+        if (!myInitPrivKeyB64) return
+
+        const nextState = await processWelcome({
+          welcome,
+          selfUserId: userIdRef.current,
+          myInitPrivKeyB64,
+        })
+        await saveGroupState(gid, nextState)
+      } catch (err) {
+        console.warn('[Dashboard] Background Welcome processing failed:', err)
+      }
+    }
+
+    // Update the sidebar preview when GroupChat decrypts a live message (active group).
+    const handleGroupMessagePreview = (event) => {
+      const { groupId, text, timestamp, groupName } = event.detail ?? {}
+      if (!groupId) return
+      upsertGroupRef.current?.(
+        { groupId: String(groupId), name: groupName || 'Group' },
+        { timestamp, text: text ?? '' }
+      )
+    }
+
     sharedSocket.on('newMessage', handleNewMessageNotification)
     sharedSocket.on('groupAdded', handleGroupAdded)
     sharedSocket.on('groupUpdated', handleGroupUpdated)
     sharedSocket.on('groupRemoved', handleGroupRemoved)
     sharedSocket.on('newGroupMessage', handleNewGroupMessageNotification)
+    sharedSocket.on('groupWelcome', handleGroupWelcomeBackground)
+    window.addEventListener('groupMessagePreview', handleGroupMessagePreview)
 
     // ── Device sync – lives here so it persists across view/chat changes ─────────
 
@@ -763,8 +810,10 @@ const Dashboard = () => {
       sharedSocket.off('groupUpdated', handleGroupUpdated)
       sharedSocket.off('groupRemoved', handleGroupRemoved)
       sharedSocket.off('newGroupMessage', handleNewGroupMessageNotification)
+      sharedSocket.off('groupWelcome', handleGroupWelcomeBackground)
       sharedSocket.off('deviceEnvelope', handleDeviceEnvelope)
       sharedSocket.off('deviceSessionRequest', handleDeviceSessionRequest)
+      window.removeEventListener('groupMessagePreview', handleGroupMessagePreview)
       if (devicePollInterval) clearInterval(devicePollInterval)
       clearMlsKeyPackageRetry()
     }
