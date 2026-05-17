@@ -22,6 +22,7 @@ import {
   updateSavedMessages,
 } from './utils/chat/keyManagement'
 import { decryptIncomingGroupMessage } from './utils/chat/groupMessageDecryption'
+import { forwardGroupStateToPairedDevices } from '../../../utils/deviceForward'
 
 const TEXT_ENCODER = new TextEncoder()
 const TEXT_DECODER = new TextDecoder()
@@ -524,9 +525,17 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
     const handleGroupWelcome = async ({ groupId, welcome }) => {
       if (String(groupId ?? '') !== String(activeGroupId)) return
 
+      // Each device only processes the Welcome addressed to it.
+      const thisDeviceId = localStorage.getItem('echo-device-id')
+      const targetClientId = welcome.recipientClientId ?? null
+      if (targetClientId !== null && targetClientId !== thisDeviceId) return
+
       try {
-        const identityKeys = await getIdentityKeys()
-        const myInitPrivKeyB64 = identityKeys?.privateKeyX25519 ?? null
+        // Use the device-specific MLS private key if available; fall back to ELD key.
+        const myInitPrivKeyB64 =
+          localStorage.getItem('echo-device-mls-priv') ||
+          (await getIdentityKeys())?.privateKeyX25519 ||
+          null
 
         const nextState = await processWelcome({
           welcome,
@@ -535,6 +544,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
         })
 
         const persistedState = await saveGroupState(activeGroupId, nextState)
+        forwardGroupStateToPairedDevices(userId, activeGroupId, persistedState).catch(() => {})
 
         if (cancelled) return
         setGroupCryptoState(persistedState)
@@ -559,6 +569,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
           myInitPrivKeyB64,
         })
         const persistedState = await saveGroupState(activeGroupId, nextState)
+        forwardGroupStateToPairedDevices(userId, activeGroupId, persistedState).catch(() => {})
 
         if (cancelled) return
         setGroupCryptoState(persistedState)
@@ -584,12 +595,25 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
       }
     }
 
+    const handleGroupStateSynced = async (event) => {
+      const { groupId } = event.detail ?? {}
+      if (String(groupId ?? '') !== String(activeGroupId)) return
+      try {
+        const fresh = await loadGroupState(activeGroupId)
+        if (fresh && !cancelled) {
+          setGroupCryptoState(fresh)
+          groupCryptoStateRef.current = fresh
+        }
+      } catch {}
+    }
+
     socket.on('groupCommit', handleGroupCommit)
     socket.on('groupWelcome', handleGroupWelcome)
     socket.on('newGroupMessage', handleNewGroupMessage)
     socket.on('groupMemberAdded', handleMembershipChanged)
     socket.on('groupMemberRemoved', handleMembershipChanged)
     window.addEventListener('localStorageUpdated', handleStoredGroupMessage)
+    window.addEventListener('groupStateSynced', handleGroupStateSynced)
 
     return () => {
       cancelled = true
@@ -599,6 +623,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
       socket.off('groupMemberAdded', handleMembershipChanged)
       socket.off('groupMemberRemoved', handleMembershipChanged)
       window.removeEventListener('localStorageUpdated', handleStoredGroupMessage)
+      window.removeEventListener('groupStateSynced', handleGroupStateSynced)
     }
   }, [
     activeGroupId,
@@ -661,6 +686,9 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
           async (ack) => {
             if (ack?.success) {
               const persistedState = await saveGroupState(activeGroupId, encrypted.newState)
+              forwardGroupStateToPairedDevices(userId, activeGroupId, persistedState).catch(
+                () => {}
+              )
               setGroupCryptoState(persistedState)
               groupCryptoStateRef.current = persistedState
               resolve(ack)

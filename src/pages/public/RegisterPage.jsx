@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Buffer } from "buffer";
 import {
@@ -9,7 +9,6 @@ import {
   ArrowRight,
   Check,
 } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import AuthLayout from "@/features/auth/AuthLayout";
 import eld from "../../utils/storage/EncryptedLocalDatabase";
 import { connectWithoutAuth } from "../../socket";
@@ -39,7 +38,6 @@ const STRENGTH = [
 ];
 
 export default function RegisterPage() {
-  const { t } = useTranslation();
   const navigate = useNavigate();
 
   const [username, setUsername] = useState("");
@@ -173,21 +171,24 @@ export default function RegisterPage() {
         async (response) => {
           if (response.success) {
             try {
-              // Create encrypted database
               await eld.createUser(response.userId, password);
 
-              // Store keybundle encrypted
-              await eld.storeIdentityKeys({
-                privateKeyEd25519: ed25519PrivateKeyBase64,
-                privateKeyX25519: x25519PrivateKeyBase64,
-                publicKeyX25519: x25519PublicKeyBase64,
-                publicKeyEd25519: publicKeyStringED25519,
-                privatePreKey: privatePreKeyBase64,
-              });
+              try {
+                await eld.storeIdentityKeys({
+                  privateKeyEd25519: ed25519PrivateKeyBase64,
+                  privateKeyX25519: x25519PrivateKeyBase64,
+                  publicKeyX25519: x25519PublicKeyBase64,
+                  publicKeyEd25519: publicKeyStringED25519,
+                  privatePreKey: privatePreKeyBase64,
+                });
 
-              await eld.storeOPKs(opkPrivateKeys);
+                await eld.storeOPKs(opkPrivateKeys);
+              } catch (err) {
+                // Clean up partial ELD state so the user isn't stuck on retry
+                await eld.resetUser(response.userId).catch(() => {});
+                throw err;
+              }
 
-              // Lock database until next unlock on login
               eld.lock();
 
               setSuccess("Registration successful! Redirecting to login...");
@@ -198,6 +199,7 @@ export default function RegisterPage() {
 
             } catch (err) {
               console.error("[ELD] Storage generation failed:", err);
+              eld.lock();
               setError("Encrypted storage generation failed: " + err.message);
               setSubmitting(false);
             }

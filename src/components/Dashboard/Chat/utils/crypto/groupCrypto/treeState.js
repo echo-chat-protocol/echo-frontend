@@ -191,8 +191,11 @@ export async function initTreeFromRoster(roster, selfLeafIndex, selfPrivKeyB64, 
       continue
     }
 
-    const memberInitKey = memberInitKeys?.find(
-      (entry) => String(entry.userId) === String(member.userId)
+    // Prefer leafIndex-scoped lookup so each device leaf gets its own key.
+    const memberInitKey = memberInitKeys?.find((entry) =>
+      entry.leafIndex != null
+        ? entry.leafIndex === member.leafIndex
+        : String(entry.userId) === String(member.userId)
     )
     const initKeyB64 = resolveInitKeyB64(memberInitKey)
     if (initKeyB64) {

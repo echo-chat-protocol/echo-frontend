@@ -26,6 +26,7 @@ import {
 import QRScanner from './QRScanner'
 import { deviceService } from './deviceService'
 import { importHistoryPackage } from './historyPackage'
+import { generateAndUploadDeviceKeyBundle } from './deviceKeyBundle'
 import ParticlesBackground from '@/components/animations/ParticlesBackground'
 
 function Row({ label, value, mono = true }) {
@@ -354,7 +355,37 @@ export default function MobileSyncView({ onBack, onSynced }) {
           pairingPayload.sessionId
         )
         const unlockSecret = encodeKeyBase64(historyKey)
-        const importResult = await importHistoryPackage(historyPackage, { unlockSecret })
+
+        // Complete the sync session to get a device-specific JWT, then import history.
+        let deviceJwt = null
+        try {
+          const completeResult = await deviceService.completeSyncTarget({
+            sessionId: pairingPayload.sessionId,
+            targetAccessToken: pairingPayload.targetAccessToken,
+            targetDevice: {
+              deviceId,
+              platform: navigator.userAgent?.includes('Mobile') ? 'mobile' : 'web',
+            },
+          })
+          deviceJwt = completeResult?.auth || null
+        } catch {
+          // Non-fatal — fall back to primary JWT from history package.
+        }
+
+        // Patch the auth token before import so the device uses its own JWT.
+        const patchedPackage = deviceJwt
+          ? { ...historyPackage, auth: { ...historyPackage.auth, token: deviceJwt } }
+          : historyPackage
+
+        const importResult = await importHistoryPackage(patchedPackage, { unlockSecret })
+
+        // Register the device's own key bundle with the server.
+        try {
+          await generateAndUploadDeviceKeyBundle(deviceId)
+        } catch {
+          // Non-fatal — forwarding will still work via the shared-IK envelope key.
+        }
+
         setSynced({
           username: historyPackage.user?.username,
           history: importResult,
@@ -397,6 +428,17 @@ export default function MobileSyncView({ onBack, onSynced }) {
         if (credentials.token) localStorage.setItem('token', credentials.token)
         if (credentials.userId) localStorage.setItem('userId', credentials.userId)
         if (credentials.username) localStorage.setItem('username', credentials.username)
+
+        const currentDeviceId =
+          localStorage.getItem('echo-device-id') || crypto.randomUUID?.() || `mobile-${Date.now()}`
+        localStorage.setItem('echo-device-id', currentDeviceId)
+
+        try {
+          await generateAndUploadDeviceKeyBundle(currentDeviceId)
+        } catch {
+          // Non-fatal.
+        }
+
         setSynced(credentials)
         setDebug(trace)
         setPhase('synced')

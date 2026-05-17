@@ -92,6 +92,10 @@ export const deviceService = {
   listDevices: (userId) => request('GET', `/users/${userId}/devices`),
   getDeviceBundles: (userId) => request('GET', `/users/${userId}/devices/bundles`),
   revokeDevice: (deviceId) => request('POST', `/devices/${deviceId}/revoke`, {}),
+  registerDeviceKeys: (deviceId, keyBundle) =>
+    request('POST', `/devices/${deviceId}/keys`, keyBundle),
+  completeSyncTarget: ({ sessionId, targetAccessToken, targetDevice = {} }) =>
+    request('POST', '/sync/complete-target', { sessionId, targetAccessToken, targetDevice }),
 
   storeEnvelopes: (body) => request('POST', '/messages/envelopes', body),
   fetchEnvelopes: (deviceId) => request('GET', `/messages/envelopes/${deviceId}`),

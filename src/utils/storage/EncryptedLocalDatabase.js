@@ -182,6 +182,20 @@ class EncryptedLocalDatabase {
     })
   }
 
+  // PUT BATCH - insert or update multiple records in a single transaction
+  async _putBatch(storeName, records) {
+    if (!records.length) return
+    const { tx, store } = await this._openStore(storeName, 'readwrite')
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error || new Error('Transaction aborted'))
+      for (const record of records) {
+        store.put(record)
+      }
+    })
+  }
+
   // GET - retrieve by primary key
   async _get(storeName, key) {
     const { store } = await this._openStore(storeName, 'readonly')
@@ -358,7 +372,14 @@ class EncryptedLocalDatabase {
     await this.initializeDB()
 
     if (await this.userExists(userId)) {
-      throw new Error('User already exists. Use unlock() instead.')
+      // Detect partial state: salt written but verify record missing (failed previous attempt).
+      // Reset so a fresh registration can proceed instead of getting permanently stuck.
+      const verify = await this._get(STORES.META, `verify-${userId}`)
+      if (!verify) {
+        await this.resetUser(userId)
+      } else {
+        throw new Error('User already exists. Use unlock() instead.')
+      }
     }
 
     // Generate and store salt (unencrypted - needed for key derivation)
@@ -878,15 +899,20 @@ class EncryptedLocalDatabase {
   // Store a batch of OPK private keys: opks is an array of { opkId, privateKey (Uint8Array) }
   async storeOPKs(opks) {
     this._ensureUnlocked()
+    // Encrypt all records outside of any IDB transaction first, then write in one shot.
+    // Opening 100 separate transactions (one per OPK) triggers "Internal error" in some
+    // browsers when too many sequential transactions are issued against the same store.
+    const records = []
     for (const { opkId, privateKey } of opks) {
       const encrypted = await this._encrypt({ privateKey: this._uint8ToBase64(privateKey) })
-      await this._put(STORES.OPK_PRIVATE_KEYS, {
+      records.push({
         id: `opk-${opkId}`,
         userId: this.currentUserId,
         opkId,
         ...encrypted,
       })
     }
+    await this._putBatch(STORES.OPK_PRIVATE_KEYS, records)
   }
 
   // Retrieve the private key for a single opkId (returns Uint8Array or null)
@@ -966,6 +992,73 @@ class EncryptedLocalDatabase {
   async deleteMlsGroupState(groupId) {
     this._ensureUnlocked()
     await this._delete(STORES.MLS_GROUP_STATES, `mlsGroupState-${groupId}`)
+  }
+
+  // ── Session state bulk export / import ────────────────────────────────────────
+  // Exports DR ratchet state (chain keys, root keys, message counters, OPKs,
+  // peer identity keys, ephemeral session data) as decrypted plaintext so they
+  // can be re-encrypted with the receiving device's own DEK on import.
+
+  async exportSessionDataForCurrentUser() {
+    this._ensureUnlocked()
+
+    const SESSION_STORES = [
+      STORES.ROOT_KEYS,
+      STORES.SENDING_CHAIN_KEYS,
+      STORES.RECEIVING_CHAIN_KEYS,
+      STORES.CURRENT_SENDING_NUMBER,
+      STORES.CURRENT_RECEIVING_NUMBER,
+      STORES.PREVIOUS_SENDING_NUMBER,
+      STORES.SKIPPED_MESSAGE_KEYS,
+      STORES.SESSION_KEYS,
+      STORES.OPK_PRIVATE_KEYS,
+      STORES.PEER_IDENTITY_KEYS,
+    ]
+
+    const result = {}
+    for (const storeName of SESSION_STORES) {
+      if (!this.db.objectStoreNames.contains(storeName)) continue
+      const records = await this._getAllByIndex(storeName, 'userId', this.currentUserId)
+      if (records.length === 0) continue
+
+      const exported = []
+      for (const record of records) {
+        try {
+          const plaintext = await this._decrypt(record.ciphertext, record.nonce)
+          // Strip the encrypted fields; keep all structural fields (id, userId, indexes).
+          const rest = { ...record }
+          delete rest.ciphertext
+          delete rest.nonce
+          exported.push({ ...rest, _plaintext: plaintext })
+        } catch {
+          // skip corrupted records
+        }
+      }
+      if (exported.length > 0) result[storeName] = exported
+    }
+
+    return result
+  }
+
+  async importSessionDataForCurrentUser(sessionData) {
+    this._ensureUnlocked()
+    if (!sessionData || typeof sessionData !== 'object') return
+
+    for (const [storeName, records] of Object.entries(sessionData)) {
+      if (!this.db.objectStoreNames.contains(storeName)) continue
+      if (!Array.isArray(records)) continue
+
+      for (const entry of records) {
+        try {
+          const { _plaintext, ...rest } = entry
+          rest.userId = this.currentUserId
+          const encrypted = await this._encrypt(_plaintext)
+          await this._put(storeName, { ...rest, ...encrypted })
+        } catch {
+          // skip records that fail to re-encrypt
+        }
+      }
+    }
   }
 }
 // Create singleton instance

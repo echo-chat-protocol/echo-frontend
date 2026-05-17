@@ -38,6 +38,14 @@ import { generateOneTimePreKeys } from './Chat/utils/crypto/opk'
 import { createOpkReplenishHandler, requestOpkStatusAndReplenish } from '../../utils/opk/replenish'
 import { rotateSPKIfNeeded } from '../../utils/spk/rotate'
 import eld from '../../utils/storage/EncryptedLocalDatabase'
+import {
+  processRawDeviceEnvelope,
+  processIncomingEnvelopes,
+  broadcastSessionSync,
+  invalidatePairedDevicesCache,
+} from '../../utils/deviceForward'
+import wasmInit, { diffie_hellman } from '@mascaro101/echo-protocol'
+import { deviceService } from '../../features/devices/deviceService'
 import GroupList from './DashboardComponents/Groups/GroupList'
 import CreateGroupModal from './Groups/CreateGroupModal'
 import GroupChat from './Chat/GroupChat'
@@ -272,10 +280,12 @@ const Dashboard = () => {
           return false
         }
 
+        const deviceId = localStorage.getItem('echo-device-id')
+        const mlsPub = localStorage.getItem('echo-device-mls-pub') || identityKeys.publicKeyX25519
         return await new Promise((resolve) => {
           sharedSocket.emit(
             'publishKeyPackage',
-            { initKeyB64: identityKeys.publicKeyX25519 },
+            { initKeyB64: mlsPub, clientId: deviceId || null },
             (res) => {
               if (res?.success) {
                 mlsKeyPackagePublishedRef.current = true
@@ -513,6 +523,7 @@ const Dashboard = () => {
               ? message.text
               : ''
 
+        let decryptOk = false
         try {
           const result = await decryptIncomingGroupMessage({
             message,
@@ -520,9 +531,16 @@ const Dashboard = () => {
             username,
           })
           msgText = result?.formattedMessage?.text ?? msgText
+          decryptOk = true
         } catch {
           console.warn('[Dashboard] Failed to decrypt incoming group message')
-          msgText = '[Unable to decrypt message]'
+          // Don't save the failure to the message cache — the correct plaintext
+          // will be stored when the user opens the group and the MLS state is loaded.
+          msgText = ''
+        }
+
+        // Only persist and preview the message when decryption succeeded.
+        if (decryptOk && msgText) {
           await updateSavedMessages(userIdRef.current, getGroupCacheId(gid), {
             _id: message._id || `${gid}:${String(message?.seq ?? timestamp)}`,
             userId: String(message?.userId ?? ''),
@@ -665,6 +683,73 @@ const Dashboard = () => {
     sharedSocket.on('groupRemoved', handleGroupRemoved)
     sharedSocket.on('newGroupMessage', handleNewGroupMessageNotification)
 
+    // ── Device sync – lives here so it persists across view/chat changes ─────────
+
+    // Register this browser as a named device so paired devices can forward
+    // envelopes to it, even before any Chat pane is opened.
+    let devicePollInterval = null
+    const initDeviceSync = async () => {
+      if (!localStorage.getItem('echo-device-id')) {
+        try {
+          const keys = await getIdentityKeys()
+          if (keys?.publicKeyX25519) {
+            const newDeviceId = crypto.randomUUID()
+            await deviceService.registerDeviceKeys(newDeviceId, {
+              publicIdentityKeyX25519: keys.publicKeyX25519,
+            })
+            localStorage.setItem('echo-device-id', newDeviceId)
+            invalidatePairedDevicesCache()
+          }
+        } catch {
+          // non-fatal — retry on next mount
+        }
+      }
+
+      // Generate a device-specific X25519 key pair for MLS group membership.
+      // Each device has its own leaf in the group tree; the init key is what the
+      // group creator encrypts the Welcome's joiner secret to.
+      if (
+        !localStorage.getItem('echo-device-mls-pub') ||
+        !localStorage.getItem('echo-device-mls-priv')
+      ) {
+        try {
+          await wasmInit()
+          const privBytes = crypto.getRandomValues(new Uint8Array(32))
+          // X25519 base point u=9 → public key = X25519(private, base_u)
+          const basePoint = new Uint8Array(32)
+          basePoint[0] = 9
+          const pubBytes = diffie_hellman(privBytes, basePoint)
+          const b64 = (b) => btoa(String.fromCharCode(...b))
+          localStorage.setItem('echo-device-mls-priv', b64(privBytes))
+          localStorage.setItem('echo-device-mls-pub', b64(pubBytes))
+          // Re-publish key package with the new device-specific key
+          void publishMlsKeyPackage()
+        } catch {
+          // non-fatal — fall back to identity key
+        }
+      }
+
+      const poll = () => processIncomingEnvelopes(userId).catch(() => {})
+      poll()
+      devicePollInterval = setInterval(poll, 3_000)
+    }
+    initDeviceSync()
+
+    // Real-time: server relays opaque device envelopes to all other devices in
+    // the user's socket room. Store immediately so the message is in ELD before
+    // any Chat pane opens; the localStorageUpdated event wakes the active Chat.
+    const handleDeviceEnvelope = (rawEnvelope) => {
+      processRawDeviceEnvelope(userId, rawEnvelope).catch(() => {})
+    }
+    sharedSocket.on('deviceEnvelope', handleDeviceEnvelope)
+
+    // When another device requests session state (to align its DR ratchet before
+    // sending), respond with this device's current snapshot for that conversation.
+    const handleDeviceSessionRequest = ({ targetUserId: reqTargetUserId }) => {
+      if (reqTargetUserId) broadcastSessionSync(userId, reqTargetUserId).catch(() => {})
+    }
+    sharedSocket.on('deviceSessionRequest', handleDeviceSessionRequest)
+
     return () => {
       sharedSocket.off('connect', onConnect)
       sharedSocket.off('disconnect', handleDisconnect)
@@ -678,6 +763,9 @@ const Dashboard = () => {
       sharedSocket.off('groupUpdated', handleGroupUpdated)
       sharedSocket.off('groupRemoved', handleGroupRemoved)
       sharedSocket.off('newGroupMessage', handleNewGroupMessageNotification)
+      sharedSocket.off('deviceEnvelope', handleDeviceEnvelope)
+      sharedSocket.off('deviceSessionRequest', handleDeviceSessionRequest)
+      if (devicePollInterval) clearInterval(devicePollInterval)
       clearMlsKeyPackageRetry()
     }
   }, [token, userId])

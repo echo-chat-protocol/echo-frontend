@@ -41,6 +41,8 @@ export async function buildHistoryPackage() {
   const messages = await eld.exportMessagesForCurrentUser()
   const mlsGroupStates = await eld.exportMlsGroupStatesForCurrentUser()
   const localStorageEntries = storageEntriesForUser(userId)
+  const identityKeys = await eld.getIdentityKeys().catch(() => null)
+  const sessionData = await eld.exportSessionDataForCurrentUser().catch(() => null)
 
   return {
     version: HISTORY_PACKAGE_VERSION,
@@ -59,6 +61,8 @@ export async function buildHistoryPackage() {
     messages,
     mlsGroupStates,
     localStorageEntries,
+    identityKeys: identityKeys || null,
+    sessionData: sessionData || null,
   }
 }
 
@@ -125,6 +129,14 @@ export async function importHistoryPackage(historyPackage, { unlockSecret } = {}
       JSON.stringify(historyPackage.chats || [])
     )
     localStorage.setItem(`groups-${userId}`, JSON.stringify(historyPackage.groups || []))
+  }
+
+  if (historyPackage.identityKeys) {
+    await eld.storeIdentityKeys(historyPackage.identityKeys)
+  }
+
+  if (historyPackage.sessionData) {
+    await eld.importSessionDataForCurrentUser(historyPackage.sessionData)
   }
 
   const importedMessages = await eld.importMessagesForCurrentUser(historyPackage.messages || [])
