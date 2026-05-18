@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { Key, Loader2, RefreshCw, Shuffle } from 'lucide-react'
 import {
@@ -40,7 +40,16 @@ function Section({ icon: Icon, title, color, children }) {
   )
 }
 
+function formatCountdown(seconds) {
+  const safeSeconds = Math.max(0, seconds)
+  const minutes = Math.floor(safeSeconds / 60)
+  const remainder = safeSeconds % 60
+  return `${minutes}:${String(remainder).padStart(2, '0')}`
+}
+
 export default function QRGenerator({ onDeviceLinked = null }) {
+  const autoCreateAttemptedRef = useRef(false)
+  const autoResettingRef = useRef(false)
   const [ik, setIk] = useState(null)
   const [session, setSession] = useState(null)
   const [ephemeral, setEphemeral] = useState(null)
@@ -50,16 +59,57 @@ export default function QRGenerator({ onDeviceLinked = null }) {
   const [dhDebug, setDhDebug] = useState(null)
   const [historySummary, setHistorySummary] = useState(null)
   const [transferStatus, setTransferStatus] = useState('idle')
+  const [secondsUntilReset, setSecondsUntilReset] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
   const serverUrl = resolveApiBase()
+
+  const createSetupQr = useCallback(async () => {
+    setBusy(true)
+    setError(null)
+    setSetupQr(null)
+    setSession(null)
+    setEphemeral(null)
+    setScannerPubKey('')
+    setPairingCode('')
+    setDhDebug(null)
+    setHistorySummary(null)
+    setTransferStatus('idle')
+    setSecondsUntilReset(null)
+    try {
+      const eph = await generatePairingEphemeralDebug()
+      const created = await deviceService.createDhSession({
+        targetEphemeralPubKey: encodeKeyBase64(eph.ekPub),
+        origin: window.location.origin,
+        version: 'echo-history-package-v1',
+        targetDevice: { role: 'main-device' },
+      })
+      if (!created?.sessionId || !created?.targetAccessToken) {
+        throw new Error(
+          'Server did not return a usable DH session. Restart the backend and try again.'
+        )
+      }
+      setEphemeral(eph)
+      setSession(created)
+    } catch (e) {
+      setError(`${e.message || 'Failed to create QR'} Server: ${serverUrl}`)
+    } finally {
+      setBusy(false)
+    }
+  }, [serverUrl])
 
   useEffect(() => {
     getOrCreateDeviceIK()
       .then(setIk)
       .catch((e) => setError(e.message))
   }, [])
+
+  useEffect(() => {
+    if (autoCreateAttemptedRef.current || busy || session || setupQr || pairingCode) return
+    autoCreateAttemptedRef.current = true
+    createSetupQr()
+  }, [busy, createSetupQr, pairingCode, session, setupQr])
 
   const setupPayload = useMemo(() => {
     if (!session?.sessionId || !session?.targetAccessToken || !ephemeral?.ekPub) return null
@@ -80,9 +130,9 @@ export default function QRGenerator({ onDeviceLinked = null }) {
 
     let cancelled = false
     QRCode.toDataURL(setupPayload, {
-      width: 220,
-      margin: 2,
-      color: { dark: '#2d0a6e', light: '#f5f3ff' },
+      width: 260,
+      margin: 1,
+      color: { dark: '#050507', light: '#ffffff' },
       errorCorrectionLevel: 'M',
     })
       .then((url) => {
@@ -96,6 +146,34 @@ export default function QRGenerator({ onDeviceLinked = null }) {
       cancelled = true
     }
   }, [setupPayload])
+
+  useEffect(() => {
+    if (!session?.expiresAt || !setupQr || pairingCode || dhDebug) {
+      setSecondsUntilReset(null)
+      return undefined
+    }
+
+    const expiresAt = new Date(session.expiresAt).getTime()
+    if (!Number.isFinite(expiresAt)) {
+      setSecondsUntilReset(null)
+      return undefined
+    }
+
+    const updateCountdown = () => {
+      const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000))
+      setSecondsUntilReset(remaining)
+      if (remaining === 0 && !busy && !autoResettingRef.current) {
+        autoResettingRef.current = true
+        createSetupQr().finally(() => {
+          autoResettingRef.current = false
+        })
+      }
+    }
+
+    updateCountdown()
+    const timer = window.setInterval(updateCountdown, 1000)
+    return () => window.clearInterval(timer)
+  }, [busy, createSetupQr, dhDebug, pairingCode, session?.expiresAt, setupQr])
 
   useEffect(() => {
     if (!session?.sessionId || !session?.targetAccessToken || !ephemeral?.ekPriv || dhDebug) return
@@ -120,12 +198,21 @@ export default function QRGenerator({ onDeviceLinked = null }) {
         setDhDebug({ ...debug, scannerPub })
         clearInterval(timer)
       } catch (e) {
+        if (e?.code === 'sync_session_expired') {
+          if (!autoResettingRef.current) {
+            autoResettingRef.current = true
+            createSetupQr().finally(() => {
+              autoResettingRef.current = false
+            })
+          }
+          return
+        }
         setError(e.message || 'Failed to poll DH session')
       }
     }, 1500)
 
     return () => clearInterval(timer)
-  }, [dhDebug, ephemeral?.ekPriv, session?.sessionId, session?.targetAccessToken])
+  }, [createSetupQr, dhDebug, ephemeral?.ekPriv, session?.sessionId, session?.targetAccessToken])
 
   useEffect(() => {
     if (!dhDebug?.dhShared || !pairingCode || !session?.sessionId || !session?.targetAccessToken)
@@ -224,52 +311,13 @@ export default function QRGenerator({ onDeviceLinked = null }) {
     }
   }, [onDeviceLinked, session?.sessionId, session?.targetAccessToken, transferStatus])
 
-  const createSetupQr = async () => {
-    setBusy(true)
-    setError(null)
-    setSetupQr(null)
-    setSession(null)
-    setEphemeral(null)
-    setScannerPubKey('')
-    setPairingCode('')
-    setDhDebug(null)
-    try {
-      const eph = await generatePairingEphemeralDebug()
-      const created = await deviceService.createDhSession({
-        targetEphemeralPubKey: encodeKeyBase64(eph.ekPub),
-        origin: window.location.origin,
-        version: 'echo-history-package-v1',
-        targetDevice: { role: 'main-device' },
-      })
-      if (!created?.sessionId || !created?.targetAccessToken) {
-        throw new Error(
-          'Server did not return a usable DH session. Restart the backend and try again.'
-        )
-      }
-      setEphemeral(eph)
-      setSession(created)
-    } catch (e) {
-      setError(`${e.message || 'Failed to create QR'} Server: ${serverUrl}`)
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const reset = () => {
-    setSession(null)
-    setEphemeral(null)
-    setSetupQr(null)
-    setScannerPubKey('')
-    setPairingCode('')
-    setDhDebug(null)
-    setHistorySummary(null)
-    setTransferStatus('idle')
-    setError(null)
+    createSetupQr()
   }
 
   return (
     <div className='flex flex-col gap-4'>
-      <div className='rounded-xl border border-white/10 bg-black/60 p-3'>
+      <div className='hidden rounded-xl border border-white/10 bg-black/60 p-3'>
         <p className='text-[10px] font-semibold uppercase tracking-widest text-[#a855f7] mb-2'>
           ■ MAIN DEVICE DH SETUP
         </p>
@@ -282,91 +330,79 @@ export default function QRGenerator({ onDeviceLinked = null }) {
 
       {pairingCode ? (
         <div className='flex flex-col items-center gap-3'>
-          <div className='w-full rounded-2xl border border-emerald-400/25 bg-emerald-400/10 px-5 py-6 text-center shadow-lg shadow-emerald-950/20'>
-            <p className='text-[10px] font-semibold uppercase tracking-widest text-emerald-300'>
-              Enter this code on your other device
-            </p>
-            <p className='mt-3 font-mono text-5xl font-semibold tracking-[0.24em] text-white tabular-nums'>
+          <div className='w-full rounded-[28px] border border-emerald-300/20 bg-emerald-300/[0.08] px-5 py-7 text-center shadow-[0_24px_80px_-48px_rgba(16,185,129,0.85)]'>
+            <p className='text-[11px] font-medium text-emerald-200/80'>Pairing code</p>
+            <p className='mt-3 font-mono text-5xl font-semibold tracking-[0.22em] text-white tabular-nums'>
               {pairingCode}
-            </p>
-            <p className='mt-3 text-xs text-[#b9b9c4]'>
-              This code is mixed into the HKDF salt for the encrypted history package.
             </p>
           </div>
           {transferStatus !== 'idle' && (
-            <div className='w-full rounded-xl border border-white/10 bg-black/60 p-3'>
-              <p className='text-[9px] uppercase tracking-widest text-[#6f6f7e] mb-1'>
-                History package
-              </p>
-              <p className='text-sm text-white'>
-                {transferStatus === 'compiling' && 'Compiling local chats…'}
-                {transferStatus === 'uploading' && 'Encrypting and uploading chunks…'}
-                {transferStatus === 'ready' && 'Encrypted history is ready on the phone.'}
-                {transferStatus === 'error' && 'History transfer failed.'}
+            <div className='w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3'>
+              <p className='text-sm text-white/90'>
+                {transferStatus === 'compiling' && 'Preparing history'}
+                {transferStatus === 'uploading' && 'Sending encrypted history'}
+                {transferStatus === 'ready' && 'Ready on phone'}
+                {transferStatus === 'error' && 'Transfer failed'}
               </p>
               {historySummary && (
-                <p className='mt-1 text-[10px] text-[#6f6f7e]'>
+                <p className='mt-1 text-[11px] text-white/35'>
                   {historySummary.messages} messages · {historySummary.chats} chats ·{' '}
                   {historySummary.groups} groups · {historySummary.chunks} chunks
                 </p>
               )}
             </div>
           )}
-          <p className='text-[10px] font-mono text-[#4a4a5a] break-all text-center'>
+          <p className='hidden text-[10px] font-mono text-[#4a4a5a] break-all text-center'>
             server: {serverUrl}
           </p>
         </div>
       ) : setupQr ? (
         <div className='flex flex-col items-center gap-3'>
-          <div className='rounded-2xl border border-white/10 bg-[#f5f3ff] p-4 shadow-lg shadow-purple-900/20'>
-            <img src={setupQr} alt='Ephemeral key pairing QR' className='h-52 w-52' />
+          <div className='rounded-[32px] border border-white/10 bg-white p-4 shadow-[0_28px_90px_-48px_rgba(255,255,255,0.75)]'>
+            <img src={setupQr} alt='Ephemeral key pairing QR' className='h-64 w-64 max-w-full' />
           </div>
-          <p className='text-xs text-[#6f6f7e] text-center'>
-            Scan this from the mobile device. Its IK public key will be sent back through the
-            server.
-          </p>
-          {transferStatus !== 'idle' && (
-            <div className='w-full rounded-xl border border-white/10 bg-black/60 p-3'>
-              <p className='text-[9px] uppercase tracking-widest text-[#6f6f7e] mb-1'>
-                History package
+          <p className='text-xs text-white/45 text-center'>Scan with the mobile app</p>
+          {secondsUntilReset !== null && (
+            <div className='w-full rounded-lg border border-gray-800 bg-white/10 px-3 py-2 text-center'>
+              <p className='text-[11px] uppercase tracking-widest text-white/35'>QR resets in</p>
+              <p className='mt-1 font-mono text-lg text-white tabular-nums'>
+                {formatCountdown(secondsUntilReset)}
               </p>
-              <p className='text-sm text-white'>
-                {transferStatus === 'compiling' && 'Compiling local chats…'}
-                {transferStatus === 'uploading' && 'Encrypting and uploading chunks…'}
-                {transferStatus === 'ready' && 'Encrypted history is ready on the phone.'}
-                {transferStatus === 'error' && 'History transfer failed.'}
+            </div>
+          )}
+          {transferStatus !== 'idle' && (
+            <div className='w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3'>
+              <p className='text-sm text-white/90'>
+                {transferStatus === 'compiling' && 'Preparing history'}
+                {transferStatus === 'uploading' && 'Sending encrypted history'}
+                {transferStatus === 'ready' && 'Ready on phone'}
+                {transferStatus === 'error' && 'Transfer failed'}
               </p>
               {historySummary && (
-                <p className='mt-1 text-[10px] text-[#6f6f7e]'>
+                <p className='mt-1 text-[11px] text-white/35'>
                   {historySummary.messages} messages · {historySummary.chats} chats ·{' '}
                   {historySummary.groups} groups · {historySummary.chunks} chunks
                 </p>
               )}
             </div>
           )}
-          <p className='text-[10px] font-mono text-[#4a4a5a] break-all text-center'>
+          <p className='hidden text-[10px] font-mono text-[#4a4a5a] break-all text-center'>
             server: {serverUrl}
           </p>
         </div>
       ) : (
         <div className='flex flex-col gap-3'>
-          <div className='rounded-2xl border border-white/10 bg-black/70 p-4 text-xs text-[#6f6f7e]'>
-            A full history package will be compiled from this device after the phone scans and
-            returns its public key.
+          <div className='flex min-h-64 items-center justify-center rounded-[32px] border border-dashed border-white/15 bg-white/[0.03] p-6'>
+            <Loader2 className='h-8 w-8 animate-spin text-white/35' />
           </div>
-          <button
-            onClick={createSetupQr}
-            disabled={busy}
-            className='btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2'
-          >
-            {busy && <Loader2 className='h-4 w-4 animate-spin' />}
-            {busy ? 'Creating QR…' : 'Create History Sync QR'}
-          </button>
+          <p className='text-center text-xs text-white/40'>
+            {busy ? 'Creating QR...' : 'Preparing QR...'}
+          </p>
         </div>
       )}
 
       {ephemeral && (
-        <div className='rounded-2xl border border-white/10 bg-black/70 p-4'>
+        <div className='hidden rounded-2xl border border-white/10 bg-black/70 p-4'>
           <p className='text-[10px] font-semibold uppercase tracking-widest text-[#a855f7] mb-3'>
             ■ MAIN DEVICE TRACE
           </p>
@@ -413,9 +449,19 @@ export default function QRGenerator({ onDeviceLinked = null }) {
 
       {error && (
         <div className='rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200'>
-          <p className='font-semibold text-red-300'>QR creation failed</p>
+          <p className='font-semibold text-red-300'>QR failed</p>
           <p className='mt-1 break-words'>{error}</p>
         </div>
+      )}
+      {error && !setupQr && !dhDebug && (
+        <button
+          onClick={createSetupQr}
+          disabled={busy}
+          className='btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2'
+        >
+          {busy && <Loader2 className='h-4 w-4 animate-spin' />}
+          Try again
+        </button>
       )}
       {(setupQr || dhDebug) && (
         <button
@@ -423,7 +469,7 @@ export default function QRGenerator({ onDeviceLinked = null }) {
           className='flex items-center justify-center gap-2 text-sm text-[#a855f7] hover:text-[#c084fc] transition-colors'
         >
           <RefreshCw className='h-4 w-4' />
-          Start over
+          Reset
         </button>
       )}
     </div>

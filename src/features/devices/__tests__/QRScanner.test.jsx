@@ -97,6 +97,11 @@ Object.defineProperty(HTMLVideoElement.prototype, 'readyState', {
 import QRScanner from '../QRScanner'
 
 const flush = () => new Promise((r) => setTimeout(r, 0))
+const flushScanner = async () => {
+  await flush()
+  await flush()
+  await flush()
+}
 const fakeIK = {
   priv: new Uint8Array(32).fill(1),
   pub: new Uint8Array(32).fill(2),
@@ -164,42 +169,39 @@ describe('QRScanner — debug panel', () => {
   })
 })
 
-describe('QRScanner — start button states', () => {
-  it('button shows "Loading keys…" and is disabled while IK is pending', async () => {
+describe('QRScanner — automatic camera start', () => {
+  it('waits for IK before starting the camera', async () => {
     cryptoMocks.getOrCreateDeviceIK.mockReturnValue(new Promise(() => {}))
 
     await act(async () => {
       root.render(<QRScanner />)
-      await flush()
+      await flushScanner()
     })
 
-    const btn = container.querySelector('button')
-    expect(btn.textContent).toContain('Loading keys')
-    expect(btn.disabled).toBe(true)
+    expect(container.textContent).not.toContain('Start Camera')
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled()
   })
 
-  it('button shows "Start Camera" and is enabled after IK loads', async () => {
+  it('starts the camera automatically after IK loads', async () => {
     await act(async () => {
       root.render(<QRScanner />)
-      await flush()
+      await flushScanner()
     })
 
-    const btn = container.querySelector('button')
-    expect(btn.textContent).toContain('Start Camera')
-    expect(btn.disabled).toBe(false)
+    expect(container.textContent).not.toContain('Start Camera')
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled()
   })
 
-  it('button is not disabled and shows "Start Camera" in onScanRaw mode (no IK needed)', async () => {
+  it('starts automatically in onScanRaw mode without waiting for IK', async () => {
     cryptoMocks.getOrCreateDeviceIK.mockReturnValue(new Promise(() => {}))
 
     await act(async () => {
       root.render(<QRScanner onScanRaw={vi.fn()} />)
-      await flush()
+      await flushScanner()
     })
 
-    const btn = container.querySelector('button')
-    expect(btn.textContent).toContain('Start Camera')
-    expect(btn.disabled).toBe(false)
+    expect(container.textContent).not.toContain('Start Camera')
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled()
   })
 })
 
@@ -209,12 +211,7 @@ describe('QRScanner — camera error', () => {
 
     await act(async () => {
       root.render(<QRScanner />)
-      await flush()
-    })
-
-    await act(async () => {
-      container.querySelector('button').click()
-      await flush()
+      await flushScanner()
     })
 
     expect(container.textContent).toContain('Camera permission denied')
@@ -226,12 +223,7 @@ describe('QRScanner — camera error', () => {
 
     await act(async () => {
       root.render(<QRScanner />)
-      await flush()
-    })
-
-    await act(async () => {
-      container.querySelector('button').click()
-      await flush()
+      await flushScanner()
     })
 
     const panel = container.querySelector('.font-mono')
@@ -250,12 +242,7 @@ describe('QRScanner — camera error', () => {
 
     await act(async () => {
       root.render(<QRScanner />)
-      await flush()
-    })
-
-    await act(async () => {
-      container.querySelector('button').click()
-      await flush()
+      await flushScanner()
     })
 
     expect(container.textContent).toContain('No camera found')
@@ -268,7 +255,7 @@ describe('QRScanner — onScanRaw mode', () => {
 
     await act(async () => {
       root.render(<QRScanner onScanRaw={onScanRaw} />)
-      await flush()
+      await flushScanner()
     })
 
     // Trigger scan by directly calling the component's internal handleScan
@@ -276,8 +263,8 @@ describe('QRScanner — onScanRaw mode', () => {
     // the debug panel — the "onScanRaw mode" log only appears in that path.
     // Since we can't directly trigger handleScan from outside, we verify
     // the component renders the camera view (not a result view).
-    const btn = container.querySelector('button')
-    expect(btn.textContent).toContain('Start Camera')
+    expect(container.textContent).not.toContain('Start Camera')
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled()
     // No result view text should be present
     expect(container.textContent).not.toContain('Message Decrypted')
     expect(container.textContent).not.toContain('Message Received')
@@ -320,12 +307,12 @@ describe('QRScanner — result views', () => {
     // cleanly and the initial camera view is shown (not a result view).
     await act(async () => {
       root.render(<QRScanner />)
-      await flush()
+      await flushScanner()
     })
 
-    // Camera view: has the debug panel + Start Camera button
+    // Camera view: has the debug panel and auto-starts instead of showing a start button.
     expect(container.querySelector('.font-mono')).not.toBeNull()
-    expect(container.querySelector('button')).not.toBeNull()
+    expect(container.textContent).not.toContain('Start Camera')
   })
 })
 
@@ -335,7 +322,7 @@ describe('QRScanner — BarcodeDetector path', () => {
 
     await act(async () => {
       root.render(<QRScanner />)
-      await flush()
+      await flushScanner()
     })
 
     const panel = container.querySelector('.font-mono')
@@ -359,12 +346,7 @@ describe('QRScanner — BarcodeDetector path', () => {
 
     await act(async () => {
       root.render(<QRScanner />)
-      await flush()
-    })
-
-    await act(async () => {
-      container.querySelector('button').click()
-      await flush()
+      await flushScanner()
     })
 
     const panel = container.querySelector('.font-mono')
@@ -376,12 +358,7 @@ describe('QRScanner — BarcodeDetector path', () => {
 
     await act(async () => {
       root.render(<QRScanner />)
-      await flush()
-    })
-
-    await act(async () => {
-      container.querySelector('button').click()
-      await flush()
+      await flushScanner()
     })
 
     const panel = container.querySelector('.font-mono')
@@ -395,12 +372,7 @@ describe('QRScanner — stop and reset', () => {
 
     await act(async () => {
       root.render(<QRScanner />)
-      await flush()
-    })
-
-    await act(async () => {
-      container.querySelector('button').click()
-      await flush()
+      await flushScanner()
     })
 
     const stopBtn = Array.from(container.querySelectorAll('button')).find((b) =>

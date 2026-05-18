@@ -237,8 +237,9 @@ function ScannerCryptoTrace({ debug, failed = false }) {
   )
 }
 
-export default function MobileSyncView({ onBack, onSynced }) {
+export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
   const [ik, setIk] = useState(null)
+  const [ikLoading, setIkLoading] = useState(true)
   const [phase, setPhase] = useState('scan') // 'scan' | 'decrypting' | 'message' | 'synced' | 'error'
   const [message, setMessage] = useState(null)
   const [synced, setSynced] = useState(null)
@@ -262,7 +263,11 @@ export default function MobileSyncView({ onBack, onSynced }) {
   useEffect(() => {
     getOrCreateDeviceIK()
       .then(setIk)
-      .catch(() => {})
+      .catch((e) => {
+        setError(e.message || 'Failed to load this device identity key.')
+        setPhase('error')
+      })
+      .finally(() => setIkLoading(false))
   }, [])
 
   const waitForHistoryChunks = async ({ serverUrl, sessionId, targetAccessToken }) => {
@@ -535,184 +540,223 @@ export default function MobileSyncView({ onBack, onSynced }) {
     setPairingCodeInput('')
   }
 
+  const content = (
+    <div
+      className={
+        embedded ? 'flex w-full flex-col' : 'relative z-10 flex min-h-screen flex-col px-5 py-6'
+      }
+    >
+      {!embedded && (
+        <button
+          onClick={onBack}
+          className='flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] text-white/60 hover:text-white mb-6 transition-colors self-start'
+          aria-label='Back'
+        >
+          <ArrowLeft className='h-4 w-4' />
+        </button>
+      )}
+
+      <div
+        className={
+          embedded
+            ? 'flex flex-col items-center justify-start gap-5'
+            : 'flex flex-1 flex-col items-center justify-start gap-5 py-2 sm:justify-center'
+        }
+      >
+        {/* Scanning */}
+        {phase === 'scan' && (
+          <>
+            <div className='text-center'>
+              <h2
+                className={
+                  embedded
+                    ? 'text-lg font-medium text-white'
+                    : 'text-3xl font-semibold tracking-tight'
+                }
+              >
+                Scan
+              </h2>
+              {embedded && (
+                <p className='mt-1 text-sm text-gray-400'>Scan the QR from your primary device.</p>
+              )}
+            </div>
+            {ik && (
+              <div className='hidden w-full max-w-sm rounded-2xl border border-white/10 bg-black/70 p-4'>
+                <p className='text-[10px] font-semibold uppercase tracking-widest text-[#a855f7] mb-3'>
+                  ■ SCANNING DEVICE IK
+                </p>
+                <Section icon={Key} title='Own private key' color='#a855f7'>
+                  <Row label='IK priv (hex)' value={hexBytes(ik.priv, 32)} />
+                </Section>
+                <Section icon={Key} title='Own public key' color='#4ade80'>
+                  <Row label='paste this into desktop generator' value={hexBytes(ik.pub, 32)} />
+                </Section>
+              </div>
+            )}
+            {ikLoading ? (
+              <div className='flex min-h-80 w-full max-w-sm flex-col items-center justify-center gap-4 rounded-xl border border-gray-800 bg-black/20'>
+                <Loader2 className='h-8 w-8 animate-spin text-[#a855f7]' />
+                <p className='text-sm text-white/45'>Preparing scanner...</p>
+              </div>
+            ) : (
+              <QRScanner onScanRaw={handleRawScan} />
+            )}
+          </>
+        )}
+
+        {/* Decrypting */}
+        {phase === 'decrypting' && (
+          <div className='flex flex-col items-center gap-4'>
+            <Loader2 className='h-10 w-10 text-[#a855f7] animate-spin' />
+            <p className='text-sm text-[#b9b9c4]'>Decrypting…</p>
+          </div>
+        )}
+
+        {/* Pairing code */}
+        {phase === 'code' && (
+          <div className='w-full max-w-sm rounded-xl border border-gray-800 bg-black/20 p-6'>
+            <div className='text-center'>
+              <div className='mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg border border-emerald-400/25 bg-emerald-400/10'>
+                <ShieldCheck className='h-6 w-6 text-emerald-300' />
+              </div>
+              <h2 className='text-2xl font-semibold tracking-tight'>Code</h2>
+            </div>
+
+            <form onSubmit={submitPairingCode} className='mt-6 flex flex-col gap-4'>
+              <input
+                value={pairingCodeInput}
+                onChange={(event) =>
+                  setPairingCodeInput(event.target.value.replace(/\D/g, '').slice(0, 8))
+                }
+                inputMode='numeric'
+                autoComplete='one-time-code'
+                pattern='[0-9]{8}'
+                maxLength={8}
+                autoFocus
+                className='w-full rounded-lg border border-gray-700 bg-white/10 px-4 py-4 text-center font-mono text-3xl tracking-[0.18em] text-white outline-none transition-colors placeholder:text-white/15 focus:border-emerald-300/60'
+                placeholder='00000000'
+              />
+              {error && <p className='text-center text-xs text-red-300'>{error}</p>}
+              <button
+                type='submit'
+                disabled={!isValidPairingCode(pairingCodeInput)}
+                className='btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed'
+              >
+                Continue
+              </button>
+              <button
+                type='button'
+                onClick={reset}
+                className='text-sm text-[#a855f7] hover:text-[#c084fc] transition-colors'
+              >
+                Scan again
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* Decrypted message */}
+        {phase === 'message' && (
+          <>
+            <div className='rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-4'>
+              <CheckCircle2 className='h-10 w-10 text-emerald-300' />
+            </div>
+            <div className='text-center'>
+              <h3 className='text-xl font-semibold mb-1'>Decrypted</h3>
+              <p className='text-xs text-white/35 flex items-center justify-center gap-1'>
+                <ShieldCheck className='h-3 w-3 text-[#a855f7]' />
+                Verified
+              </p>
+            </div>
+            <div className='w-full max-w-xs rounded-lg border border-gray-800 bg-white/10 px-6 py-5 text-center'>
+              <p className='text-2xl font-mono text-white break-all leading-relaxed'>{message}</p>
+            </div>
+            <div className='hidden'>
+              <ScannerCryptoTrace debug={debug} />
+            </div>
+            <button onClick={reset} className='btn-primary flex items-center gap-2'>
+              <RotateCcw className='h-4 w-4' />
+              Scan again
+            </button>
+          </>
+        )}
+
+        {/* Device synced */}
+        {phase === 'synced' && (
+          <>
+            <div className='rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-4'>
+              <CheckCircle2 className='h-10 w-10 text-emerald-300' />
+            </div>
+            <div className='text-center'>
+              <h2 className='text-2xl font-semibold mb-1'>Synced</h2>
+              <p className='text-xs text-white/35 flex items-center justify-center gap-1'>
+                <ShieldCheck className='h-3 w-3 text-[#a855f7]' />
+                Ready
+              </p>
+            </div>
+            {synced?.username && (
+              <div className='rounded-lg border border-gray-800 bg-white/10 px-6 py-4 text-center'>
+                <p className='text-xs text-white/35 mb-1'>Signed in</p>
+                <p className='text-lg font-semibold text-white'>{synced.username}</p>
+              </div>
+            )}
+            {synced?.history && (
+              <div className='rounded-lg border border-gray-800 bg-white/10 px-6 py-4 text-center'>
+                <p className='text-xs text-white/35 mb-1'>Imported</p>
+                <p className='text-sm text-white'>
+                  {synced.history.importedMessages} messages · {synced.history.chats} chats ·{' '}
+                  {synced.history.groups} groups
+                </p>
+              </div>
+            )}
+            <div className='hidden'>
+              <ScannerCryptoTrace debug={debug} />
+            </div>
+            <button
+              onClick={() => (onSynced ? onSynced(synced) : onBack())}
+              className='btn-primary'
+            >
+              Continue
+            </button>
+          </>
+        )}
+
+        {/* Error */}
+        {phase === 'error' && (
+          <>
+            <div className='rounded-lg border border-red-400/20 bg-red-400/10 p-4'>
+              <ShieldX className='h-10 w-10 text-red-400' />
+            </div>
+            <div className='text-center max-w-xs'>
+              <h3 className='text-lg font-semibold mb-1'>Failed</h3>
+              <p className='text-sm text-white/45'>{error}</p>
+            </div>
+            <div className='hidden'>
+              <ScannerCryptoTrace debug={debug} failed />
+            </div>
+            <button onClick={reset} className='btn-primary flex items-center gap-2'>
+              <RotateCcw className='h-4 w-4' />
+              Try again
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+
+  if (embedded) return content
+
   return (
     <div
       className='relative min-h-screen w-full text-white overflow-y-auto overflow-x-hidden'
       style={{ background: '#000' }}
     >
-      <div className='aurora-bg' />
-      <div className='absolute inset-0 opacity-40'>
+      <div className='absolute inset-0 bg-[radial-gradient(circle_at_50%_-10%,rgba(255,255,255,0.12),transparent_34%),linear-gradient(180deg,#09090a_0%,#000_62%)]' />
+      <div className='absolute inset-0 opacity-20'>
         <ParticlesBackground />
       </div>
       <div className='noise-overlay' />
-
-      <div className='relative z-10 flex min-h-screen flex-col px-6 py-8'>
-        <button
-          onClick={onBack}
-          className='flex items-center gap-2 text-sm text-[#a0a0a0] hover:text-white mb-8 transition-colors self-start'
-        >
-          <ArrowLeft className='h-4 w-4' />
-          Back
-        </button>
-
-        <div className='flex flex-1 flex-col items-center justify-start gap-6 py-4 sm:justify-center'>
-          {/* Scanning */}
-          {phase === 'scan' && (
-            <>
-              <div className='text-center'>
-                <h2 className='text-2xl font-semibold tracking-tight mb-2'>Scan QR Code</h2>
-                <p className='text-sm text-[#b9b9c4] max-w-xs'>
-                  Point your camera at the QR code shown on the desktop.
-                </p>
-              </div>
-              {ik && (
-                <div className='w-full max-w-sm rounded-2xl border border-white/10 bg-black/70 p-4'>
-                  <p className='text-[10px] font-semibold uppercase tracking-widest text-[#a855f7] mb-3'>
-                    ■ SCANNING DEVICE IK
-                  </p>
-                  <Section icon={Key} title='Own private key' color='#a855f7'>
-                    <Row label='IK priv (hex)' value={hexBytes(ik.priv, 32)} />
-                  </Section>
-                  <Section icon={Key} title='Own public key' color='#4ade80'>
-                    <Row label='paste this into desktop generator' value={hexBytes(ik.pub, 32)} />
-                  </Section>
-                </div>
-              )}
-              <QRScanner onScanRaw={handleRawScan} />
-            </>
-          )}
-
-          {/* Decrypting */}
-          {phase === 'decrypting' && (
-            <div className='flex flex-col items-center gap-4'>
-              <Loader2 className='h-10 w-10 text-[#a855f7] animate-spin' />
-              <p className='text-sm text-[#b9b9c4]'>Decrypting…</p>
-            </div>
-          )}
-
-          {/* Pairing code */}
-          {phase === 'code' && (
-            <div className='w-full max-w-sm rounded-3xl border border-white/10 bg-black/85 p-6 shadow-2xl shadow-purple-950/30'>
-              <div className='text-center'>
-                <div className='mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-400/30 bg-emerald-400/10'>
-                  <ShieldCheck className='h-6 w-6 text-emerald-300' />
-                </div>
-                <h2 className='text-2xl font-semibold tracking-tight'>Enter Pairing Code</h2>
-                <p className='mt-2 text-sm text-[#b9b9c4]'>
-                  Type the 8 digit number shown on the main device.
-                </p>
-              </div>
-
-              <form onSubmit={submitPairingCode} className='mt-6 flex flex-col gap-4'>
-                <input
-                  value={pairingCodeInput}
-                  onChange={(event) =>
-                    setPairingCodeInput(event.target.value.replace(/\D/g, '').slice(0, 8))
-                  }
-                  inputMode='numeric'
-                  autoComplete='one-time-code'
-                  pattern='[0-9]{8}'
-                  maxLength={8}
-                  autoFocus
-                  className='w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-center font-mono text-3xl tracking-[0.18em] text-white outline-none transition-colors placeholder:text-[#4a4a5a] focus:border-emerald-300/60'
-                  placeholder='00000000'
-                />
-                {error && <p className='text-center text-xs text-red-300'>{error}</p>}
-                <button
-                  type='submit'
-                  disabled={!isValidPairingCode(pairingCodeInput)}
-                  className='btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed'
-                >
-                  Continue Sync
-                </button>
-                <button
-                  type='button'
-                  onClick={reset}
-                  className='text-sm text-[#a855f7] hover:text-[#c084fc] transition-colors'
-                >
-                  Scan another QR
-                </button>
-              </form>
-            </div>
-          )}
-
-          {/* Decrypted message */}
-          {phase === 'message' && (
-            <>
-              <CheckCircle2 className='h-16 w-16 text-green-400' />
-              <div className='text-center'>
-                <h3 className='text-xl font-semibold mb-1'>Message Decrypted</h3>
-                <p className='text-xs text-[#6f6f7e] flex items-center justify-center gap-1'>
-                  <ShieldCheck className='h-3 w-3 text-[#a855f7]' />
-                  X25519 DH · AES-256-GCM verified
-                </p>
-              </div>
-              <div className='w-full max-w-xs rounded-2xl border border-white/10 bg-white/5 px-6 py-5 text-center'>
-                <p className='text-2xl font-mono text-white break-all leading-relaxed'>{message}</p>
-              </div>
-              <ScannerCryptoTrace debug={debug} />
-              <button onClick={reset} className='btn-primary flex items-center gap-2'>
-                <RotateCcw className='h-4 w-4' />
-                Scan Again
-              </button>
-            </>
-          )}
-
-          {/* Device synced */}
-          {phase === 'synced' && (
-            <>
-              <CheckCircle2 className='h-16 w-16 text-green-400' />
-              <div className='text-center'>
-                <h2 className='text-2xl font-semibold mb-1'>Device Synced!</h2>
-                <p className='text-xs text-[#6f6f7e] flex items-center justify-center gap-1'>
-                  <ShieldCheck className='h-3 w-3 text-[#a855f7]' />
-                  AES-256-GCM decrypted
-                </p>
-              </div>
-              {synced?.username && (
-                <div className='glass cyber-border rounded-2xl px-6 py-4 text-center'>
-                  <p className='text-xs text-[#a0a0a0] mb-1'>Logged in as</p>
-                  <p className='text-lg font-semibold text-white'>{synced.username}</p>
-                </div>
-              )}
-              {synced?.history && (
-                <div className='glass cyber-border rounded-2xl px-6 py-4 text-center'>
-                  <p className='text-xs text-[#a0a0a0] mb-1'>History imported</p>
-                  <p className='text-sm text-white'>
-                    {synced.history.importedMessages} messages · {synced.history.chats} chats ·{' '}
-                    {synced.history.groups} groups
-                  </p>
-                </div>
-              )}
-              <ScannerCryptoTrace debug={debug} />
-              <button
-                onClick={() => (onSynced ? onSynced(synced) : onBack())}
-                className='btn-primary'
-              >
-                Continue
-              </button>
-            </>
-          )}
-
-          {/* Error */}
-          {phase === 'error' && (
-            <>
-              <div className='rounded-2xl border border-red-500/20 bg-red-500/10 p-4'>
-                <ShieldX className='h-10 w-10 text-red-400' />
-              </div>
-              <div className='text-center max-w-xs'>
-                <h3 className='text-lg font-semibold mb-1'>Failed</h3>
-                <p className='text-sm text-[#b9b9c4]'>{error}</p>
-              </div>
-              <ScannerCryptoTrace debug={debug} failed />
-              <button onClick={reset} className='btn-primary flex items-center gap-2'>
-                <RotateCcw className='h-4 w-4' />
-                Try Again
-              </button>
-            </>
-          )}
-        </div>
-      </div>
+      {content}
     </div>
   )
 }

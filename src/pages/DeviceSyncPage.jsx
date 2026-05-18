@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { UserPlus, Monitor, Smartphone } from 'lucide-react'
+import { UserPlus, Monitor, QrCode } from 'lucide-react'
 import { useTauri } from '@/hooks/useTauri'
 import ParticlesBackground from '@/components/animations/ParticlesBackground'
 import DesktopSyncView from '@/features/devices/DesktopSyncView'
@@ -30,65 +30,52 @@ export default function DeviceSyncPage() {
       className='relative min-h-screen w-full text-white overflow-y-auto overflow-x-hidden'
       style={{ background: '#000' }}
     >
-      <div className='aurora-bg' />
-      <div className='grid-overlay' />
-      <div className='absolute inset-0 opacity-60'>
+      <div className='absolute inset-0 bg-[radial-gradient(circle_at_50%_-10%,rgba(255,255,255,0.12),transparent_35%),linear-gradient(180deg,#09090a_0%,#000_60%)]' />
+      <div className='absolute inset-0 opacity-20'>
         <ParticlesBackground />
       </div>
       <div className='noise-overlay' />
 
-      <div className='relative z-10 flex min-h-screen flex-col items-center justify-start px-6 py-10 sm:justify-center sm:py-6'>
-        {/* Logo + headline */}
-        <div className='mb-14 flex flex-col items-center gap-4 text-center'>
-          <img src='/echo-logo.svg' alt='ECHO' className='h-16 w-16' />
-          <h1 className='text-4xl sm:text-5xl font-semibold tracking-tight leading-tight'>
-            Welcome to <span className='echo-gradient-text'>ECHO</span>
-          </h1>
-          <p className='text-[#b9b9c4] max-w-xs text-sm leading-relaxed'>
-            Zero-knowledge encrypted messaging. Choose how you would like to get started.
-          </p>
+      <div className='relative z-10 flex min-h-screen flex-col items-center justify-center px-5 py-8'>
+        <div className='mb-9 flex flex-col items-center gap-4 text-center'>
+          <img src='/echo-logo.svg' alt='ECHO' className='h-14 w-14' />
+          <h1 className='text-4xl sm:text-5xl font-semibold tracking-tight leading-tight'>ECHO</h1>
         </div>
 
-        {/* Action cards */}
-        <div className='flex flex-col sm:flex-row gap-4 w-full max-w-sm'>
-          <button
-            onClick={() => navigate('/register')}
-            className='flex-1 group glass cyber-border rounded-2xl flex flex-col items-center gap-3 px-6 py-8 hover:border-[#a855f7]/40 transition-all'
-          >
-            <div className='rounded-xl bg-gradient-to-br from-[#7c3aed] to-[#a855f7] p-3'>
-              <UserPlus className='h-6 w-6 text-white' />
-            </div>
-            <div className='text-center'>
-              <p className='font-semibold'>Create Account</p>
-              <p className='text-xs text-[#a0a0a0] mt-0.5'>New to ECHO</p>
-            </div>
-          </button>
-
+        <div className='w-full max-w-sm rounded-[34px] border border-white/10 bg-white/[0.045] p-3 shadow-[0_40px_140px_-80px_rgba(255,255,255,0.9)] backdrop-blur-2xl'>
           <button
             onClick={() => setView('sync')}
-            className='flex-1 group glass cyber-border rounded-2xl flex flex-col items-center gap-3 px-6 py-8 hover:border-[#a855f7]/40 transition-all'
+            className='group flex w-full items-center gap-4 rounded-[26px] bg-white px-5 py-5 text-left text-black transition-transform hover:scale-[1.01] active:scale-[0.99]'
           >
-            <div className='rounded-xl border border-white/10 bg-white/5 p-3 group-hover:bg-[#a855f7]/10 transition-colors'>
-              {isMobile ? (
-                <Smartphone className='h-6 w-6 text-[#a855f7]' />
-              ) : (
-                <Monitor className='h-6 w-6 text-[#a855f7]' />
-              )}
+            <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-black text-white'>
+              {isMobile ? <QrCode className='h-6 w-6' /> : <Monitor className='h-6 w-6' />}
             </div>
-            <div className='text-center'>
-              <p className='font-semibold'>Sync Device</p>
-              <p className='text-xs text-[#a0a0a0] mt-0.5'>
-                {isMobile ? 'Scan from desktop' : 'Already have ECHO'}
+            <div className='min-w-0 flex-1'>
+              <p className='font-semibold'>Sync device</p>
+              <p className='mt-0.5 text-xs text-black/45'>
+                {isMobile ? 'Open scanner' : 'Show QR'}
               </p>
             </div>
           </button>
+
+          <button
+            onClick={() => navigate('/register')}
+            className='mt-2 flex w-full items-center gap-4 rounded-[26px] px-5 py-4 text-left text-white/75 transition-colors hover:bg-white/[0.04] hover:text-white'
+          >
+            <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03]'>
+              <UserPlus className='h-5 w-5' />
+            </div>
+            <div className='min-w-0 flex-1'>
+              <p className='font-medium'>Create account</p>
+              <p className='mt-0.5 text-xs text-white/35'>New setup</p>
+            </div>
+          </button>
         </div>
 
-        <p className='mt-10 text-xs text-[#4a4a5a]'>
-          Already have an account?{' '}
+        <p className='mt-8 text-xs text-white/35'>
           <button
             onClick={() => navigate('/login')}
-            className='text-[#a855f7] hover:text-[#c084fc] transition-colors'
+            className='text-white/55 hover:text-white transition-colors'
           >
             Sign in
           </button>

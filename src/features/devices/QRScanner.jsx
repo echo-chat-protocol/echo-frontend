@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Html5Qrcode } from 'html5-qrcode'
 import {
-  Camera,
   CheckCircle2,
   RotateCcw,
   AlertCircle,
@@ -20,6 +19,7 @@ export default function QRScanner({ onScanRaw } = {}) {
   const h5Ref = useRef(null)
   const scanCountRef = useRef(0)
   const logEndRef = useRef(null)
+  const autoStartAttemptedRef = useRef(false)
 
   const [ik, setIk] = useState(null)
   const [started, setStarted] = useState(false)
@@ -178,7 +178,7 @@ export default function QRScanner({ onScanRaw } = {}) {
 
   // ── Start scanner ─────────────────────────────────────────────────────────
 
-  const startScanner = async () => {
+  const startScanner = useCallback(async () => {
     setError(null)
     setResult(null)
     scanCountRef.current = 0
@@ -286,7 +286,15 @@ export default function QRScanner({ onScanRaw } = {}) {
         streamRef.current?.getTracks().forEach((t) => t.stop())
       }
     }
-  }
+  }, [handleScan, ik, log, onScanRaw, tick])
+
+  useEffect(() => {
+    if (started || result || error || autoStartAttemptedRef.current) return
+    if (!onScanRaw && !ik) return
+
+    autoStartAttemptedRef.current = true
+    startScanner()
+  }, [error, ik, onScanRaw, result, startScanner, started])
 
   const stopScanner = () => {
     log('Scanner stopped by user')
@@ -299,6 +307,7 @@ export default function QRScanner({ onScanRaw } = {}) {
   const reset = () => {
     setResult(null)
     setError(null)
+    autoStartAttemptedRef.current = false
   }
 
   const resetAll = () => {
@@ -310,7 +319,7 @@ export default function QRScanner({ onScanRaw } = {}) {
   // ── Debug panel (always rendered) ─────────────────────────────────────────
 
   const DebugPanel = () => (
-    <div className='w-full rounded-xl border border-white/10 bg-black/80 overflow-hidden'>
+    <div className='sr-only w-full rounded-xl border border-white/10 bg-black/80 overflow-hidden'>
       <div className='flex items-center justify-between px-3 py-1.5 border-b border-white/10 bg-white/5'>
         <span className='text-[9px] font-semibold uppercase tracking-widest text-[#a855f7]'>
           ■ SCANNER DEBUG LOG
@@ -395,19 +404,17 @@ export default function QRScanner({ onScanRaw } = {}) {
   if (result?.source === 'failed')
     return (
       <div className='flex flex-col items-center gap-4 py-4 w-full max-w-sm mx-auto'>
-        <div className='rounded-2xl border border-red-500/20 bg-red-500/10 p-4'>
+        <div className='rounded-[24px] border border-red-400/20 bg-red-400/10 p-4'>
           <ShieldX className='h-10 w-10 text-red-400' />
         </div>
         <div className='text-center'>
-          <h3 className='text-lg font-semibold mb-1'>Decryption Failed</h3>
-          <p className='text-sm text-[#b9b9c4]'>
-            IK mismatch — QR was encrypted with a different identity key.
-          </p>
+          <h3 className='text-lg font-semibold mb-1'>Scan failed</h3>
+          <p className='text-sm text-white/45'>Try a fresh QR</p>
         </div>
         <CryptoDetail debug={result.debug} failed />
         <DebugPanel />
         <button onClick={reset} className='btn-primary flex items-center gap-2'>
-          <RotateCcw className='h-4 w-4' /> Try Again
+          <RotateCcw className='h-4 w-4' /> Try again
         </button>
       </div>
     )
@@ -417,25 +424,27 @@ export default function QRScanner({ onScanRaw } = {}) {
   if (result?.text !== null && result?.text !== undefined)
     return (
       <div className='flex flex-col items-center gap-4 py-4 w-full max-w-sm mx-auto'>
-        <CheckCircle2 className='h-14 w-14 text-green-400' />
+        <div className='rounded-[24px] border border-emerald-300/20 bg-emerald-300/10 p-4'>
+          <CheckCircle2 className='h-10 w-10 text-emerald-300' />
+        </div>
         <div className='text-center'>
           <h3 className='text-xl font-semibold mb-1'>
-            {result.source === 'encrypted' ? 'Message Decrypted ✓' : 'QR Received'}
+            {result.source === 'encrypted' ? 'Decrypted' : 'QR received'}
           </h3>
           {result.source === 'encrypted' && (
             <p className='text-xs text-[#6f6f7e] flex items-center justify-center gap-1'>
               <ShieldCheck className='h-3 w-3 text-[#a855f7]' />
-              X25519 DH · AES-256-GCM verified
+              Verified
             </p>
           )}
         </div>
-        <div className='w-full rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-center'>
+        <div className='w-full rounded-[24px] border border-white/10 bg-white/[0.04] px-5 py-4 text-center'>
           <p className='text-2xl font-mono text-white break-all leading-relaxed'>{result.text}</p>
         </div>
         {result.source === 'encrypted' && <CryptoDetail debug={result.debug} failed={false} />}
         <DebugPanel />
         <button onClick={reset} className='btn-primary flex items-center gap-2'>
-          <RotateCcw className='h-4 w-4' /> Scan Again
+          <RotateCcw className='h-4 w-4' /> Scan again
         </button>
       </div>
     )
@@ -444,35 +453,38 @@ export default function QRScanner({ onScanRaw } = {}) {
 
   return (
     <div className='flex flex-col items-center gap-3 w-full max-w-sm mx-auto'>
-      <video
-        ref={videoRef}
-        className='w-full rounded-2xl border border-white/10 bg-black'
-        style={{ display: started && detectorRef.current ? 'block' : 'none', minHeight: 280 }}
-        playsInline
-        muted
-      />
+      <div className='relative w-full overflow-hidden rounded-[32px] border border-white/10 bg-[#070708] shadow-[0_32px_120px_-70px_rgba(255,255,255,0.75)]'>
+        <video
+          ref={videoRef}
+          className='w-full bg-black'
+          style={{ display: started && detectorRef.current ? 'block' : 'none', minHeight: 320 }}
+          playsInline
+          muted
+        />
 
-      <canvas ref={canvasRef} className='hidden' />
+        <canvas ref={canvasRef} className='hidden' />
 
-      <div
-        id='qr-h5-container'
-        className='w-full rounded-2xl border border-white/10 overflow-hidden'
-        style={{
-          minHeight: started && !detectorRef.current ? 280 : 0,
-          display: started && !detectorRef.current ? 'block' : 'none',
-        }}
-      />
+        <div
+          id='qr-h5-container'
+          className='w-full overflow-hidden'
+          style={{
+            minHeight: started && !detectorRef.current ? 320 : 0,
+            display: started && !detectorRef.current ? 'block' : 'none',
+          }}
+        />
 
-      {!started && (
-        <button
-          onClick={startScanner}
-          disabled={!onScanRaw && !ik}
-          className='btn-primary flex items-center gap-2 w-full justify-center disabled:opacity-60'
-        >
-          <Camera className='h-5 w-5' />
-          {!onScanRaw && !ik ? 'Loading keys…' : 'Start Camera'}
-        </button>
-      )}
+        {!started && (
+          <div className='flex min-h-80 flex-col items-center justify-center gap-5 p-8'>
+            <div className='relative h-48 w-48 rounded-[28px] border border-white/12 bg-white/[0.03]'>
+              <span className='absolute left-4 top-4 h-9 w-9 rounded-tl-2xl border-l-2 border-t-2 border-white/70' />
+              <span className='absolute right-4 top-4 h-9 w-9 rounded-tr-2xl border-r-2 border-t-2 border-white/70' />
+              <span className='absolute bottom-4 left-4 h-9 w-9 rounded-bl-2xl border-b-2 border-l-2 border-white/70' />
+              <span className='absolute bottom-4 right-4 h-9 w-9 rounded-br-2xl border-b-2 border-r-2 border-white/70' />
+              <span className='absolute left-7 right-7 top-1/2 h-px bg-emerald-300/80 shadow-[0_0_24px_rgba(110,231,183,0.75)]' />
+            </div>
+          </div>
+        )}
+      </div>
 
       {started && (
         <button
