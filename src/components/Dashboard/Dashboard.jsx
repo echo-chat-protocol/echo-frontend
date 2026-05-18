@@ -52,6 +52,7 @@ import {
 import wasmInit, { diffie_hellman } from '@mascaro101/echo-protocol'
 import { deviceService } from '../../features/devices/deviceService'
 import { getDeviceMetadata } from '../../features/devices/deviceMetadata'
+import { revokeCurrentDeviceForLogout } from '../../features/devices/logoutDevice'
 import GroupList from './DashboardComponents/Groups/GroupList'
 import CreateGroupModal from './Groups/CreateGroupModal'
 import GroupChat from './Chat/GroupChat'
@@ -1149,7 +1150,9 @@ const Dashboard = () => {
     navigate(`/profile/${userId}`, { state: { username, userId } })
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await revokeCurrentDeviceForLogout()
+
     eld.lock()
 
     // Record disconnect time before clearing keys so the next login can detect

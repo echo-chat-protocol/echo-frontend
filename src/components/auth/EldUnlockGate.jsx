@@ -3,6 +3,7 @@ import { Navigate, useNavigate } from 'react-router-dom'
 import { jwtDecode } from 'jwt-decode'
 import PropTypes from 'prop-types'
 import eld from '../../utils/storage/EncryptedLocalDatabase'
+import { revokeCurrentDeviceForLogout } from '../../features/devices/logoutDevice'
 
 const passKeyForUser = (userId) => `eld-pass-${userId}`
 
@@ -97,7 +98,9 @@ const EldUnlockGate = ({ token, children }) => {
     }
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await revokeCurrentDeviceForLogout()
+
     try {
       eld.lock()
     } catch {
