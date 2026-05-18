@@ -22,6 +22,7 @@ import {
   decryptHistoryPackageChunks,
   hexBytes,
   encodeKeyBase64,
+  isValidPairingCode,
 } from './qrCrypto'
 import QRScanner from './QRScanner'
 import { deviceService } from './deviceService'
@@ -243,6 +244,8 @@ export default function MobileSyncView({ onBack, onSynced }) {
   const [synced, setSynced] = useState(null)
   const [debug, setDebug] = useState(null)
   const [error, setError] = useState(null)
+  const [pairingCodeInput, setPairingCodeInput] = useState('')
+  const [pendingPairing, setPendingPairing] = useState(null)
 
   const parsePairingPayload = (raw) => {
     try {
@@ -277,6 +280,100 @@ export default function MobileSyncView({ onBack, onSynced }) {
     }
 
     throw new Error('Timed out waiting for encrypted history from the desktop.')
+  }
+
+  const finishDhPairingSync = async (state, pairingCode) => {
+    if (!isValidPairingCode(pairingCode)) {
+      throw new Error('Enter the 8 digit code shown on the main device.')
+    }
+
+    const {
+      pairingPayload,
+      dh,
+      scannerDeviceMetadata: initialMetadata,
+      deviceId: initialDeviceId,
+    } = state
+    let scannerDeviceMetadata = initialMetadata
+    let deviceId = initialDeviceId
+
+    const chunks = await waitForHistoryChunks({
+      serverUrl: pairingPayload.serverUrl,
+      sessionId: pairingPayload.sessionId,
+      targetAccessToken: pairingPayload.targetAccessToken,
+    })
+    const { historyPackage, key: historyKey } = await decryptHistoryPackageChunks(
+      chunks,
+      dh.dhShared,
+      pairingPayload.sessionId,
+      pairingCode
+    )
+    const unlockSecret = encodeKeyBase64(historyKey)
+    const importedUserId = historyPackage.auth?.userId || historyPackage.user?.userId || null
+    const currentUserId = localStorage.getItem('userId')
+
+    if (importedUserId && (!currentUserId || String(importedUserId) !== String(currentUserId))) {
+      resetDeviceId()
+      scannerDeviceMetadata = getDeviceMetadata()
+      deviceId = scannerDeviceMetadata.deviceId
+    }
+
+    const completeResult = await deviceService.completeSyncTarget({
+      sessionId: pairingPayload.sessionId,
+      targetAccessToken: pairingPayload.targetAccessToken,
+      targetDevice: {
+        ...scannerDeviceMetadata,
+      },
+    })
+    const deviceJwt = completeResult?.auth || null
+    const resolvedDeviceId = completeResult?.session?.targetDevice?.deviceId
+    if (resolvedDeviceId && resolvedDeviceId !== deviceId) {
+      localStorage.setItem('echo-device-id', resolvedDeviceId)
+      scannerDeviceMetadata = getDeviceMetadata()
+      deviceId = resolvedDeviceId
+    }
+
+    const patchedPackage = deviceJwt
+      ? { ...historyPackage, auth: { ...historyPackage.auth, token: deviceJwt } }
+      : historyPackage
+
+    const importResult = await importHistoryPackage(patchedPackage, { unlockSecret })
+
+    try {
+      await generateAndUploadDeviceKeyBundle(deviceId)
+    } catch {
+      // Non-fatal — forwarding will still work via the shared-IK envelope key.
+    }
+
+    setSynced({
+      username: historyPackage.user?.username,
+      history: importResult,
+    })
+    setPendingPairing(null)
+    setPairingCodeInput('')
+    setPhase('synced')
+  }
+
+  const submitPairingCode = async (event) => {
+    event.preventDefault()
+    if (!pendingPairing) return
+    const normalizedCode = pairingCodeInput.replace(/\D/g, '')
+    if (!isValidPairingCode(normalizedCode)) {
+      setError('Enter the 8 digit code shown on the main device.')
+      return
+    }
+
+    setPhase('decrypting')
+    setError(null)
+    try {
+      await finishDhPairingSync(pendingPairing, normalizedCode)
+    } catch (e) {
+      setError(
+        e.message === 'Failed to fetch'
+          ? 'Failed to reach the desktop pairing server. Make sure the QR contains a LAN-reachable server URL, not localhost/127.0.0.1.'
+          : e.message || 'Failed to sync encrypted history from desktop.'
+      )
+      setPhase('error')
+    }
   }
 
   const handleRawScan = async (raw) => {
@@ -348,67 +445,14 @@ export default function MobileSyncView({ onBack, onSynced }) {
           return
         }
 
-        const chunks = await waitForHistoryChunks({
-          serverUrl: pairingPayload.serverUrl,
-          sessionId: pairingPayload.sessionId,
-          targetAccessToken: pairingPayload.targetAccessToken,
+        setPendingPairing({
+          pairingPayload,
+          dh,
+          scannerDeviceMetadata,
+          deviceId,
         })
-        const { historyPackage, key: historyKey } = await decryptHistoryPackageChunks(
-          chunks,
-          dh.dhShared,
-          pairingPayload.sessionId
-        )
-        const unlockSecret = encodeKeyBase64(historyKey)
-        const importedUserId = historyPackage.auth?.userId || historyPackage.user?.userId || null
-        const currentUserId = localStorage.getItem('userId')
-
-        if (
-          importedUserId &&
-          (!currentUserId || String(importedUserId) !== String(currentUserId))
-        ) {
-          resetDeviceId()
-          scannerDeviceMetadata = getDeviceMetadata()
-          deviceId = scannerDeviceMetadata.deviceId
-        }
-
-        // Complete the sync session to get a device-specific JWT and to
-        // register this device against the primary account. If this fails,
-        // the new device will not appear in the primary's device list — so
-        // surface the failure instead of swallowing it.
-        const completeResult = await deviceService.completeSyncTarget({
-          sessionId: pairingPayload.sessionId,
-          targetAccessToken: pairingPayload.targetAccessToken,
-          targetDevice: {
-            ...scannerDeviceMetadata,
-          },
-        })
-        const deviceJwt = completeResult?.auth || null
-        const resolvedDeviceId = completeResult?.session?.targetDevice?.deviceId
-        if (resolvedDeviceId && resolvedDeviceId !== deviceId) {
-          localStorage.setItem('echo-device-id', resolvedDeviceId)
-          scannerDeviceMetadata = getDeviceMetadata()
-          deviceId = resolvedDeviceId
-        }
-
-        // Patch the auth token before import so the device uses its own JWT.
-        const patchedPackage = deviceJwt
-          ? { ...historyPackage, auth: { ...historyPackage.auth, token: deviceJwt } }
-          : historyPackage
-
-        const importResult = await importHistoryPackage(patchedPackage, { unlockSecret })
-
-        // Register the device's own key bundle with the server.
-        try {
-          await generateAndUploadDeviceKeyBundle(deviceId)
-        } catch {
-          // Non-fatal — forwarding will still work via the shared-IK envelope key.
-        }
-
-        setSynced({
-          username: historyPackage.user?.username,
-          history: importResult,
-        })
-        setPhase('synced')
+        setPairingCodeInput('')
+        setPhase('code')
       } catch (e) {
         setError(
           e.message === 'Failed to fetch'
@@ -487,6 +531,8 @@ export default function MobileSyncView({ onBack, onSynced }) {
     setMessage(null)
     setSynced(null)
     setDebug(null)
+    setPendingPairing(null)
+    setPairingCodeInput('')
   }
 
   return (
@@ -541,6 +587,52 @@ export default function MobileSyncView({ onBack, onSynced }) {
             <div className='flex flex-col items-center gap-4'>
               <Loader2 className='h-10 w-10 text-[#a855f7] animate-spin' />
               <p className='text-sm text-[#b9b9c4]'>Decrypting…</p>
+            </div>
+          )}
+
+          {/* Pairing code */}
+          {phase === 'code' && (
+            <div className='w-full max-w-sm rounded-3xl border border-white/10 bg-black/85 p-6 shadow-2xl shadow-purple-950/30'>
+              <div className='text-center'>
+                <div className='mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-400/30 bg-emerald-400/10'>
+                  <ShieldCheck className='h-6 w-6 text-emerald-300' />
+                </div>
+                <h2 className='text-2xl font-semibold tracking-tight'>Enter Pairing Code</h2>
+                <p className='mt-2 text-sm text-[#b9b9c4]'>
+                  Type the 8 digit number shown on the main device.
+                </p>
+              </div>
+
+              <form onSubmit={submitPairingCode} className='mt-6 flex flex-col gap-4'>
+                <input
+                  value={pairingCodeInput}
+                  onChange={(event) =>
+                    setPairingCodeInput(event.target.value.replace(/\D/g, '').slice(0, 8))
+                  }
+                  inputMode='numeric'
+                  autoComplete='one-time-code'
+                  pattern='[0-9]{8}'
+                  maxLength={8}
+                  autoFocus
+                  className='w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-center font-mono text-3xl tracking-[0.18em] text-white outline-none transition-colors placeholder:text-[#4a4a5a] focus:border-emerald-300/60'
+                  placeholder='00000000'
+                />
+                {error && <p className='text-center text-xs text-red-300'>{error}</p>}
+                <button
+                  type='submit'
+                  disabled={!isValidPairingCode(pairingCodeInput)}
+                  className='btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed'
+                >
+                  Continue Sync
+                </button>
+                <button
+                  type='button'
+                  onClick={reset}
+                  className='text-sm text-[#a855f7] hover:text-[#c084fc] transition-colors'
+                >
+                  Scan another QR
+                </button>
+              </form>
             </div>
           )}
 

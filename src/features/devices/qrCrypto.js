@@ -209,15 +209,34 @@ async function sha256Hex(text) {
     .join('')
 }
 
-export async function deriveHistoryPackageKey(dhShared, sessionId) {
+function normalizePairingCode(pairingCode) {
+  return String(pairingCode || '').replace(/\D/g, '')
+}
+
+export function generatePairingCode() {
+  const value = crypto.getRandomValues(new Uint32Array(1))[0] % 100_000_000
+  return value.toString().padStart(8, '0')
+}
+
+export function isValidPairingCode(pairingCode) {
+  return /^\d{8}$/.test(normalizePairingCode(pairingCode))
+}
+
+export async function deriveHistoryPackageKey(dhShared, sessionId, pairingCode = '') {
   await init()
-  const salt = new TextEncoder().encode(`echo-history:${sessionId}`)
+  const normalizedCode = normalizePairingCode(pairingCode)
+  const salt = new TextEncoder().encode(`echo-history:${sessionId}:${normalizedCode}`)
   return hkdf_derive(dhShared, salt, HISTORY_INFO, 32)
 }
 
-export async function encryptHistoryPackageChunks(historyPackage, dhShared, sessionId) {
+export async function encryptHistoryPackageChunks(
+  historyPackage,
+  dhShared,
+  sessionId,
+  pairingCode
+) {
   await init()
-  const key = await deriveHistoryPackageKey(dhShared, sessionId)
+  const key = await deriveHistoryPackageKey(dhShared, sessionId, pairingCode)
   const json = JSON.stringify(historyPackage)
   const pieces = []
 
@@ -241,13 +260,13 @@ export async function encryptHistoryPackageChunks(historyPackage, dhShared, sess
   return { chunks, key }
 }
 
-export async function decryptHistoryPackageChunks(chunks, dhShared, sessionId) {
+export async function decryptHistoryPackageChunks(chunks, dhShared, sessionId, pairingCode) {
   await init()
   if (!Array.isArray(chunks) || chunks.length === 0) {
     throw new Error('History package has no chunks yet.')
   }
 
-  const key = await deriveHistoryPackageKey(dhShared, sessionId)
+  const key = await deriveHistoryPackageKey(dhShared, sessionId, pairingCode)
   const ordered = [...chunks].sort((a, b) => a.index - b.index)
   const expectedTotal = ordered[0]?.totalCount
   if (!Number.isInteger(expectedTotal) || ordered.length !== expectedTotal) {

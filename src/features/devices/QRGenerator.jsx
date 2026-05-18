@@ -6,6 +6,7 @@ import {
   derivePairingDhDebug,
   encodeKeyBase64,
   generatePairingEphemeralDebug,
+  generatePairingCode,
   getOrCreateDeviceIK,
   hexBytes,
   encryptHistoryPackageChunks,
@@ -45,6 +46,7 @@ export default function QRGenerator({ onDeviceLinked = null }) {
   const [ephemeral, setEphemeral] = useState(null)
   const [setupQr, setSetupQr] = useState(null)
   const [scannerPubKey, setScannerPubKey] = useState('')
+  const [pairingCode, setPairingCode] = useState('')
   const [dhDebug, setDhDebug] = useState(null)
   const [historySummary, setHistorySummary] = useState(null)
   const [transferStatus, setTransferStatus] = useState('idle')
@@ -114,6 +116,7 @@ export default function QRGenerator({ onDeviceLinked = null }) {
           'DH(ek_priv, scanner_IK_pub)'
         )
         setScannerPubKey(received)
+        setPairingCode(generatePairingCode())
         setDhDebug({ ...debug, scannerPub })
         clearInterval(timer)
       } catch (e) {
@@ -125,7 +128,8 @@ export default function QRGenerator({ onDeviceLinked = null }) {
   }, [dhDebug, ephemeral?.ekPriv, session?.sessionId, session?.targetAccessToken])
 
   useEffect(() => {
-    if (!dhDebug?.dhShared || !session?.sessionId || !session?.targetAccessToken) return
+    if (!dhDebug?.dhShared || !pairingCode || !session?.sessionId || !session?.targetAccessToken)
+      return
     let cancelled = false
 
     const transferHistory = async () => {
@@ -136,7 +140,8 @@ export default function QRGenerator({ onDeviceLinked = null }) {
         const { chunks } = await encryptHistoryPackageChunks(
           historyPackage,
           dhDebug.dhShared,
-          session.sessionId
+          session.sessionId,
+          pairingCode
         )
 
         if (cancelled) return
@@ -171,7 +176,7 @@ export default function QRGenerator({ onDeviceLinked = null }) {
     return () => {
       cancelled = true
     }
-  }, [dhDebug?.dhShared, session?.sessionId, session?.targetAccessToken])
+  }, [dhDebug?.dhShared, pairingCode, session?.sessionId, session?.targetAccessToken])
 
   useEffect(() => {
     if (transferStatus !== 'ready' || !session?.sessionId || !session?.targetAccessToken) return
@@ -226,6 +231,7 @@ export default function QRGenerator({ onDeviceLinked = null }) {
     setSession(null)
     setEphemeral(null)
     setScannerPubKey('')
+    setPairingCode('')
     setDhDebug(null)
     try {
       const eph = await generatePairingEphemeralDebug()
@@ -254,6 +260,7 @@ export default function QRGenerator({ onDeviceLinked = null }) {
     setEphemeral(null)
     setSetupQr(null)
     setScannerPubKey('')
+    setPairingCode('')
     setDhDebug(null)
     setHistorySummary(null)
     setTransferStatus('idle')
@@ -273,7 +280,43 @@ export default function QRGenerator({ onDeviceLinked = null }) {
         </p>
       </div>
 
-      {setupQr ? (
+      {pairingCode ? (
+        <div className='flex flex-col items-center gap-3'>
+          <div className='w-full rounded-2xl border border-emerald-400/25 bg-emerald-400/10 px-5 py-6 text-center shadow-lg shadow-emerald-950/20'>
+            <p className='text-[10px] font-semibold uppercase tracking-widest text-emerald-300'>
+              Enter this code on your other device
+            </p>
+            <p className='mt-3 font-mono text-5xl font-semibold tracking-[0.24em] text-white tabular-nums'>
+              {pairingCode}
+            </p>
+            <p className='mt-3 text-xs text-[#b9b9c4]'>
+              This code is mixed into the HKDF salt for the encrypted history package.
+            </p>
+          </div>
+          {transferStatus !== 'idle' && (
+            <div className='w-full rounded-xl border border-white/10 bg-black/60 p-3'>
+              <p className='text-[9px] uppercase tracking-widest text-[#6f6f7e] mb-1'>
+                History package
+              </p>
+              <p className='text-sm text-white'>
+                {transferStatus === 'compiling' && 'Compiling local chats…'}
+                {transferStatus === 'uploading' && 'Encrypting and uploading chunks…'}
+                {transferStatus === 'ready' && 'Encrypted history is ready on the phone.'}
+                {transferStatus === 'error' && 'History transfer failed.'}
+              </p>
+              {historySummary && (
+                <p className='mt-1 text-[10px] text-[#6f6f7e]'>
+                  {historySummary.messages} messages · {historySummary.chats} chats ·{' '}
+                  {historySummary.groups} groups · {historySummary.chunks} chunks
+                </p>
+              )}
+            </div>
+          )}
+          <p className='text-[10px] font-mono text-[#4a4a5a] break-all text-center'>
+            server: {serverUrl}
+          </p>
+        </div>
+      ) : setupQr ? (
         <div className='flex flex-col items-center gap-3'>
           <div className='rounded-2xl border border-white/10 bg-[#f5f3ff] p-4 shadow-lg shadow-purple-900/20'>
             <img src={setupQr} alt='Ephemeral key pairing QR' className='h-52 w-52' />
