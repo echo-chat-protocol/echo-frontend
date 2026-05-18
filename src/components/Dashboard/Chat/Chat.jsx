@@ -188,6 +188,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
                   messageId: decrypted._id,
                   createdAt: decrypted.createdAt,
                   seenStatus: decrypted.seenStatus ?? false,
+                  username: message.username ?? '',
                 }).catch(() => {})
               }
             }
@@ -230,6 +231,11 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
     socket.on('messageSeenUpdate', handleSeenUpdate)
 
     const initChat = async () => {
+      // Ask sibling devices to push their current DR state for this peer.
+      // Their reply arrives as a sessionSync deviceEnvelope and is merged
+      // before the user has a chance to compose a message, preventing sends
+      // built on a stale post-DH-ratchet snapshot.
+      requestSessionSync(targetUserId)
       await fetchLatestMessageNumber(socket, targetUserId)
       socket.emit('ready', { targetUserId })
     }
@@ -334,6 +340,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
       messageId: outgoingMsg._id,
       createdAt: outgoingMsg.createdAt,
       seenStatus: outgoingMsg.seenStatus,
+      username,
     }).catch(() => {})
     return
   }

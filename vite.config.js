@@ -14,6 +14,23 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: true,
+    proxy: {
+      '/socket.io': { target: 'http://127.0.0.1:3001', changeOrigin: true, ws: true },
+      '/api': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+      '/auth': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+      '/users': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+      '/messages': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+      '/contacts': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+      '/groups': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+      '/calls': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+      '/keys': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+      '/pairing': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+      '/devices': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+      '/envelopes': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+      '/sync': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+      '/uploads': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+      '/health': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+    },
   },
   plugins: [
     react({

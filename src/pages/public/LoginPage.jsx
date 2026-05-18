@@ -33,6 +33,11 @@ export default function LoginPage() {
       const socket = connectWithoutAuth();
       const deviceMetadata = getDeviceMetadata();
 
+      // Clear any leftover listeners from a previous failed attempt before
+      // registering new ones — prevents duplicate handlers firing on reconnect.
+      socket.off("connect");
+      socket.off("connect_error");
+
       socket.once("connect", () => {
         socket.emit("login", { username, password, ...deviceMetadata }, async (response) => {
           if (response.success) {
@@ -82,6 +87,7 @@ export default function LoginPage() {
         console.error("Connection error:", err);
         setError("Failed to connect to authentication server.");
         setSubmitting(false);
+        socket.disconnect();
       });
 
     } catch (err) {

@@ -21,10 +21,13 @@ export function resolveApiBase(rawBase = import.meta.env.VITE_SOCKET_URL || DEFA
     const apiUrl = new URL(base)
     const appHost = typeof window !== 'undefined' ? window.location.hostname : ''
 
-    // Only substitute the hostname when the app is genuinely on a non-loopback
-    // LAN/WAN host (e.g. Android on a real device with a LAN IP).
+    // When accessed from a non-loopback host (phone on LAN), route through the
+    // Vite dev-server proxy instead of directly to the backend port.  The proxy
+    // is already open on the same host:port the phone used to load the page.
     if (isLoopbackHost(apiUrl.hostname) && appHost && !isLoopbackHost(appHost)) {
-      apiUrl.hostname = appHost
+      const appPort = typeof window !== 'undefined' ? window.location.port : ''
+      const appProtocol = typeof window !== 'undefined' ? window.location.protocol : 'http:'
+      return `${appProtocol}//${appHost}${appPort ? `:${appPort}` : ''}`
     }
 
     if (FRONTEND_DEV_PORTS.has(apiUrl.port)) {

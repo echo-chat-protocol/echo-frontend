@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, Monitor, Laptop, MapPin, RefreshCw, Wifi } from 'lucide-react'
+import { ArrowLeft, Monitor, Laptop, MapPin, RefreshCw, Wifi, Trash2 } from 'lucide-react'
 import QRGenerator from './QRGenerator'
 import { deviceService } from './deviceService'
 
@@ -16,6 +16,9 @@ export default function DesktopSyncView({ onBack }) {
   const [devices, setDevices] = useState([])
   const [loadingDevices, setLoadingDevices] = useState(true)
   const [deviceError, setDeviceError] = useState('')
+  const [confirmRevokeId, setConfirmRevokeId] = useState(null)
+  const [revokingId, setRevokingId] = useState(null)
+  const [revokeError, setRevokeError] = useState('')
   const currentDeviceId = localStorage.getItem('echo-device-id')
 
   const loadDevices = useCallback(async () => {
@@ -46,6 +49,20 @@ export default function DesktopSyncView({ onBack }) {
     const timer = window.setInterval(loadDevices, 5000)
     return () => window.clearInterval(timer)
   }, [loadDevices])
+
+  const handleRevoke = async (deviceId) => {
+    setRevokingId(deviceId)
+    setRevokeError('')
+    try {
+      await deviceService.revokeDevice(deviceId)
+      setConfirmRevokeId(null)
+      await loadDevices()
+    } catch (err) {
+      setRevokeError(err.message || 'Failed to remove device')
+    } finally {
+      setRevokingId(null)
+    }
+  }
 
   return (
     <div
@@ -101,44 +118,101 @@ export default function DesktopSyncView({ onBack }) {
                 </p>
               </div>
             ) : (
-              <ul className='space-y-2'>
-                {devices.map((d) => (
-                  <li
-                    key={d.deviceId}
-                    className='flex items-start gap-3 p-3 rounded-xl border border-white/5 bg-white/5'
-                  >
-                    <Monitor className='h-5 w-5 text-[#a855f7] shrink-0' />
-                    <div className='min-w-0 flex-1'>
-                      <div className='flex items-center gap-2'>
-                        <p className='truncate text-sm font-medium'>
-                          {d.deviceName || 'Unknown device'}
-                        </p>
-                        {d.deviceId === currentDeviceId && (
-                          <span className='rounded-full bg-[#a855f7]/15 px-2 py-0.5 text-[10px] text-[#c084fc]'>
-                            This device
-                          </span>
+              <>
+                {revokeError && (
+                  <p className='mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200'>
+                    {revokeError}
+                  </p>
+                )}
+                <ul className='space-y-2'>
+                  {devices.map((d) => {
+                    const isCurrentDevice = d.deviceId === currentDeviceId
+                    const isConfirming = confirmRevokeId === d.deviceId
+                    const isRevoking = revokingId === d.deviceId
+
+                    return (
+                      <li
+                        key={d.deviceId}
+                        className='flex items-start gap-3 p-3 rounded-xl border border-white/5 bg-white/5'
+                      >
+                        <Monitor className='h-5 w-5 text-[#a855f7] shrink-0 mt-0.5' />
+                        <div className='min-w-0 flex-1'>
+                          <div className='flex items-center gap-2 flex-wrap'>
+                            <p className='truncate text-sm font-medium'>
+                              {d.deviceName || 'Unknown device'}
+                            </p>
+                            {isCurrentDevice && (
+                              <span className='rounded-full bg-[#a855f7]/15 px-2 py-0.5 text-[10px] text-[#c084fc]'>
+                                This device
+                              </span>
+                            )}
+                            {d.isPrimary && (
+                              <span className='rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-300'>
+                                Primary
+                              </span>
+                            )}
+                          </div>
+                          <p className='text-xs text-[#6f6f7e]'>
+                            {d.platform || 'Unknown platform'} · Last seen {formatDate(d.lastSeen)}
+                          </p>
+                          <p className='mt-1 flex items-center gap-1 text-[11px] text-[#7a7a8a]'>
+                            <Wifi className='h-3 w-3' />
+                            {d.ipAddress || 'No IP recorded'}
+                          </p>
+                          <p className='mt-1 flex items-center gap-1 text-[11px] text-[#7a7a8a]'>
+                            <MapPin className='h-3 w-3' />
+                            {d.ipLocation || d.timezone || 'No location hint'}
+                          </p>
+                        </div>
+                        {!d.isPrimary && (
+                          <div className='shrink-0 flex flex-col items-end gap-1'>
+                            {isConfirming ? (
+                              <div className='flex items-center gap-1'>
+                                <button
+                                  onClick={() => handleRevoke(d.deviceId)}
+                                  disabled={isRevoking}
+                                  className='rounded-lg bg-red-500/20 border border-red-500/40 px-2 py-1 text-[11px] text-red-300 hover:bg-red-500/30 disabled:opacity-50'
+                                  title={
+                                    isCurrentDevice
+                                      ? 'Unpairing this device will sign it out immediately.'
+                                      : 'The remote device will be signed out immediately.'
+                                  }
+                                >
+                                  {isRevoking
+                                    ? isCurrentDevice
+                                      ? 'Unpairing…'
+                                      : 'Removing…'
+                                    : isCurrentDevice
+                                      ? 'Unpair this device'
+                                      : 'Confirm'}
+                                </button>
+                                <button
+                                  onClick={() => setConfirmRevokeId(null)}
+                                  disabled={isRevoking}
+                                  className='rounded-lg border border-white/10 px-2 py-1 text-[11px] text-[#a0a0a0] hover:text-white disabled:opacity-50'
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setRevokeError('')
+                                  setConfirmRevokeId(d.deviceId)
+                                }}
+                                className='rounded-lg border border-white/10 p-1.5 text-[#6f6f7e] hover:border-red-500/40 hover:text-red-400 transition-colors'
+                                title={isCurrentDevice ? 'Unpair this device' : 'Remove device'}
+                              >
+                                <Trash2 className='h-3.5 w-3.5' />
+                              </button>
+                            )}
+                          </div>
                         )}
-                        {d.isPrimary && (
-                          <span className='rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-300'>
-                            Primary
-                          </span>
-                        )}
-                      </div>
-                      <p className='text-xs text-[#6f6f7e]'>
-                        {d.platform || 'Unknown platform'} · Last seen {formatDate(d.lastSeen)}
-                      </p>
-                      <p className='mt-1 flex items-center gap-1 text-[11px] text-[#7a7a8a]'>
-                        <Wifi className='h-3 w-3' />
-                        {d.ipAddress || 'No IP recorded'}
-                      </p>
-                      <p className='mt-1 flex items-center gap-1 text-[11px] text-[#7a7a8a]'>
-                        <MapPin className='h-3 w-3' />
-                        {d.ipLocation || d.timezone || 'No location hint'}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </>
             )}
           </div>
 

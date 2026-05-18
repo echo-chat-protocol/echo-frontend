@@ -371,25 +371,23 @@ export default function MobileSyncView({ onBack, onSynced }) {
           deviceId = scannerDeviceMetadata.deviceId
         }
 
-        // Complete the sync session to get a device-specific JWT, then import history.
-        let deviceJwt = null
-        try {
-          const completeResult = await deviceService.completeSyncTarget({
-            sessionId: pairingPayload.sessionId,
-            targetAccessToken: pairingPayload.targetAccessToken,
-            targetDevice: {
-              ...scannerDeviceMetadata,
-            },
-          })
-          deviceJwt = completeResult?.auth || null
-          const resolvedDeviceId = completeResult?.session?.targetDevice?.deviceId
-          if (resolvedDeviceId && resolvedDeviceId !== deviceId) {
-            localStorage.setItem('echo-device-id', resolvedDeviceId)
-            scannerDeviceMetadata = getDeviceMetadata()
-            deviceId = resolvedDeviceId
-          }
-        } catch {
-          // Non-fatal — fall back to primary JWT from history package.
+        // Complete the sync session to get a device-specific JWT and to
+        // register this device against the primary account. If this fails,
+        // the new device will not appear in the primary's device list — so
+        // surface the failure instead of swallowing it.
+        const completeResult = await deviceService.completeSyncTarget({
+          sessionId: pairingPayload.sessionId,
+          targetAccessToken: pairingPayload.targetAccessToken,
+          targetDevice: {
+            ...scannerDeviceMetadata,
+          },
+        })
+        const deviceJwt = completeResult?.auth || null
+        const resolvedDeviceId = completeResult?.session?.targetDevice?.deviceId
+        if (resolvedDeviceId && resolvedDeviceId !== deviceId) {
+          localStorage.setItem('echo-device-id', resolvedDeviceId)
+          scannerDeviceMetadata = getDeviceMetadata()
+          deviceId = resolvedDeviceId
         }
 
         // Patch the auth token before import so the device uses its own JWT.

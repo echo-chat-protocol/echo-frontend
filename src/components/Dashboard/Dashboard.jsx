@@ -317,9 +317,78 @@ const Dashboard = () => {
       mlsKeyPackagePublishedRef.current = false
       clearMlsKeyPackageRetry()
 
-      sharedSocket.emit('listMyGroups', {}, (res) => {
-        if (res?.success && Array.isArray(res.groups)) {
-          setAllGroupsRef.current?.(res.groups)
+      sharedSocket.emit('listMyGroups', {}, async (res) => {
+        if (!res?.success || !Array.isArray(res.groups)) return
+
+        setAllGroupsRef.current?.(res.groups)
+
+        // Detect messages sent while offline by comparing against the timestamp stored
+        // when the socket last disconnected (logout, browser close, or network drop).
+        const disconnectKey = `lastDisconnectAt-${userIdRef.current}`
+        const lastDisconnectAt = localStorage.getItem(disconnectKey)
+        if (!lastDisconnectAt) return // First ever session — no offline period to check
+
+        const lastDisconnectTime = new Date(lastDisconnectAt).getTime()
+
+        for (const group of res.groups) {
+          const gid = String(group.groupId ?? '')
+          if (!gid) continue
+
+          sharedSocket.emit('fetchGroupMessages', { groupId: gid, limit: 50 }, async (msgRes) => {
+            if (!msgRes?.success || !Array.isArray(msgRes.messages) || msgRes.messages.length === 0)
+              return
+
+            const missedMessages = msgRes.messages.filter((m) => {
+              const t = new Date(m?.createdAt || m?.timestamp || 0).getTime()
+              return t > lastDisconnectTime
+            })
+            if (missedMessages.length === 0) return
+
+            const latestMsg = missedMessages[missedMessages.length - 1]
+            const timestamp =
+              latestMsg?.createdAt || latestMsg?.timestamp || new Date().toISOString()
+
+            // Read preview text from ELD cache only — no MLS state mutations.
+            // Advancing senderGenerations here races with GroupChat's own replay
+            // and causes generation mismatches on every subsequent message.
+            // GroupChat decrypts and caches the actual plaintexts when opened.
+            let previewText = ''
+            try {
+              const cached = await getSavedMessages(userIdRef.current, `group:${gid}`)
+              if (Array.isArray(cached) && cached.length > 0) {
+                const missedIds = new Set(
+                  missedMessages.map((m) => String(m._id ?? '')).filter(Boolean)
+                )
+                const cachedMissed = cached.filter(
+                  (m) =>
+                    m?._id &&
+                    missedIds.has(String(m._id)) &&
+                    m.text &&
+                    m.text !== '[Unable to decrypt message]'
+                )
+                previewText =
+                  cachedMissed.length > 0
+                    ? cachedMissed[cachedMissed.length - 1].text
+                    : (cached[cached.length - 1]?.text ?? '')
+              }
+            } catch {}
+
+            const senderName = latestMsg?.username || 'Member'
+            const displayText = previewText || `${senderName}: New message`
+
+            upsertGroupRef.current?.(
+              { groupId: gid, name: group.name || 'Group' },
+              { timestamp, text: displayText }
+            )
+
+            setUnreadGroupMessages((prev) => {
+              const nextCount = Math.max(prev[gid] || 0, missedMessages.length)
+              if (nextCount === (prev[gid] || 0)) return prev
+              const next = { ...prev, [gid]: nextCount }
+              localStorage.setItem(`unreadGroup-${userIdRef.current}-${gid}`, String(nextCount))
+              return next
+            })
+          })
         }
       })
 
@@ -382,7 +451,15 @@ const Dashboard = () => {
     const handleDisconnect = () => {
       mlsKeyPackagePublishedRef.current = false
       clearMlsKeyPackageRetry()
+      localStorage.setItem(`lastDisconnectAt-${userIdRef.current}`, new Date().toISOString())
     }
+
+    // Also capture disconnect time on page close/refresh so the timestamp
+    // is available on the very next login even if handleDisconnect races with unmount.
+    const handleBeforeUnload = () => {
+      localStorage.setItem(`lastDisconnectAt-${userIdRef.current}`, new Date().toISOString())
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
 
     sharedSocket.on('disconnect', handleDisconnect)
 
@@ -609,21 +686,29 @@ const Dashboard = () => {
 
             if (!message.payload || !message.nonce || !message.publicEphemeralKey) {
               console.warn('⚠️ [Dashboard] Skipping background decryption (missing fields)')
-              continue
+              // Fall through — still update unread count and conversation list below.
+            } else {
+              const nonce = base64ToArrayBuffer(message.nonce || '')
+              await decryptIncomingMessage(
+                message,
+                nonce,
+                userIdRef.current,
+                senderId,
+                privateKeyArray,
+                sharedSocket,
+                null
+              )
             }
-
-            const nonce = base64ToArrayBuffer(message.nonce || '')
-            await decryptIncomingMessage(
-              message,
-              nonce,
-              userIdRef.current,
-              senderId,
-              privateKeyArray,
-              sharedSocket,
-              null
-            )
           } catch (error) {
-            console.error('❌ [Dashboard] Failed to decrypt message in background:', error)
+            // Background decryption can race with the sibling-device plaintext
+            // forward: another device that already advanced this conversation's
+            // Double Ratchet state may have decrypted first and pushed the text
+            // via a deviceEnvelope. Treat as recoverable — the plaintext will
+            // arrive shortly through the deviceEnvelope handler.
+            console.warn(
+              '[Dashboard] Background decrypt failed; waiting for sibling device forward:',
+              error?.message || error
+            )
           }
 
           if (senderId !== activeChatId)
@@ -790,7 +875,10 @@ const Dashboard = () => {
         }
       }
 
-      const poll = () => processIncomingEnvelopes(userId).catch(() => {})
+      const poll = () => {
+        if (!eld.isUnlocked?.()) return
+        processIncomingEnvelopes(userId).catch(() => {})
+      }
       poll()
       devicePollInterval = setInterval(poll, 3_000)
     }
@@ -811,6 +899,59 @@ const Dashboard = () => {
     }
     sharedSocket.on('deviceSessionRequest', handleDeviceSessionRequest)
 
+    // The primary device revoked this one. Tear down local state and bounce
+    // to the landing page; the server will also refuse any further HTTP/WS
+    // calls from this deviceId.
+    const evictThisDevice = (reason) => {
+      try {
+        eld.lock?.()
+      } catch {
+        /* eld may already be locked */
+      }
+      const uid = userIdRef.current
+      if (uid) {
+        sessionStorage.removeItem(`eld-pass-${uid}`)
+        localStorage.setItem(`lastDisconnectAt-${uid}`, new Date().toISOString())
+      }
+      localStorage.removeItem('token')
+      localStorage.removeItem('userId')
+      localStorage.removeItem('username')
+      localStorage.removeItem('echo-device-id')
+      localStorage.removeItem('echo_sync_account')
+      try {
+        sharedSocket.disconnect()
+      } catch {
+        /* ignore */
+      }
+      if (typeof window !== 'undefined') {
+        window.alert(
+          reason === 'device_not_registered'
+            ? 'This device is no longer registered with the account. Re-pair it from your primary device.'
+            : 'This device was removed from your account. Re-pair it from your primary device to continue.'
+        )
+      }
+      navigate('/')
+    }
+
+    const handleDeviceRevoked = () => evictThisDevice('revoked_by_owner')
+    sharedSocket.on('deviceRevoked', handleDeviceRevoked)
+
+    // If the server rejects the socket handshake with device_revoked /
+    // device_not_registered / device_forbidden, the JWT is permanently
+    // unusable on this deviceId — evict immediately rather than letting
+    // socket.io reconnect in a loop.
+    const handleConnectError = (err) => {
+      const reason = err?.message || ''
+      if (
+        reason === 'device_revoked' ||
+        reason === 'device_not_registered' ||
+        reason === 'device_forbidden'
+      ) {
+        evictThisDevice(reason)
+      }
+    }
+    sharedSocket.on('connect_error', handleConnectError)
+
     return () => {
       sharedSocket.off('connect', onConnect)
       sharedSocket.off('disconnect', handleDisconnect)
@@ -827,7 +968,10 @@ const Dashboard = () => {
       sharedSocket.off('groupWelcome', handleGroupWelcomeBackground)
       sharedSocket.off('deviceEnvelope', handleDeviceEnvelope)
       sharedSocket.off('deviceSessionRequest', handleDeviceSessionRequest)
+      sharedSocket.off('deviceRevoked', handleDeviceRevoked)
+      sharedSocket.off('connect_error', handleConnectError)
       window.removeEventListener('groupMessagePreview', handleGroupMessagePreview)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
       if (devicePollInterval) clearInterval(devicePollInterval)
       clearMlsKeyPackageRetry()
     }
@@ -836,18 +980,58 @@ const Dashboard = () => {
   useEffect(() => {
     const handleStorageUpdate = (event) => {
       const targetId = String(event?.detail?.targetUserId ?? '')
-      if (!targetId.startsWith(GROUP_CACHE_PREFIX)) return
+      if (!targetId) return
 
-      const gid = targetId.slice(GROUP_CACHE_PREFIX.length)
-      if (!gid) return
+      if (targetId.startsWith(GROUP_CACHE_PREFIX)) {
+        const gid = targetId.slice(GROUP_CACHE_PREFIX.length)
+        if (!gid) return
+        upsertGroupRef.current?.(
+          { groupId: gid },
+          {
+            text: event?.detail?.latestMessage ?? '',
+            timestamp: event?.detail?.timestamp || new Date().toISOString(),
+          }
+        )
+        return
+      }
 
-      upsertGroupRef.current?.(
-        { groupId: gid },
-        {
-          text: event?.detail?.latestMessage ?? '',
-          timestamp: event?.detail?.timestamp || new Date().toISOString(),
+      // DM device-forwarded message — update the conversation list so the
+      // secondary device's sidebar reflects messages received via envelope.
+      if (!event?.detail?.message?._fromDeviceForward) return
+
+      const message = event.detail.message
+      const existingConv = recentConversationsRef.current.find((c) => String(c.id) === targetId)
+      if (existingConv) {
+        updateRecentConversationsRef.current?.(existingConv, {
+          text: event.detail.latestMessage ?? '',
+          timestamp: event.detail.timestamp || new Date().toISOString(),
+        })
+      } else {
+        const placeholderUser = {
+          id: targetId,
+          username: message.username || `User ${targetId}`,
+          profileImage: null,
         }
-      )
+        updateRecentConversationsRef.current?.(placeholderUser, {
+          text: event.detail.latestMessage ?? '',
+          timestamp: event.detail.timestamp || new Date().toISOString(),
+        })
+        const sock = getSocket()
+        if (sock?.connected) {
+          sock.emit('getUserInfo', { userId: targetId }, (response) => {
+            if (response?.success && response.user) {
+              updateRecentConversationsRef.current?.(
+                {
+                  id: targetId,
+                  username: response.user.username,
+                  profileImage: response.user.profilePicture,
+                },
+                null
+              )
+            }
+          })
+        }
+      }
     }
 
     window.addEventListener('localStorageUpdated', handleStorageUpdate)
@@ -967,6 +1151,10 @@ const Dashboard = () => {
 
   const handleLogout = () => {
     eld.lock()
+
+    // Record disconnect time before clearing keys so the next login can detect
+    // messages that arrived during this offline period.
+    localStorage.setItem(`lastDisconnectAt-${userId}`, new Date().toISOString())
 
     sessionStorage.removeItem(`eld-pass-${userId}`)
     localStorage.removeItem('token')

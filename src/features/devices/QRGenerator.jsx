@@ -197,6 +197,18 @@ export default function QRGenerator({ onDeviceLinked = null }) {
           }
           return
         }
+        if (
+          error?.code === 'sync_session_expired' ||
+          error?.code === 'sync_session_not_found' ||
+          error?.code === 'sync_session_inactive'
+        ) {
+          // Session is gone — device may still have been created; refresh the list.
+          if (!cancelled) {
+            onDeviceLinked?.()
+            clearInterval(timer)
+          }
+          return
+        }
         // Keep polling; the phone may still be completing the target side.
       }
     }, 1500)

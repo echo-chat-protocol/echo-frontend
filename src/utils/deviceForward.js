@@ -85,6 +85,194 @@ export async function getPairedDeviceIds(userId) {
   }
 }
 
+// ── DR state snapshot helpers ─────────────────────────────────────────────────
+
+const b64FromBytes = (bytes) => (bytes ? btoa(String.fromCharCode(...new Uint8Array(bytes))) : null)
+
+/**
+ * Snapshot the full Double Ratchet state for (userId, targetUserId).
+ *
+ * Sibling devices share one DR session per peer. Whenever this device mutates
+ * state — by sending, by receiving a message that advances the receive chain,
+ * or by performing a DH ratchet step on receive — we forward this snapshot so
+ * the other devices can keep up. Missing fields fall through silently; the
+ * receiver's merge step is tolerant of partial snapshots.
+ */
+async function snapshotDoubleRatchetState(userId, targetUserId) {
+  try {
+    const {
+      getSendingChainKey,
+      getCurrentSendingNumber,
+      getOwnEphemeralKeys,
+      getReceivingChainKey,
+      getCurrentReceivingNumber,
+      getPreviousSendingNumber,
+      getRootKey,
+      getEphemeralData,
+    } = await import('@/components/Dashboard/Chat/utils/chat/keyManagement')
+
+    const [
+      sendingChainKey,
+      currentSendingNumber,
+      ownKeys,
+      receivingChainKey,
+      currentReceivingNumber,
+      previousSendingNumber,
+      rootKey,
+      ephData,
+    ] = await Promise.all([
+      getSendingChainKey(userId, targetUserId).catch(() => null),
+      getCurrentSendingNumber(targetUserId).catch(() => null),
+      getOwnEphemeralKeys(userId, targetUserId).catch(() => null),
+      getReceivingChainKey(userId, targetUserId).catch(() => null),
+      getCurrentReceivingNumber(targetUserId).catch(() => null),
+      getPreviousSendingNumber(targetUserId).catch(() => null),
+      getRootKey(userId, targetUserId).catch(() => null),
+      getEphemeralData(userId, targetUserId).catch(() => null),
+    ])
+
+    if (!sendingChainKey || currentSendingNumber == null || !ownKeys?.public || !ownKeys?.private) {
+      // Bare minimum to make a snapshot useful is the sending chain.
+      return null
+    }
+
+    return {
+      // sending side
+      sendingChainKey: b64FromBytes(sendingChainKey),
+      currentSendingNumber,
+      publicEphemeralKey: ownKeys.public,
+      privateEphemeralKey: ownKeys.private,
+      // receiving side
+      receivingChainKey: b64FromBytes(receivingChainKey),
+      currentReceivingNumber,
+      previousSendingNumber,
+      rootKey: b64FromBytes(rootKey),
+      currentTargetPublicEphemeralKey: ephData?.currentTargetPublicEphemeralKey || null,
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Merge a sibling device's DR snapshot into this device's state.
+ *
+ * Two independent "DH ratchet step" signals:
+ *   - Own ephemeral changed → sender just performed a DH step on receive
+ *     (post-receive ratchet). Apply the entire sending side + root key.
+ *   - Peer ephemeral changed → sender just decrypted a message that contained
+ *     a new peer ephemeral. Apply the entire receiving side + root key.
+ *
+ * For the same-ephemeral case we only advance if the counter moves forward,
+ * to discard stale envelopes arriving out of order.
+ */
+async function applyDoubleRatchetSnapshot(userId, contactId, su) {
+  if (!su || !contactId) return
+  try {
+    const {
+      setSendingChainKey,
+      setCurrentSendingNumber,
+      setOwnEphemeralKeys,
+      getOwnEphemeralKeys,
+      getCurrentSendingNumber,
+      setReceivingChainKey,
+      setCurrentReceivingNumber,
+      getCurrentReceivingNumber,
+      setPreviousSendingNumber,
+      setRootKey,
+      getEphemeralData,
+      setEphemeralData,
+    } = await import('@/components/Dashboard/Chat/utils/chat/keyManagement')
+
+    const b64dec = (s) =>
+      typeof s === 'string' ? Uint8Array.from(atob(s), (c) => c.charCodeAt(0)) : null
+
+    const [localEph, localSn, localNr, localEphData] = await Promise.all([
+      getOwnEphemeralKeys(userId, contactId).catch(() => null),
+      getCurrentSendingNumber(contactId).catch(() => null),
+      getCurrentReceivingNumber(contactId).catch(() => null),
+      getEphemeralData(userId, contactId).catch(() => null),
+    ])
+
+    // ── Sending side ────────────────────────────────────────────────────────
+    const sendingDhStepped =
+      !!su.publicEphemeralKey && (!localEph?.public || localEph.public !== su.publicEphemeralKey)
+    const sendingSameChainAdvance =
+      !sendingDhStepped &&
+      su.currentSendingNumber != null &&
+      (localSn == null || su.currentSendingNumber > localSn)
+
+    if (sendingDhStepped || sendingSameChainAdvance) {
+      if (su.sendingChainKey) {
+        await setSendingChainKey(userId, contactId, b64dec(su.sendingChainKey))
+      }
+      if (su.currentSendingNumber != null) {
+        await setCurrentSendingNumber(contactId, su.currentSendingNumber)
+      }
+      if (su.publicEphemeralKey && su.privateEphemeralKey) {
+        await setOwnEphemeralKeys(userId, contactId, su.publicEphemeralKey, su.privateEphemeralKey)
+      }
+    }
+
+    // ── Receiving side ──────────────────────────────────────────────────────
+    const localPeerEph = localEphData?.currentTargetPublicEphemeralKey || null
+    const receivingDhStepped =
+      !!su.currentTargetPublicEphemeralKey && localPeerEph !== su.currentTargetPublicEphemeralKey
+    const receivingSameChainAdvance =
+      !receivingDhStepped &&
+      su.currentReceivingNumber != null &&
+      (localNr == null || su.currentReceivingNumber > localNr)
+
+    if (receivingDhStepped || receivingSameChainAdvance) {
+      if (su.receivingChainKey) {
+        await setReceivingChainKey(userId, contactId, b64dec(su.receivingChainKey))
+      }
+      if (su.currentReceivingNumber != null) {
+        await setCurrentReceivingNumber(contactId, su.currentReceivingNumber)
+      }
+      if (su.currentTargetPublicEphemeralKey) {
+        const existingKnown =
+          localEphData?.knownTargetPublicEphemeralKeys &&
+          typeof localEphData.knownTargetPublicEphemeralKeys === 'object' &&
+          !Array.isArray(localEphData.knownTargetPublicEphemeralKeys)
+            ? localEphData.knownTargetPublicEphemeralKeys
+            : {}
+        await setEphemeralData(userId, contactId, {
+          ...(localEphData || {}),
+          currentTargetPublicEphemeralKey: su.currentTargetPublicEphemeralKey,
+          previousTargetPublicEphemeralKey: su.currentTargetPublicEphemeralKey,
+          knownTargetPublicEphemeralKeys: {
+            ...existingKnown,
+            [su.currentTargetPublicEphemeralKey]: true,
+          },
+        })
+      }
+    }
+
+    // PN moves forward on every DH step; safe to apply if greater.
+    if (su.previousSendingNumber != null) {
+      try {
+        const { getPreviousSendingNumber } =
+          await import('@/components/Dashboard/Chat/utils/chat/keyManagement')
+        const localPn = await getPreviousSendingNumber(contactId).catch(() => null)
+        if (localPn == null || su.previousSendingNumber > localPn) {
+          await setPreviousSendingNumber(contactId, su.previousSendingNumber)
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+
+    // Root key advances on every DH step. Apply whenever either side detected
+    // a DH step from the snapshot.
+    if (su.rootKey && (sendingDhStepped || receivingDhStepped)) {
+      await setRootKey(userId, contactId, b64dec(su.rootKey))
+    }
+  } catch {
+    // non-fatal — at worst the sibling falls back to forwarded plaintext.
+  }
+}
+
 // ── forward a single message to all other devices ─────────────────────────────
 
 export async function forwardMessageToDevices({
@@ -96,6 +284,7 @@ export async function forwardMessageToDevices({
   messageId,
   createdAt,
   seenStatus,
+  username,
 }) {
   try {
     const identityKeys = await getIdentityKeys()
@@ -103,28 +292,13 @@ export async function forwardMessageToDevices({
 
     const envelopeKey = await deriveEnvelopeKey(identityKeys.privateKeyX25519)
 
-    // For outgoing messages, snapshot the current DR session state so paired devices
-    // can advance their ratchet position before their next send.
-    let sessionUpdate = null
-    if (direction === 'outgoing') {
-      try {
-        const { getSendingChainKey, getCurrentSendingNumber, getOwnEphemeralKeys } =
-          await import('@/components/Dashboard/Chat/utils/chat/keyManagement')
-        const chainKey = await getSendingChainKey(userId, targetUserId)
-        const sendingNumber = await getCurrentSendingNumber(targetUserId)
-        const ownKeys = await getOwnEphemeralKeys(userId, targetUserId)
-        if (chainKey && sendingNumber != null && ownKeys?.public && ownKeys?.private) {
-          sessionUpdate = {
-            sendingChainKey: btoa(String.fromCharCode(...new Uint8Array(chainKey))),
-            currentSendingNumber: sendingNumber,
-            publicEphemeralKey: ownKeys.public,
-            privateEphemeralKey: ownKeys.private,
-          }
-        }
-      } catch {
-        // non-fatal; forward without session snapshot
-      }
-    }
+    // Snapshot the full DR state regardless of direction.
+    //   - 'outgoing': captures the chain key advance + sn increment from the send.
+    //   - 'incoming': captures the post-DH-ratchet state (new own ephemeral,
+    //                 new sending chain, sn reset to 0, advanced receiving chain,
+    //                 new peer ephemeral, advanced root key) so sibling devices
+    //                 can both send AND decrypt subsequent traffic.
+    const sessionUpdate = await snapshotDoubleRatchetState(userId, targetUserId)
 
     const payload = {
       text: text ?? '',
@@ -135,6 +309,7 @@ export async function forwardMessageToDevices({
       _id: messageId,
       createdAt,
       seenStatus: seenStatus ?? false,
+      username: username ?? '',
     }
     if (sessionUpdate) payload.sessionUpdate = sessionUpdate
 
@@ -183,39 +358,8 @@ export async function processRawDeviceEnvelope(userId, rawEnvelope) {
   const envelopeKey = await deriveEnvelopeKey(identityKeys.privateKeyX25519)
   const payload = await decryptEnvelope(envelopeKey, rawEnvelope.ciphertext, rawEnvelope.nonce)
 
-  if (payload.direction === 'outgoing' && payload.sessionUpdate) {
-    try {
-      const {
-        setSendingChainKey,
-        setCurrentSendingNumber,
-        setOwnEphemeralKeys,
-        getCurrentSendingNumber,
-      } = await import('@/components/Dashboard/Chat/utils/chat/keyManagement')
-      const b64dec = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
-      const su = payload.sessionUpdate
-      const contactId = payload.targetUserId
-      // Only advance session state — never overwrite with a stale snapshot.
-      const localSn = await getCurrentSendingNumber(contactId).catch(() => null)
-      if (
-        su.currentSendingNumber != null &&
-        (localSn == null || su.currentSendingNumber > localSn)
-      ) {
-        if (su.sendingChainKey) {
-          await setSendingChainKey(userId, contactId, b64dec(su.sendingChainKey))
-        }
-        await setCurrentSendingNumber(contactId, su.currentSendingNumber)
-        if (su.publicEphemeralKey && su.privateEphemeralKey) {
-          await setOwnEphemeralKeys(
-            userId,
-            contactId,
-            su.publicEphemeralKey,
-            su.privateEphemeralKey
-          )
-        }
-      }
-    } catch {
-      // non-fatal
-    }
+  if (payload.sessionUpdate) {
+    await applyDoubleRatchetSnapshot(userId, payload.targetUserId, payload.sessionUpdate)
   }
 
   // sessionSync envelopes carry only session state — no message to display.
@@ -271,6 +415,7 @@ export async function processRawDeviceEnvelope(userId, rawEnvelope) {
     image: payload.image ?? null,
     createdAt: payload.createdAt || new Date().toISOString(),
     seenStatus: payload.seenStatus ?? false,
+    username: payload.username ?? '',
     _fromDeviceForward: true,
   }
 
@@ -334,12 +479,8 @@ export async function broadcastSessionSync(userId, targetUserId) {
     const identityKeys = await getIdentityKeys()
     if (!identityKeys?.privateKeyX25519) return
 
-    const { getSendingChainKey, getCurrentSendingNumber, getOwnEphemeralKeys } =
-      await import('@/components/Dashboard/Chat/utils/chat/keyManagement')
-    const chainKey = await getSendingChainKey(userId, targetUserId)
-    const sendingNumber = await getCurrentSendingNumber(targetUserId)
-    const ownKeys = await getOwnEphemeralKeys(userId, targetUserId)
-    if (!chainKey || sendingNumber == null || !ownKeys?.public || !ownKeys?.private) return
+    const sessionUpdate = await snapshotDoubleRatchetState(userId, targetUserId)
+    if (!sessionUpdate) return
 
     const envelopeKey = await deriveEnvelopeKey(identityKeys.privateKeyX25519)
     const { ciphertext, nonce } = await encryptEnvelope(envelopeKey, {
@@ -347,12 +488,7 @@ export async function broadcastSessionSync(userId, targetUserId) {
       userId,
       targetUserId,
       direction: 'outgoing',
-      sessionUpdate: {
-        sendingChainKey: btoa(String.fromCharCode(...new Uint8Array(chainKey))),
-        currentSendingNumber: sendingNumber,
-        publicEphemeralKey: ownKeys.public,
-        privateEphemeralKey: ownKeys.private,
-      },
+      sessionUpdate,
     })
     const socket = getSocket()
     if (socket?.connected) {

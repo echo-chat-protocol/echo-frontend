@@ -392,8 +392,24 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
     }
     groupCryptoStateRef.current = null
     isInitialLoadRef.current = true
+    liveMessageQueueRef.current = Promise.resolve()
 
-    socket.emit('openGroup', { groupId: activeGroupId }, async (res) => {
+    // Defined here so the initial load can be enqueued before any live-message
+    // handler tasks, ensuring groupCryptoStateRef is fully up-to-date before
+    // incoming newGroupMessage events attempt to decrypt with it.
+    const enqueueLiveGroupMessageTask = (task) => {
+      const queuedTask = liveMessageQueueRef.current.catch(() => {}).then(task)
+      liveMessageQueueRef.current = queuedTask
+      return queuedTask
+    }
+
+    // Serialise the full initial load (openGroup + fetchGroupMessages + replay)
+    // with the live-message queue.  Any newGroupMessage that arrives while the
+    // replay is in flight will wait in the queue and see the final state.
+    enqueueLiveGroupMessageTask(async () => {
+      const res = await new Promise((resolve) =>
+        socket.emit('openGroup', { groupId: activeGroupId }, resolve)
+      )
       if (cancelled || !res?.success) return
 
       const roster = buildRoster(res.members)
@@ -421,35 +437,36 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
       groupCryptoStateRef.current = localState
       setMessages(Array.isArray(cachedMessages) ? cachedMessages : [])
 
-      socket.emit('fetchGroupMessages', { groupId: activeGroupId, limit: 50 }, async (msgRes) => {
-        if (cancelled || !msgRes?.success || !Array.isArray(msgRes.messages)) return
+      const msgRes = await new Promise((resolve) =>
+        socket.emit('fetchGroupMessages', { groupId: activeGroupId, limit: 50 }, resolve)
+      )
+      if (cancelled || !msgRes?.success || !Array.isArray(msgRes.messages)) return
 
-        const replayed = await replayFetchedMessages({
-          fetchedMessages: msgRes.messages,
-          initialState: localState,
-          initialMeta: nextMeta,
-          cachedMessages,
-        })
-        const persistedReplayState = replayed.replayState
-          ? await saveGroupState(activeGroupId, replayed.replayState)
-          : replayed.replayState
-        const mergedMessages = mergeCachedMessages(cachedMessages, replayed.formattedMessages)
-
-        // Save using mergedMessages so cached plaintext is never overwritten by a
-        // decryption failure text from the replay pass.
-        for (const message of mergedMessages) {
-          if (!message?._id) continue
-          await updateSavedMessages(userId, getGroupCacheId(activeGroupId), message)
-        }
-
-        if (!cancelled) {
-          setMessages(mergedMessages)
-          setGroupCryptoState(persistedReplayState)
-          groupCryptoStateRef.current = persistedReplayState
-          setGroupMeta(replayed.replayMeta)
-          groupMetaRef.current = replayed.replayMeta
-        }
+      const replayed = await replayFetchedMessages({
+        fetchedMessages: msgRes.messages,
+        initialState: localState,
+        initialMeta: nextMeta,
+        cachedMessages,
       })
+      const persistedReplayState = replayed.replayState
+        ? await saveGroupState(activeGroupId, replayed.replayState)
+        : replayed.replayState
+      const mergedMessages = mergeCachedMessages(cachedMessages, replayed.formattedMessages)
+
+      // Save using mergedMessages so cached plaintext is never overwritten by a
+      // decryption failure text from the replay pass.
+      for (const message of mergedMessages) {
+        if (!message?._id) continue
+        await updateSavedMessages(userId, getGroupCacheId(activeGroupId), message)
+      }
+
+      if (!cancelled) {
+        setMessages(mergedMessages)
+        setGroupCryptoState(persistedReplayState)
+        groupCryptoStateRef.current = persistedReplayState
+        setGroupMeta(replayed.replayMeta)
+        groupMetaRef.current = replayed.replayMeta
+      }
     })
 
     const handleMembershipChanged = (evt) => {
@@ -496,12 +513,6 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
           (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
         )
       })
-    }
-
-    const enqueueLiveGroupMessageTask = (task) => {
-      const queuedTask = liveMessageQueueRef.current.catch(() => {}).then(task)
-      liveMessageQueueRef.current = queuedTask
-      return queuedTask
     }
 
     const handleNewGroupMessage = ({ groupId, ...message }) => {

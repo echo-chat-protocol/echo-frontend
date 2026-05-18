@@ -1,13 +1,11 @@
+import { forwardRef } from 'react'
+import { MessageCircle } from 'lucide-react'
 import ConversationItem from './ConversationItem'
 
-const ConversationList = ({
-  conversations,
-  activeChat,
-  handleChatSelect,
-  setIsHovered,
-  ref,
-  userId,
-}) => {
+const ConversationList = forwardRef(function ConversationList(
+  { conversations, activeChat, handleChatSelect, setIsHovered, userId },
+  ref
+) {
   return (
     <div ref={ref} className='h-full overflow-y-auto'>
       <ul className='divide-y divide-gray-700'>
@@ -33,6 +31,6 @@ const ConversationList = ({
       </ul>
     </div>
   )
-}
+})
 
 export default ConversationList
