@@ -1,116 +1,137 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import PropTypes from 'prop-types'
-import { X, Plus, Search } from 'lucide-react'
+import { X, Camera, Search, UsersRound, Check, Lock } from 'lucide-react'
 import { getSocket } from '../../../socket'
 import { formatProfileImage } from '../DashboardComponents/utils/helpers'
 import { getIdentityKeys } from '../Chat/utils/chat/keyManagement'
-
 import {
   createNewGroupState,
   buildInitialWelcomes,
   saveGroupState,
 } from '../Chat/utils/crypto/groupCryptoProvider'
 
+/**
+ * Premium CreateGroupModal — keeps full MLS crypto creation logic,
+ * uses the new glassmorphism design.
+ */
 const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
   const [name, setName] = useState('')
+  const [desc, setDesc] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const [results, setResults] = useState([])
-  const [selected, setSelected] = useState([])
+  const [selected, setSelected] = useState(new Set())
+  const [selectedUsers, setSelectedUsers] = useState([]) // keep full user objects
   const [loading, setLoading] = useState(false)
-  const socketRef = useRef(null)
+  const [error, setError] = useState('')
+  const [searching, setSearching] = useState(false)
+  const debounceRef = useRef(null)
 
+  const socketRef = useRef(null)
   const socket = useMemo(() => {
     if (!socketRef.current) socketRef.current = getSocket()
     return socketRef.current
   }, [])
 
-  const isSelected = (id) => selected.some((u) => String(u.id) === String(id))
+  const isSelected = (id) => selected.has(String(id))
 
-  const addSelected = (user) => {
-    if (!user?.id) return
-    if (String(user.id) === String(userId)) return
-    setSelected((prev) => (isSelected(user.id) ? prev : [...prev, user]))
+  const toggle = (user) => {
+    const id = String(user.id)
+    if (String(id) === String(userId)) return
+    const next = new Set(selected)
+    if (next.has(id)) {
+      next.delete(id)
+      setSelectedUsers((prev) => prev.filter((u) => String(u.id) !== id))
+    } else {
+      next.add(id)
+      setSelectedUsers((prev) => (prev.some((u) => String(u.id) === id) ? prev : [...prev, user]))
+    }
+    setSelected(next)
   }
 
-  const removeSelected = (id) => {
-    setSelected((prev) => prev.filter((u) => String(u.id) !== String(id)))
-  }
-
-  const handleSearch = useCallback(() => {
-    const term = searchTerm.trim()
-    if (!term) return
-    setLoading(true)
-
-    socket.emit('searchUser', { searchTerm: term }, (response) => {
-      if (!response?.success || !response?.user) {
-        setLoading(false)
+  const handleSearch = useCallback(
+    (term) => {
+      const t = (term ?? searchTerm).trim()
+      if (!t) {
+        setResults([])
         return
       }
-
-      const basicUser = response.user
-      socket.emit('getUserInfo', { userId: basicUser.id }, (profileResponse) => {
-        const profilePicture = profileResponse?.success
-          ? profileResponse?.user?.profilePicture
-          : null
-        const formattedProfileImage = formatProfileImage(profilePicture, basicUser.username)
-        const u = { ...basicUser, profileImage: formattedProfileImage }
-
-        setResults((prev) => {
-          const exists = prev.some((x) => String(x.id) === String(u.id))
-          if (exists) return prev
-          return [...prev, u]
+      setSearching(true)
+      socket.emit('searchUser', { searchTerm: t }, (response) => {
+        if (!response?.success || !response?.user) {
+          setSearching(false)
+          return
+        }
+        const basicUser = response.user
+        socket.emit('getUserInfo', { userId: basicUser.id }, (profileResponse) => {
+          const profilePicture = profileResponse?.success
+            ? profileResponse?.user?.profilePicture
+            : null
+          const formattedProfileImage = formatProfileImage(profilePicture, basicUser.username)
+          const u = { ...basicUser, profileImage: formattedProfileImage }
+          setResults((prev) => {
+            const exists = prev.some((x) => String(x.id) === String(u.id))
+            return exists ? prev : [...prev, u]
+          })
+          setSearching(false)
         })
-        setLoading(false)
       })
-    })
-  }, [searchTerm, socket])
+    },
+    [searchTerm, socket]
+  )
+
+  const handleSearchTermChange = (val) => {
+    setSearchTerm(val)
+    if (!val.trim()) {
+      setResults([])
+      return
+    }
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => handleSearch(val), 400)
+  }
 
   const handleCreate = async () => {
     const groupName = name.trim()
-    if (!groupName) return
-    const memberIds = selected.map((u) => u.id).filter(Boolean)
-    if (memberIds.length === 0) return
+    if (!groupName || selectedUsers.length === 0) return
+    setError('')
+
+    const memberIds = selectedUsers.map((u) => u.id).filter(Boolean)
     const mlsEnabled = true
     const cipherSuite = 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256'
+
     const emitWithAck = (event, payload) =>
       new Promise((resolve, reject) => {
         socket.emit(event, payload, (ack) => {
-          if (ack?.success) {
-            resolve(ack)
-            return
-          }
-          reject(new Error(ack?.error || `Failed to ${event}`))
+          if (ack?.success) resolve(ack)
+          else reject(new Error(ack?.error || `Failed to ${event}`))
         })
       })
 
     setLoading(true)
 
-    // Fetch KeyPackages for all invited members BEFORE creating the group.
-    // We need their X25519 public keys to encrypt the group key to them.
-    const results = await Promise.all(
-      selected.map(
+    // Fetch KeyPackages for all invited members
+    const memberInitKeyResults = await Promise.all(
+      selectedUsers.map(
         (u) =>
           new Promise((resolve) => {
             socket.emit('fetchKeyPackage', { userId: u.id }, (res) => {
               if (res?.success && res.initKeyB64) {
                 resolve({ userId: String(u.id), initKeyB64: res.initKeyB64 })
               } else {
-                console.warn(`[CreateGroupModal] No KeyPackage for user ${u.id} (${u.username})`)
+                console.warn(`[CreateGroupModal] No KeyPackage for user ${u.id}`)
                 resolve(null)
               }
             })
           })
       )
     )
-    const memberInitKeys = results.filter(Boolean)
+    const memberInitKeys = memberInitKeyResults.filter(Boolean)
 
-    // Block creation if any invited member has no KeyPackage — they'd be locked out silently.
-    const missing = selected.filter(
+    const missing = selectedUsers.filter(
       (u) => !memberInitKeys.some((mk) => String(mk.userId) === String(u.id))
     )
     if (missing.length > 0) {
-      console.error(
-        `[CreateGroupModal] Cannot create MLS group: missing KeyPackage for: ${missing.map((u) => u.username).join(', ')}`
+      setError(
+        `Cannot create group: ${missing.map((u) => u.username).join(', ')} has not set up their encryption keys yet. Ask them to open the app first.`
       )
       setLoading(false)
       return
@@ -123,22 +144,22 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
         setLoading(false)
         if (!ack?.success) return
 
-        // Use server-assigned leafIndex values from ack.members.
         const serverMembers = Array.isArray(ack.members) ? ack.members : []
         const roster =
           serverMembers.length > 0
             ? serverMembers.map((m) => ({
                 userId: String(m.userId),
                 username:
-                  selected.find((u) => String(u.id) === String(m.userId))?.username ?? 'Member',
+                  selectedUsers.find((u) => String(u.id) === String(m.userId))?.username ??
+                  'Member',
                 leafIndex: Number.isInteger(m.leafIndex) ? m.leafIndex : 0,
               }))
             : [
                 { userId: String(userId), username: 'me', leafIndex: 0 },
-                ...selected.map((u, index) => ({
+                ...selectedUsers.map((u, i) => ({
                   userId: String(u.id),
                   username: u.username,
-                  leafIndex: index + 1,
+                  leafIndex: i + 1,
                 })),
               ]
 
@@ -161,15 +182,11 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
                       initKeyB64: creatorInitPubKeyB64,
                     }
                   }
-
                   const existing = memberInitKeys.find(
                     (entry) => String(entry.userId) === String(member.userId)
                   )
                   if (!existing?.initKeyB64) return null
-                  return {
-                    ...existing,
-                    leafIndex: member.leafIndex,
-                  }
+                  return { ...existing, leafIndex: member.leafIndex }
                 })
                 .filter(Boolean)
             : []
@@ -191,7 +208,6 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
                 (entry) => String(entry.userId) !== String(userId)
               ),
             })
-
             for (const welcome of welcomes) {
               await emitWithAck('sendGroupWelcome', {
                 groupId: ack.group.groupId,
@@ -199,7 +215,6 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
                 welcome,
               })
             }
-
             await saveGroupState(ack.group.groupId, {
               ...creatorState,
               secrets: {
@@ -213,13 +228,17 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
           }
         } catch (err) {
           console.error('[CreateGroupModal] Failed to initialize MLS state:', err)
+          setError(`Group created but encryption setup failed: ${err.message}`)
         }
 
         onCreated?.(ack.group)
         setName('')
+        setDesc('')
         setSearchTerm('')
         setResults([])
-        setSelected([])
+        setSelected(new Set())
+        setSelectedUsers([])
+        setError('')
         onClose?.()
       }
     )
@@ -228,106 +247,170 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
   if (!open) return null
 
   return (
-    <div className='fixed inset-0 bg-black/70 flex items-center justify-center z-50'>
-      <div className='bg-gray-900 rounded-lg p-4 max-w-xl w-full mx-4 border border-gray-700'>
-        <div className='flex items-center justify-between mb-4'>
-          <h3 className='text-lg font-semibold text-white'>Create a group</h3>
-          <button onClick={onClose} className='text-gray-400 hover:text-white'>
-            <X className='w-5 h-5' />
+    <div
+      data-testid='create-group-modal'
+      className='fixed inset-0 z-50 grid place-items-center p-4 animate-fade-in'
+      onClick={onClose}
+    >
+      <div className='absolute inset-0 bg-black/70 backdrop-blur-sm' />
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className='relative w-full max-w-[560px] overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0a0a0e] animate-fade-up'
+      >
+        {/* Header */}
+        <div className='flex items-center justify-between border-b border-white/[0.06] px-6 py-4'>
+          <div className='flex items-center gap-2.5'>
+            <div className='grid h-8 w-8 place-items-center rounded-lg bg-violet-500/15 ring-1 ring-violet-400/30'>
+              <UsersRound size={15} className='text-violet-300' />
+            </div>
+            <h2 className='text-[15px] font-semibold tracking-[-0.02em]'>New group</h2>
+          </div>
+          <button
+            onClick={onClose}
+            className='grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:bg-white/[0.04] hover:text-white'
+          >
+            <X size={15} />
           </button>
         </div>
 
-        <div className='space-y-3'>
-          <input
-            type='text'
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder='Group name'
-            className='w-full p-3 bg-gray-800 text-white rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-[#8e79f2]'
-          />
-
-          <div className='flex gap-2'>
-            <div className='relative w-full'>
+        <div className='p-6'>
+          {/* Group name + avatar row */}
+          <div className='flex items-start gap-4'>
+            <button className='relative grid h-20 w-20 shrink-0 place-items-center rounded-2xl border border-dashed border-white/[0.12] bg-white/[0.02] text-white/45 hover:border-violet-400/40 hover:text-violet-200 transition'>
+              <Camera size={18} />
+              <span className='absolute -bottom-1.5 -right-1.5 grid h-6 w-6 place-items-center rounded-lg echo-violet-gradient echo-violet-glow text-white text-[10px] font-bold'>
+                +
+              </span>
+            </button>
+            <div className='flex-1 space-y-3'>
               <input
-                type='text'
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                placeholder='Search username to add...'
-                className='w-full p-3 pr-10 bg-gray-800 text-white rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-[#8e79f2]'
+                data-testid='group-name-input'
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder='Group name'
+                className='echo-input w-full rounded-xl px-3.5 py-2.5 text-[13.5px] echo-focus-ring'
               />
-              <button
-                className='absolute right-3 top-3 text-gray-400 hover:text-white'
-                onClick={handleSearch}
-                disabled={loading}
-              >
-                <Search className='h-5 w-5' />
-              </button>
+              <input
+                value={desc}
+                onChange={(e) => setDesc(e.target.value)}
+                placeholder='Description (optional)'
+                className='echo-input w-full rounded-xl px-3.5 py-2 text-[12.5px] echo-focus-ring'
+              />
             </div>
           </div>
 
-          {selected.length > 0 && (
-            <div className='bg-gray-800/60 border border-gray-700 rounded-lg p-3'>
-              <div className='text-sm text-gray-300 mb-2'>Members</div>
-              <div className='flex flex-wrap gap-2'>
-                {selected.map((u) => (
-                  <button
-                    key={u.id}
-                    onClick={() => removeSelected(u.id)}
-                    className='px-2 py-1 bg-gray-700 text-white rounded-full text-xs hover:bg-gray-600'
-                    title='Remove'
-                  >
-                    {u.username} <span className='text-gray-300'>×</span>
-                  </button>
-                ))}
+          {/* Add members */}
+          <div className='mt-5'>
+            <div className='mb-2 flex items-center justify-between'>
+              <span className='text-[10.5px] font-medium uppercase tracking-[0.18em] text-white/45'>
+                Invite members
+              </span>
+              <span className='text-[11px] text-violet-300 mono'>{selected.size} selected</span>
+            </div>
+            <div className='flex gap-2'>
+              <div className='relative flex-1'>
+                <Search
+                  size={14}
+                  className='pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/35'
+                />
+                {searching && (
+                  <span className='absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-white/35 animate-pulse'>
+                    …
+                  </span>
+                )}
+                <input
+                  value={searchTerm}
+                  onChange={(e) => handleSearchTermChange(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                  placeholder='Search by username…'
+                  className='echo-input w-full rounded-xl py-2 pl-9 pr-3 text-[13px] echo-focus-ring'
+                />
               </div>
+              <button
+                onClick={() => handleSearch()}
+                disabled={searching || !searchTerm.trim()}
+                className='echo-cta rounded-xl px-4 py-2 text-[12px] font-medium disabled:opacity-40'
+              >
+                {searching ? '…' : 'Search'}
+              </button>
+            </div>
+
+            {/* Results */}
+            <div className='mt-3 max-h-[260px] overflow-y-auto pr-1'>
+              {results.map((c) => {
+                const checked = isSelected(c.id)
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => toggle(c)}
+                    disabled={String(c.id) === String(userId)}
+                    className={`group flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all ${
+                      checked
+                        ? 'border-violet-400/40 bg-violet-500/[0.06]'
+                        : 'border-transparent hover:border-white/[0.06] hover:bg-white/[0.02]'
+                    } disabled:opacity-40`}
+                  >
+                    {c.profileImage ? (
+                      <img
+                        src={c.profileImage}
+                        alt={c.username}
+                        className='h-9 w-9 rounded-full object-cover ring-1 ring-white/10'
+                        onError={(e) => {
+                          e.target.src = `https://ui-avatars.com/api/?name=${c.username}&background=8e79f2&color=fff`
+                        }}
+                      />
+                    ) : (
+                      <div className='grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-violet-500/40 to-violet-700/70 text-white text-sm font-semibold'>
+                        {c.username?.[0]}
+                      </div>
+                    )}
+                    <div className='min-w-0 flex-1'>
+                      <div className='truncate text-[13px] font-medium'>{c.username}</div>
+                    </div>
+                    <span
+                      className={`grid h-5 w-5 place-items-center rounded-md border transition ${
+                        checked
+                          ? 'border-violet-400 bg-violet-500'
+                          : 'border-white/15 bg-transparent group-hover:border-white/40'
+                      }`}
+                    >
+                      {checked && <Check size={12} className='text-white' strokeWidth={3} />}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Error message */}
+          {error && (
+            <div className='mt-3 rounded-xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-[12px] text-red-300'>
+              {error}
             </div>
           )}
 
-          <div className='grid grid-cols-1 gap-2 max-h-56 overflow-y-auto'>
-            {results.map((u) => (
-              <div
-                key={u.id}
-                className='flex items-center justify-between p-3 bg-gray-800 rounded-lg border border-gray-700'
+          {/* Footer */}
+          <div className='mt-5 flex items-center justify-between border-t border-white/[0.06] pt-4'>
+            <span className='inline-flex items-center gap-1.5 text-[11px] text-emerald-300/80 mono'>
+              <Lock size={11} /> end-to-end encrypted by default
+            </span>
+            <div className='flex gap-2'>
+              <button
+                onClick={onClose}
+                className='rounded-full border border-white/[0.08] bg-white/[0.02] px-5 py-2.5 text-[12.5px] text-white/65 hover:bg-white/[0.04] hover:text-white'
               >
-                <div className='flex items-center gap-3 min-w-0'>
-                  <img
-                    src={u.profileImage}
-                    alt={u.username}
-                    className='w-9 h-9 rounded-full object-cover border-2 border-black'
-                    onError={(e) => {
-                      e.target.src = `https://ui-avatars.com/api/?name=${u.username}&background=8e79f2&color=fff`
-                    }}
-                  />
-                  <div className='truncate text-white'>{u.username}</div>
-                </div>
-                <button
-                  className={`px-3 py-2 rounded-lg text-sm flex items-center gap-2 ${
-                    isSelected(u.id)
-                      ? 'bg-gray-700 text-gray-300 cursor-not-allowed'
-                      : 'bg-indigo-700 text-white hover:bg-[#8e79f2]'
-                  }`}
-                  disabled={isSelected(u.id) || loading || String(u.id) === String(userId)}
-                  onClick={() => addSelected(u)}
-                >
-                  <Plus className='w-4 h-4' />
-                  Add
-                </button>
-              </div>
-            ))}
+                Cancel
+              </button>
+              <button
+                disabled={!name.trim() || selected.size === 0 || loading}
+                onClick={handleCreate}
+                data-testid='group-create-btn'
+                className='echo-cta rounded-full px-6 py-2.5 text-[12.5px] font-medium disabled:opacity-40 disabled:saturate-50'
+              >
+                {loading ? 'Creating…' : 'Create group'}
+              </button>
+            </div>
           </div>
-
-          <button
-            onClick={handleCreate}
-            disabled={loading || !name.trim() || selected.length === 0}
-            className={`w-full p-3 rounded-lg font-semibold ${
-              loading || !name.trim() || selected.length === 0
-                ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                : 'bg-indigo-700 text-white hover:bg-[#8e79f2]'
-            }`}
-          >
-            {loading ? 'Creating...' : 'Create group'}
-          </button>
         </div>
       </div>
     </div>

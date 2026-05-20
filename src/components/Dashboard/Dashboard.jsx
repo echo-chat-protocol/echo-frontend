@@ -1,15 +1,19 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Search, Plus, Lock, MessageCircle, Menu, ArrowLeft } from 'lucide-react'
+import { Lock, MessageCircle, Menu, ArrowLeft } from 'lucide-react'
 import PropTypes from 'prop-types'
 import Friends from './Friends/Friends'
 import Chat from './Chat/Chat'
 import Sidebar from './DashboardComponents/Sidebar/Sidebar'
 import ChatHeader from './DashboardComponents/Header/ChatHeader'
 import GroupHeader from './DashboardComponents/Header/GroupHeader'
-import ConversationList from './DashboardComponents/Conversations/ConversationList'
 import SettingsView from './Settings/Settings'
+import ChatList from './DashboardComponents/Conversations/ChatList'
+import UserInfoPanel from './UserInfo/UserInfoPanel'
+import ConstellationBg from './ConstellationBg'
+import GroupsView from './Groups/GroupsView'
+import NewChatModal from './DashboardComponents/NewChatModal/NewChatModal'
 
 import { useConversations } from './DashboardComponents/hooks/useConversations'
 import { useGroups } from './DashboardComponents/hooks/useGroups'
@@ -36,7 +40,7 @@ import { generateOneTimePreKeys } from './Chat/utils/crypto/opk'
 import { createOpkReplenishHandler, requestOpkStatusAndReplenish } from '../../utils/opk/replenish'
 import { rotateSPKIfNeeded } from '../../utils/spk/rotate'
 import eld from '../../utils/storage/EncryptedLocalDatabase'
-import GroupList from './DashboardComponents/Groups/GroupList'
+// import GroupList from './DashboardComponents/Groups/GroupList'
 import CreateGroupModal from './Groups/CreateGroupModal'
 import GroupChat from './Chat/GroupChat'
 import { tokenStorage } from '@services/api'
@@ -49,12 +53,13 @@ const Dashboard = () => {
 
   // Estados
   const [activeChat, setActiveChat] = useState(null)
+  // eslint-disable-next-line no-unused-vars
   const [searchTerm, setSearchTerm] = useState('')
   const [activeView, setActiveView] = useState(() => {
     return localStorage.getItem('dashboardView') || 'chats'
   })
   const [conversationsSearchTerm, setConversationsSearchTerm] = useState('')
-  const [, setIsChatItemHovered] = useState(false)
+
   const [unreadMessages, setUnreadMessages] = useState(() => {
     const unread = {}
     for (let i = 0; i < localStorage.length; i++) {
@@ -92,6 +97,8 @@ const Dashboard = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [showMobileChat, setShowMobileChat] = useState(false)
   const [createGroupOpen, setCreateGroupOpen] = useState(false)
+  const [newChatOpen, setNewChatOpen] = useState(false)
+  const [showInfoPanel, setShowInfoPanel] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     return localStorage.getItem('sidebarCollapsed') === 'true'
   })
@@ -101,7 +108,7 @@ const Dashboard = () => {
   const { recentConversations, updateRecentConversations } = useConversations(userId)
   const { groups, setAllGroups, upsertGroup, removeGroup } = useGroups(userId)
   const messagesEndRef = useRef(null)
-  const conversationsListRef = useRef(null)
+  // const conversationsListRef = useRef(null)
   const hasRefreshedProfiles = useRef(false)
   const activeChatRef = useRef(activeChat)
   const recentConversationsRef = useRef(recentConversations)
@@ -740,6 +747,7 @@ const Dashboard = () => {
   const handleActiveChatChange = (friendData) => {
     handleChatSelect(friendData)
     updateRecentConversations(friendData)
+    handleViewChange('chats')
   }
 
   const handleNewMessage = (message) => {
@@ -771,8 +779,6 @@ const Dashboard = () => {
     }
     navigate('/')
   }
-
-  const handleSearch = () => {}
 
   const handleViewChange = (view) => {
     setActiveView(view)
@@ -826,8 +832,9 @@ const Dashboard = () => {
 
   // ─── Extracted to avoid re-creation on every Dashboard render ─────────────────
   const EmptyState = ({ activeView, t }) => (
-    <div className='flex justify-center items-center h-full p-8'>
-      <div className='text-center max-w-[300px]'>
+    <div className='echo-floating flex justify-center items-center h-full p-8 relative overflow-hidden'>
+      <div className='echo-aurora opacity-25' />
+      <div className='text-center max-w-[300px] relative z-10'>
         <div className='animate-bounce mb-6'>
           <MessageCircle size={64} strokeWidth={1.5} className='text-gray-400 mx-auto' />
         </div>
@@ -852,240 +859,257 @@ const Dashboard = () => {
   )
   EmptyState.propTypes = { activeView: PropTypes.string.isRequired, t: PropTypes.func.isRequired }
 
+  // ── Build ChatList items from recentConversations + groups ──────────────────
+  const chatListItems = useMemo(() => {
+    const directItems = filteredConversations.map((conv) => ({
+      id: conv.id,
+      name: conv.username,
+      avatar: conv.profileImage || null,
+      last: conv.lastMessage || '',
+      time: conv.lastMessageTime
+        ? new Date(conv.lastMessageTime).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+        : '',
+      unread: conv.unreadCount || 0,
+      delivered: conv.seenStatus ? 'read' : 'delivered',
+      status: null,
+      isGroup: false,
+      isBot: false,
+      pinned: false,
+    }))
+
+    const groupItems = filteredGroups.map((g) => ({
+      id: g.groupId,
+      name: g.name || 'Group',
+      avatar: g.profilePicture || null,
+      last: g.lastActivityText || '',
+      time: g.lastActivityAt
+        ? new Date(g.lastActivityAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : '',
+      unread: g.unreadCount || 0,
+      delivered: 'delivered',
+      status: null,
+      isGroup: true,
+      isBot: false,
+      pinned: false,
+    }))
+
+    return [...directItems, ...groupItems]
+  }, [filteredConversations, filteredGroups])
+
   return (
-    <div className='flex h-screen bg-black text-white'>
-      {/* Incoming Call Notification */}
-      {incomingCall && (
-        <IncomingCallNotification callData={incomingCall} onClose={() => setIncomingCall(null)} />
-      )}
+    <div
+      data-testid='echo-dashboard'
+      className='relative h-screen w-screen overflow-hidden bg-black text-white'
+    >
+      {/* Landing-style ambient bg — only when wallpaper is constellation */}
+      {currentWallpaper === 'constellation' && <ConstellationBg density={70} />}
 
-      {/* Mobile Menu Overlay */}
-      {isMobileMenuOpen && (
+      {/* Floating shell */}
+      <div className='relative flex h-full w-full gap-3 p-3'>
+        {/* Incoming Call Notification */}
+        {incomingCall && (
+          <IncomingCallNotification callData={incomingCall} onClose={() => setIncomingCall(null)} />
+        )}
+
+        {/* Mobile Menu Overlay */}
+        {isMobileMenuOpen && (
+          <div
+            className='fixed inset-0 bg-black/50 z-40 md:hidden'
+            onClick={() => setIsMobileMenuOpen(false)}
+          />
+        )}
+
+        {/* Mobile hamburger visible on small screens when chat is not shown */}
+        {!showMobileChat && (
+          <button
+            className='md:hidden fixed top-4 left-4 z-40 p-2 text-gray-400 hover:text-white'
+            onClick={() => setIsMobileMenuOpen(true)}
+          >
+            <Menu className='h-6 w-6' />
+          </button>
+        )}
+
+        {/* Sidebar - Hidden on mobile, shown via menu */}
         <div
-          className='fixed inset-0 bg-black/50 z-40 md:hidden'
-          onClick={() => setIsMobileMenuOpen(false)}
-        />
-      )}
-
-      {/* Sidebar - Hidden on mobile, shown via menu */}
-      <div
-        className={`
-        fixed md:relative inset-y-0 left-0 z-50 h-full
-        transform ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
-        md:translate-x-0 transition-transform duration-300 ease-in-out
-      `}
-      >
-        <Sidebar
-          active={activeView === 'friends' ? 'contacts' : activeView}
-          onChange={(view) => {
-            const mappedView = view === 'contacts' ? 'friends' : view
-            handleViewChange(mappedView)
-            setIsMobileMenuOpen(false)
-          }}
-          user={{
-            name: username,
-            avatar: userProfileImage,
-          }}
-          collapsed={sidebarCollapsed}
-          onToggleCollapsed={() => {
-            const nextVal = !sidebarCollapsed
-            setSidebarCollapsed(nextVal)
-            localStorage.setItem('sidebarCollapsed', String(nextVal))
-          }}
-          onOpenProfile={() => {
-            handleProfileClick()
-            setIsMobileMenuOpen(false)
-          }}
-          onLogout={handleLogout}
-          unreadMessages={unreadMessages}
-        />
-      </div>
-
-      {/* Navigation Panel - Full width on mobile when chat not shown */}
-      <div
-        className={`
-        ${showMobileChat || activeView === 'settings' ? 'hidden' : 'flex'} 
-        ${activeView === 'settings' ? 'md:hidden' : 'md:flex'}
-        w-full md:w-80 bg-black border-r border-white/[0.08] flex-col
-      `}
-      >
-        <div className='p-4 border-b border-white/[0.08]'>
-          <div className='flex items-center gap-3 mb-4'>
-            {/* Mobile menu button */}
-            <button
-              className='md:hidden p-2 -ml-2 text-gray-400 hover:text-white'
-              onClick={() => setIsMobileMenuOpen(true)}
-            >
-              <Menu className='h-6 w-6' />
-            </button>
-            <img src='./echo-logo-text.png' alt='ECHO Logo' className='h-8' />
-          </div>
-
-          <div className='flex gap-2 mb-4'>
-            {activeView !== 'settings' ? (
-              <div className='relative w-full'>
-                <input
-                  data-testid='dashboard-search'
-                  type='text'
-                  placeholder={
-                    activeView === 'friends' ? 'Search for friends...' : 'Search chats & groups...'
-                  }
-                  className='w-full px-6 py-3 bg-white/10 border border-white/[0.08] rounded-full focus:outline-none focus:ring-2 focus:ring-[#8e79f2] focus:border-[#8e79f2] text-white placeholder-gray-500 backdrop-blur-sm transition-all duration-300 text-sm'
-                  value={activeView === 'friends' ? searchTerm : conversationsSearchTerm}
-                  onChange={(e) =>
-                    activeView === 'friends'
-                      ? setSearchTerm(e.target.value)
-                      : setConversationsSearchTerm(e.target.value)
-                  }
-                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                />
-                <button
-                  className='absolute right-4 top-3 text-gray-400 hover:text-white'
-                  onClick={handleSearch}
-                >
-                  <Search className='h-5 w-5' />
-                </button>
-              </div>
-            ) : (
-              <div className='text-sm text-gray-400 py-2.5 font-semibold uppercase tracking-wider px-2'>
-                Settings
-              </div>
-            )}
-            {activeView !== 'friends' && activeView !== 'settings' && (
-              <button
-                className='p-2.5 rounded-full bg-violet-600/10 border border-violet-500/20 text-violet-300 hover:bg-[#8e79f2] hover:text-white transition-all shadow-[0_0_15px_rgba(168,85,247,0.1)]'
-                title='Create group'
-                onClick={() => setCreateGroupOpen(true)}
-              >
-                <Plus className='h-5 w-5' />
-              </button>
-            )}
-          </div>
+          className={`
+          fixed md:relative inset-y-0 left-0 z-50 h-full
+          transform ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
+          md:translate-x-0 transition-transform duration-300 ease-in-out
+        `}
+        >
+          <Sidebar
+            active={activeView === 'friends' ? 'contacts' : activeView}
+            onChange={(view) => {
+              const mappedView = view === 'contacts' ? 'friends' : view
+              handleViewChange(mappedView)
+              setIsMobileMenuOpen(false)
+            }}
+            user={{
+              name: username,
+              avatar: userProfileImage,
+            }}
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={() => {
+              const nextVal = !sidebarCollapsed
+              setSidebarCollapsed(nextVal)
+              localStorage.setItem('sidebarCollapsed', String(nextVal))
+            }}
+            onOpenProfile={() => {
+              handleProfileClick()
+              setIsMobileMenuOpen(false)
+            }}
+            onLogout={handleLogout}
+            unreadMessages={unreadMessages}
+            onNewChat={() => setNewChatOpen(true)}
+          />
         </div>
 
-        <div className='flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/[0.05] scrollbar-track-black'>
-          {activeView === 'friends' ? (
-            <Friends
-              token={token}
-              onActiveChatChange={handleActiveChatChange}
-              searchTerm={searchTerm}
+        {/* Navigation Panel — Premium ChatList (left panel) */}
+        <div
+          className={`
+          ${showMobileChat || activeView === 'settings' || activeView === 'friends' || activeView === 'groups' ? 'hidden' : 'flex'} 
+          ${activeView === 'settings' || activeView === 'friends' || activeView === 'groups' ? 'md:hidden' : 'md:flex'}
+          shrink-0
+        `}
+        >
+          {activeView === 'settings' ||
+          activeView === 'friends' ||
+          activeView === 'groups' ? null : (
+            <ChatList
+              items={chatListItems}
+              activeId={activeChat?.type === 'group' ? activeChat?.groupId : activeChat?.id}
+              searchTerm={conversationsSearchTerm}
+              onSearchChange={setConversationsSearchTerm}
+              onSelect={(id) => {
+                // Try group first
+                const group = filteredGroups.find((g) => String(g.groupId) === String(id))
+                if (group) {
+                  handleGroupSelect(group)
+                  return
+                }
+                // Otherwise direct conversation
+                const conv = filteredConversations.find((c) => String(c.id) === String(id))
+                if (conv) {
+                  handleChatSelect(conv)
+                  return
+                }
+              }}
+              onCreateGroup={() => setCreateGroupOpen(true)}
             />
-          ) : activeView === 'settings' ? null : (
-            <div>
-              {activeView !== 'chats' && filteredGroups.length > 0 && (
-                <>
-                  <div className='px-4 pt-4 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider'>
-                    Groups
-                  </div>
-                  <GroupList
-                    groups={filteredGroups}
-                    activeChat={activeChat}
-                    onSelect={handleGroupSelect}
-                    unreadByGroupId={unreadGroupMessages}
-                  />
-                </>
-              )}
-
-              {activeView !== 'groups' && (
-                <>
-                  {filteredConversations.length > 0 && (
-                    <div className='px-4 pt-4 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider'>
-                      Direct messages
-                    </div>
-                  )}
-                  {filteredConversations.length > 0 ? (
-                    <ConversationList
-                      conversations={filteredConversations}
-                      activeChat={activeChat}
-                      userId={userId}
-                      handleChatSelect={handleChatSelect}
-                      setIsHovered={setIsChatItemHovered}
-                      ref={conversationsListRef}
-                    />
-                  ) : (
-                    activeView === 'chats' && (
-                      <p className='text-gray-400 text-sm p-4'>
-                        {conversationsSearchTerm
-                          ? 'No conversations match your search'
-                          : 'No recent conversations'}
-                      </p>
-                    )
-                  )}
-                </>
-              )}
-            </div>
           )}
         </div>
-      </div>
 
-      {/* Main Content Area - Full screen on mobile when chat shown */}
-      <div
-        className={`
-        ${showMobileChat ? 'flex' : 'hidden'} md:flex
-        flex-1 flex-col bg-black
-      `}
-      >
-        {activeView === 'settings' ? (
-          <SettingsView />
-        ) : activeChat ? (
-          <div className='flex flex-col h-full'>
-            {/* Mobile back button integrated with ChatHeader */}
-            <div className='flex items-center md:block'>
-              <button
-                className='md:hidden p-3 text-gray-400 hover:text-white'
-                onClick={handleMobileBack}
-              >
-                <ArrowLeft className='h-6 w-6' />
-              </button>
-              <div className='flex-1'>
-                {activeChat?.type === 'group' ? (
-                  <GroupHeader
-                    groupId={activeChat.groupId}
-                    groupName={activeChat.name}
-                    groupDescription={activeChat.description}
-                    groupProfilePicture={activeChat.profilePicture}
-                    userId={userId}
-                  />
-                ) : (
-                  <ChatHeader activeChat={activeChat} userId={userId} token={token} />
-                )}
+        {/* Main Content Area - Full screen on mobile when chat shown */}
+        <div
+          className={`
+          ${showMobileChat || activeView === 'settings' || activeView === 'friends' || activeView === 'groups' ? 'flex' : 'hidden'} md:flex
+          flex-1 flex-col bg-transparent
+        `}
+        >
+          {activeView === 'settings' ? (
+            <SettingsView />
+          ) : activeView === 'friends' ? (
+            <div className='echo-floating relative flex h-full flex-1 flex-col overflow-hidden'>
+              <Friends
+                token={token}
+                onActiveChatChange={handleActiveChatChange}
+                searchTerm={searchTerm}
+                onAddContact={() => setNewChatOpen(true)}
+              />
+            </div>
+          ) : activeView === 'groups' ? (
+            <GroupsView onCreate={() => setCreateGroupOpen(true)} groups={filteredGroups} />
+          ) : activeChat ? (
+            <div className='echo-floating relative flex h-full flex-1 overflow-hidden'>
+              <div className='flex flex-col flex-1 min-w-0'>
+                {/* Mobile back button */}
+                <div className='flex items-center md:block'>
+                  <button
+                    className='md:hidden p-3 text-gray-400 hover:text-white'
+                    onClick={handleMobileBack}
+                  >
+                    <ArrowLeft className='h-6 w-6' />
+                  </button>
+                  <div className='flex-1'>
+                    {activeChat?.type === 'group' ? (
+                      <GroupHeader
+                        groupId={activeChat.groupId}
+                        groupName={activeChat.name}
+                        groupDescription={activeChat.description}
+                        groupProfilePicture={activeChat.profilePicture}
+                        userId={userId}
+                      />
+                    ) : (
+                      <ChatHeader
+                        activeChat={activeChat}
+                        userId={userId}
+                        token={token}
+                        onOpenInfo={() => setShowInfoPanel((v) => !v)}
+                        onCompareNumbers={() => {
+                          window.dispatchEvent(
+                            new CustomEvent('verifySafetyNumber', {
+                              detail: { peerId: String(activeChat.id) },
+                            })
+                          )
+                        }}
+                      />
+                    )}
+                  </div>
+                </div>
+                <div className='flex-1 overflow-hidden'>
+                  {activeChat?.type === 'group' ? (
+                    <GroupChat
+                      token={token}
+                      activeGroupId={activeChat.groupId}
+                      activeGroupName={activeChat.name}
+                      userId={userId}
+                      username={username}
+                      currentWallpaper={currentWallpaper}
+                    />
+                  ) : (
+                    <Chat
+                      token={token}
+                      activeChat={activeChat.id}
+                      onNewMessage={handleNewMessage}
+                      currentWallpaper={currentWallpaper}
+                      contact={activeChat}
+                    />
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
               </div>
-            </div>
-            <div className='flex-1 overflow-hidden'>
-              {activeChat?.type === 'group' ? (
-                <GroupChat
-                  token={token}
-                  activeGroupId={activeChat.groupId}
-                  activeGroupName={activeChat.name}
-                  userId={userId}
-                  username={username}
-                  currentWallpaper={currentWallpaper}
-                />
-              ) : (
-                <Chat
-                  token={token}
-                  activeChat={activeChat.id}
-                  onNewMessage={handleNewMessage}
-                  currentWallpaper={currentWallpaper}
-                />
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-          </div>
-        ) : (
-          <EmptyState activeView={activeView} t={t} />
-        )}
-      </div>
 
-      <CreateGroupModal
-        open={createGroupOpen}
-        onClose={() => setCreateGroupOpen(false)}
-        userId={userId}
-        onCreated={(group) => {
-          if (!group?.groupId) return
-          handleGroupSelect(group)
-        }}
-      />
+              {/* UserInfoPanel — slide in from right for direct chats */}
+              {showInfoPanel && activeChat?.type !== 'group' && (
+                <UserInfoPanel contact={activeChat} onClose={() => setShowInfoPanel(false)} />
+              )}
+            </div>
+          ) : (
+            <EmptyState activeView={activeView} t={t} />
+          )}
+        </div>
+
+        <CreateGroupModal
+          open={createGroupOpen}
+          onClose={() => setCreateGroupOpen(false)}
+          userId={userId}
+          onCreated={(group) => {
+            if (!group?.groupId) return
+            handleGroupSelect(group)
+          }}
+        />
+
+        <NewChatModal
+          open={newChatOpen}
+          onClose={() => setNewChatOpen(false)}
+          onStartChat={(user) => {
+            handleActiveChatChange(user)
+          }}
+        />
+      </div>
     </div>
   )
 }

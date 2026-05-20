@@ -1,146 +1,88 @@
-import { useState, useRef } from 'react'
-import PropTypes from 'prop-types'
-import { Send, X } from 'lucide-react'
-import { compressImage } from '../utils/imageUtils'
+import { useState } from 'react'
+import { Plus, Smile, Image as ImgIcon, Paperclip, Send, Mic } from 'lucide-react'
 
-const SendText = ({ sendMessage }) => {
-  const [text, setText] = useState('')
-  const [selectedImage, setSelectedImage] = useState(null)
-  const [imagePreview, setImagePreview] = useState(null)
-  const [showImageModal, setShowImageModal] = useState(false)
-  const [imageText, setImageText] = useState('')
-  const fileInputRef = useRef(null)
+export default function MessageInput({ onSend, disabled }) {
+  const [value, setValue] = useState('')
+  const [focused, setFocused] = useState(false)
 
-  const handleChange = (event) => {
-    setText(event.target.value)
-  }
-
-  const handleSubmit = (event) => {
-    event.preventDefault()
-    if (text.trim()) {
-      sendMessage(text)
-      setText('')
-    }
-  }
-
-  // Trigger hidden file input when image icon clicked
-  const handleImageClick = () => {
-    fileInputRef.current?.click()
-  }
-
-  // Read selected file and show preview modal
-  const handleImageChange = (event) => {
-    const file = event.target.files?.[0]
-    if (file) {
-      setSelectedImage(file)
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        setImagePreview(e.target.result)
-        setShowImageModal(true)
-      }
-      reader.readAsDataURL(file)
-    }
-  }
-
-  // Send image with optional text
-  const handleImageSend = async () => {
-    if (selectedImage) {
-      // Compress the image
-      const compressedBlob = await compressImage(selectedImage)
-
-      // Convert to base64 for storage
-      const reader = new FileReader()
-      reader.onload = () => {
-        const base64Image = reader.result
-        sendMessage(imageText, base64Image)
-
-        // Reset state
-        setShowImageModal(false)
-        setSelectedImage(null)
-        setImagePreview(null)
-        setImageText('')
-      }
-      reader.readAsDataURL(compressedBlob)
-    }
-  }
-
-  const handleCloseModal = () => {
-    setShowImageModal(false)
-    setSelectedImage(null)
-    setImagePreview(null)
-    setImageText('')
+  const submit = () => {
+    if (!value.trim() || disabled) return
+    onSend?.(value.trim())
+    setValue('')
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className='flex items-center p-3 bg-black border-t border-gray-800'
-    >
-      <div className='flex-1 flex items-center bg-white/10 rounded-full border border-gray-700 focus-within:ring-2 focus-within:ring-[#8e79f2]'>
-        <button
-          type='button'
-          onClick={handleImageClick}
-          className='pl-4 pr-2 py-3 text-gray-400 hover:text-white'
-        >
-          <i className='fa-solid fa-image text-lg'></i>
-        </button>
-        <input
-          type='file'
-          ref={fileInputRef}
-          onChange={handleImageChange}
-          accept='image/*'
-          className='hidden'
-        />
-        {showImageModal && (
-          <div className='fixed inset-0 bg-black/70 flex items-center justify-center z-50'>
-            <div className='bg-gray-900 rounded-lg p-4 max-w-md w-full mx-4'>
-              <button
-                onClick={handleCloseModal}
-                className='float-right text-gray-400 hover:text-white'
-              >
-                <X className='w-5 h-5' />
-              </button>
-
-              <img src={imagePreview} alt='Preview' className='max-h-64 mx-auto rounded-lg mb-4' />
-
-              <input
-                type='text'
-                value={imageText}
-                onChange={(e) => setImageText(e.target.value)}
-                placeholder='Add a caption...'
-                className='w-full p-3 bg-gray-800 text-white rounded-lg mb-4'
-              />
-
-              <button
-                onClick={handleImageSend}
-                className='w-full p-3 bg-indigo-700 text-white rounded-lg'
-              >
-                Send Image
-              </button>
-            </div>
-          </div>
-        )}
-        <input
-          type='text'
-          value={text}
-          onChange={handleChange}
-          placeholder='Type a message...'
-          className='flex-1 py-3 px-5 bg-white/10 text-white rounded-full focus:outline-none focus:ring-2 focus:ring-[#8e79f2] placeholder-gray-400 border border-gray-700'
-        />
-      </div>
-      <button
-        type='submit'
-        disabled={!text.trim()}
-        className={`ml-3 p-3 rounded-full ${text.trim() ? 'bg-indigo-700 text-white hover:bg-[#8e79f2]' : 'bg-gray-700 text-gray-500 cursor-not-allowed'} transition-colors`}
+    <div className='border-t border-white/[0.05] px-6 py-4'>
+      <div
+        className={`flex items-center gap-2 rounded-full border px-2.5 py-1.5 backdrop-blur transition-all ${
+          focused
+            ? 'border-violet-400/45 bg-white/[0.025] shadow-[0_0_0_4px_rgba(168,85,247,0.10),inset_0_0_28px_rgba(168,85,247,0.06)]'
+            : 'border-white/[0.06] bg-white/[0.015]'
+        }`}
       >
-        <Send className='w-5 h-5' />
-      </button>
-    </form>
+        <button
+          data-testid='msg-attach'
+          title='Attach'
+          className='grid h-9 w-9 place-items-center rounded-full text-white/55 hover:bg-white/[0.04] hover:text-white transition'
+        >
+          <Plus size={17} />
+        </button>
+
+        <input
+          data-testid='msg-input'
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), submit())}
+          placeholder='Type a message or choose an option…'
+          className='flex-1 bg-transparent px-1.5 py-2 text-[13.5px] text-white placeholder:text-white/30 focus:outline-none'
+        />
+
+        <div className='flex items-center gap-0.5 pr-1'>
+          <IconBtn title='Emoji' testid='msg-emoji'>
+            <Smile size={16} />
+          </IconBtn>
+          <IconBtn title='GIFs' testid='msg-gifs'>
+            <span className='mono text-[10px] font-bold tracking-tight'>GIF</span>
+          </IconBtn>
+          <IconBtn title='Image' testid='msg-image'>
+            <ImgIcon size={16} />
+          </IconBtn>
+          <IconBtn title='File' testid='msg-file'>
+            <Paperclip size={15} />
+          </IconBtn>
+          <IconBtn title='Voice' testid='msg-voice'>
+            <Mic size={15} />
+          </IconBtn>
+        </div>
+
+        <button
+          data-testid='msg-send'
+          onClick={submit}
+          disabled={!value.trim() || disabled}
+          className='echo-cta ml-1 grid h-10 w-10 place-items-center rounded-full disabled:opacity-40 disabled:saturate-50'
+          title='Send'
+        >
+          <Send size={15} className='text-white' />
+        </button>
+      </div>
+      <div className='mt-2 flex items-center justify-between px-2 text-[10px] text-white/30 mono'>
+        <span>Argon2id · X25519 · ChaCha20-Poly1305</span>
+        <span>Press ⏎ to send · ⇧⏎ for new line</span>
+      </div>
+    </div>
   )
 }
 
-SendText.propTypes = {
-  sendMessage: PropTypes.func.isRequired,
+function IconBtn({ children, title, testid }) {
+  return (
+    <button
+      title={title}
+      data-testid={testid}
+      className='grid h-8 w-8 place-items-center rounded-full text-white/45 hover:bg-white/[0.04] hover:text-white transition-all'
+    >
+      {children}
+    </button>
+  )
 }
-
-export default SendText
