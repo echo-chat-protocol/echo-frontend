@@ -1,17 +1,23 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { User, Lock, Eye, EyeOff, ArrowRight } from "lucide-react";
-import { connectWithoutAuth } from "../../socket";
 import { jwtDecode } from "jwt-decode";
+import PropTypes from "prop-types";
 import init from "@mascaro101/echo-protocol";
 import eld from "../../utils/storage/EncryptedLocalDatabase";
 import AuthLayout from "@/features/auth/AuthLayout";
+import AuthService from "@services/auth.service";
+import { useAuth } from "@store/AuthContext";
+import { connectSocket } from "@services/socket";
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const { login } = useAuth();
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
+  const [remember, setRemember] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -27,62 +33,49 @@ export default function LoginPage() {
     setSubmitting(true);
 
     try {
+      // Initialize WASM crypto library
       await init();
-      const socket = connectWithoutAuth();
 
-      socket.once("connect", () => {
-        socket.emit("login", { username, password }, async (response) => {
-          if (response.success) {
-            localStorage.setItem("token", response.token);
+      // ── REST login ──────────────────────────────────────────────────────────
+      const res = await AuthService.login({ username, password });
 
-            const resolvedUserId =
-              response.userId ||
-              (() => {
-                try {
-                  const decoded = jwtDecode(response.token);
-                  return decoded?.id || "";
-                } catch {
-                  return "";
-                }
-              })();
-
-            localStorage.setItem("userId", resolvedUserId);
-
-            // Unlock the encrypted database
-            try {
-              const userExists = await eld.userExists(resolvedUserId);
-
-              if (userExists) {
-                await eld.unlock(resolvedUserId, password);
-              } else {
-                console.warn("[ELD] No local database - keys not available locally");
-              }
-
-              setSubmitting(false);
-              navigate("/dashboard");
-            } catch (err) {
-              console.error("[ELD] Unlock failed:", err);
-              setError("Failed to unlock: " + err.message);
-              setSubmitting(false);
-              socket.disconnect();
-            }
-          } else {
-            setError(response.error || "Login failed");
-            setSubmitting(false);
-            socket.disconnect();
-          }
-        });
-      });
-
-      socket.once("connect_error", (err) => {
-        console.error("Connection error:", err);
-        setError("Failed to connect to authentication server.");
+      if (!res?.success) {
+        setError(res?.error || "Login failed");
         setSubmitting(false);
-      });
+        return;
+      }
 
+      const accessToken  = res.token;
+      const refreshToken = res.refreshToken;
+      const userId       = res.userId || (() => {
+        try { return jwtDecode(accessToken)?.id || ""; } catch { return ""; }
+      })();
+
+      // Update global auth context (stores tokens, decodes user)
+      login(accessToken, refreshToken, userId);
+
+      // ── Unlock local encrypted key store (ELD) ────────────────────────────
+      try {
+        const userExists = await eld.userExists(userId);
+        if (userExists) {
+          await eld.unlock(userId, password);
+        } else {
+          console.warn("[ELD] No local database — keys not available locally");
+        }
+      } catch (err) {
+        console.error("[ELD] Unlock failed:", err);
+        setError("Failed to unlock local key store: " + err.message);
+        setSubmitting(false);
+        return;
+      }
+
+      // ── Connect socket with the fresh token ───────────────────────────────
+      connectSocket();
+
+      navigate("/dashboard");
     } catch (err) {
-      console.error("Login initialization error:", err);
-      setError("Crypto initialization failed: " + err.message);
+      console.error("Login error:", err);
+      setError(err?.message || "Login failed. Please try again.");
       setSubmitting(false);
     }
   };
@@ -134,7 +127,18 @@ export default function LoginPage() {
           }
         />
 
-
+        <div className="flex items-center justify-between text-sm">
+          <label className="inline-flex items-center gap-2 text-[#cfcfdc] cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              data-testid="login-remember"
+              className="h-4 w-4 rounded border-white/20 bg-black/40 accent-[#a855f7]"
+            />
+            Remember this device
+          </label>
+        </div>
 
         {error && (
           <div
@@ -172,16 +176,7 @@ export default function LoginPage() {
   );
 }
 
-function Field({
-  id,
-  label,
-  icon: Icon,
-  right,
-  value,
-  onChange,
-  testid,
-  ...rest
-}) {
+function Field({ id, label, icon: Icon, right, value, onChange, testid, ...rest }) {
   return (
     <div>
       <label
@@ -205,3 +200,13 @@ function Field({
     </div>
   );
 }
+
+Field.propTypes = {
+  id: PropTypes.string.isRequired,
+  label: PropTypes.string.isRequired,
+  icon: PropTypes.elementType.isRequired,
+  right: PropTypes.node,
+  value: PropTypes.string.isRequired,
+  onChange: PropTypes.func.isRequired,
+  testid: PropTypes.string,
+};

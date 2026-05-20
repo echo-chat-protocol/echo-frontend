@@ -5,11 +5,10 @@ import topLevelAwait from 'vite-plugin-top-level-await'
 
 import path, { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import pkg from './package.json'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
-
-import pkg from './package.json'
 
 export default defineConfig({
   define: {
@@ -23,6 +22,27 @@ export default defineConfig({
     wasm(),
     topLevelAwait(),
   ],
+
+  // ── Dev-server proxy ─────────────────────────────────────────────────────
+  // Forwards /api/v1/* and /socket.io/* from localhost to the Render backend
+  // so the browser never sees a cross-origin request (no CORS error).
+  // In production Vite is not involved — requests go directly to the backend.
+  server: {
+    proxy: {
+      '/api': {
+        target: 'https://echo-backend-preproduction.onrender.com',
+        changeOrigin: true,
+        secure: true,
+      },
+      '/socket.io': {
+        target: 'https://echo-backend-preproduction.onrender.com',
+        changeOrigin: true,
+        secure: true,
+        ws: true, // proxy WebSocket connections too
+      },
+    },
+  },
+
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

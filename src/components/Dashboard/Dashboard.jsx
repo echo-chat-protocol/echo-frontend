@@ -9,6 +9,7 @@ import Sidebar from './DashboardComponents/Sidebar/Sidebar'
 import ChatHeader from './DashboardComponents/Header/ChatHeader'
 import GroupHeader from './DashboardComponents/Header/GroupHeader'
 import ConversationList from './DashboardComponents/Conversations/ConversationList'
+import SettingsView from './Settings/Settings'
 
 import { useConversations } from './DashboardComponents/hooks/useConversations'
 import { useGroups } from './DashboardComponents/hooks/useGroups'
@@ -38,10 +39,11 @@ import eld from '../../utils/storage/EncryptedLocalDatabase'
 import GroupList from './DashboardComponents/Groups/GroupList'
 import CreateGroupModal from './Groups/CreateGroupModal'
 import GroupChat from './Chat/GroupChat'
+import { tokenStorage } from '@services/api'
 
 const Dashboard = () => {
   const { t } = useTranslation()
-  const token = localStorage.getItem('token')
+  const token = tokenStorage.getAccess()
   const navigate = useNavigate()
   const { username, userId, profileImage } = getUserData(token)
 
@@ -79,16 +81,20 @@ const Dashboard = () => {
     }
     return unread
   })
-  const [currentWallpaper, setCurrentWallpaper] = useState(() => {
+  const currentWallpaper = (() => {
     const saved = localStorage.getItem('chatWallpaper')
     return saved && WALLPAPER_PREVIEWS[saved] ? saved : 'default'
-  })
+  })()
+
   const [userProfileImage, setUserProfileImage] = useState(profileImage)
   const [socket, setSocket] = useState(null)
   const [incomingCall, setIncomingCall] = useState(null)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [showMobileChat, setShowMobileChat] = useState(false)
   const [createGroupOpen, setCreateGroupOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    return localStorage.getItem('sidebarCollapsed') === 'true'
+  })
   const GROUP_CACHE_PREFIX = 'group:'
 
   // Hooks personalizados - must be before useEffects that use them
@@ -624,6 +630,7 @@ const Dashboard = () => {
       sharedSocket.off('newGroupMessage', handleNewGroupMessageNotification)
       clearMlsKeyPackageRetry()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, userId])
 
   useEffect(() => {
@@ -730,13 +737,6 @@ const Dashboard = () => {
     setShowMobileChat(false)
   }
 
-  const handleWallpaperChange = (wallpaper) => {
-    if (WALLPAPER_PREVIEWS[wallpaper]) {
-      setCurrentWallpaper(wallpaper)
-      localStorage.setItem('chatWallpaper', wallpaper)
-    }
-  }
-
   const handleActiveChatChange = (friendData) => {
     handleChatSelect(friendData)
     updateRecentConversations(friendData)
@@ -762,7 +762,7 @@ const Dashboard = () => {
     eld.lock()
 
     sessionStorage.removeItem(`eld-pass-${userId}`)
-    localStorage.removeItem('token')
+    tokenStorage.clear()
     localStorage.removeItem('userId')
     localStorage.removeItem('username')
 
@@ -870,38 +870,46 @@ const Dashboard = () => {
       {/* Sidebar - Hidden on mobile, shown via menu */}
       <div
         className={`
-        fixed md:relative inset-y-0 left-0 z-50
+        fixed md:relative inset-y-0 left-0 z-50 h-full
         transform ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
         md:translate-x-0 transition-transform duration-300 ease-in-out
       `}
       >
         <Sidebar
-          activeView={activeView}
-          handleViewChange={(view) => {
-            handleViewChange(view)
+          active={activeView === 'friends' ? 'contacts' : activeView}
+          onChange={(view) => {
+            const mappedView = view === 'contacts' ? 'friends' : view
+            handleViewChange(mappedView)
             setIsMobileMenuOpen(false)
           }}
-          handleProfileClick={() => {
+          user={{
+            name: username,
+            avatar: userProfileImage,
+          }}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={() => {
+            const nextVal = !sidebarCollapsed
+            setSidebarCollapsed(nextVal)
+            localStorage.setItem('sidebarCollapsed', String(nextVal))
+          }}
+          onOpenProfile={() => {
             handleProfileClick()
             setIsMobileMenuOpen(false)
           }}
-          handleLogout={handleLogout}
-          profileImage={userProfileImage}
-          username={username}
+          onLogout={handleLogout}
           unreadMessages={unreadMessages}
-          onWallpaperChange={handleWallpaperChange}
-          currentWallpaper={currentWallpaper}
         />
       </div>
 
       {/* Navigation Panel - Full width on mobile when chat not shown */}
       <div
         className={`
-        ${showMobileChat ? 'hidden' : 'flex'} md:flex
-        w-full md:w-80 bg-black border-r border-gray-700 flex-col
+        ${showMobileChat || activeView === 'settings' ? 'hidden' : 'flex'} 
+        ${activeView === 'settings' ? 'md:hidden' : 'md:flex'}
+        w-full md:w-80 bg-black border-r border-white/[0.08] flex-col
       `}
       >
-        <div className='p-4 border-b border-gray-700'>
+        <div className='p-4 border-b border-white/[0.08]'>
           <div className='flex items-center gap-3 mb-4'>
             {/* Mobile menu button */}
             <button
@@ -914,32 +922,38 @@ const Dashboard = () => {
           </div>
 
           <div className='flex gap-2 mb-4'>
-            <div className='relative w-full'>
-              <input
-                data-testid='dashboard-search'
-                type='text'
-                placeholder={
-                  activeView === 'friends' ? 'Search for friends...' : 'Search chats & groups...'
-                }
-                className='w-full px-6 py-3 bg-white/10 border border-gray-700 rounded-full focus:outline-none focus:ring-2 focus:ring-[#8e79f2] focus:border-[#8e79f2] text-white placeholder-gray-400 backdrop-blur-sm transition-all duration-300'
-                value={activeView === 'friends' ? searchTerm : conversationsSearchTerm}
-                onChange={(e) =>
-                  activeView === 'friends'
-                    ? setSearchTerm(e.target.value)
-                    : setConversationsSearchTerm(e.target.value)
-                }
-                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-              />
+            {activeView !== 'settings' ? (
+              <div className='relative w-full'>
+                <input
+                  data-testid='dashboard-search'
+                  type='text'
+                  placeholder={
+                    activeView === 'friends' ? 'Search for friends...' : 'Search chats & groups...'
+                  }
+                  className='w-full px-6 py-3 bg-white/10 border border-white/[0.08] rounded-full focus:outline-none focus:ring-2 focus:ring-[#8e79f2] focus:border-[#8e79f2] text-white placeholder-gray-500 backdrop-blur-sm transition-all duration-300 text-sm'
+                  value={activeView === 'friends' ? searchTerm : conversationsSearchTerm}
+                  onChange={(e) =>
+                    activeView === 'friends'
+                      ? setSearchTerm(e.target.value)
+                      : setConversationsSearchTerm(e.target.value)
+                  }
+                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                />
+                <button
+                  className='absolute right-4 top-3 text-gray-400 hover:text-white'
+                  onClick={handleSearch}
+                >
+                  <Search className='h-5 w-5' />
+                </button>
+              </div>
+            ) : (
+              <div className='text-sm text-gray-400 py-2.5 font-semibold uppercase tracking-wider px-2'>
+                Settings
+              </div>
+            )}
+            {activeView !== 'friends' && activeView !== 'settings' && (
               <button
-                className='absolute right-4 top-3 text-gray-400 hover:text-white'
-                onClick={handleSearch}
-              >
-                <Search className='h-6 w-6' />
-              </button>
-            </div>
-            {activeView !== 'friends' && (
-              <button
-                className='p-2 rounded-full bg-indigo-700 text-white hover:bg-[#8e79f2] transition-colors'
+                className='p-2.5 rounded-full bg-violet-600/10 border border-violet-500/20 text-violet-300 hover:bg-[#8e79f2] hover:text-white transition-all shadow-[0_0_15px_rgba(168,85,247,0.1)]'
                 title='Create group'
                 onClick={() => setCreateGroupOpen(true)}
               >
@@ -949,49 +963,55 @@ const Dashboard = () => {
           </div>
         </div>
 
-        <div className='flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-black'>
+        <div className='flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/[0.05] scrollbar-track-black'>
           {activeView === 'friends' ? (
             <Friends
               token={token}
               onActiveChatChange={handleActiveChatChange}
               searchTerm={searchTerm}
             />
-          ) : (
+          ) : activeView === 'settings' ? null : (
             <div>
-              {filteredGroups.length > 0 && (
-                <div className='px-4 pt-4 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider'>
-                  Groups
-                </div>
-              )}
-              {filteredGroups.length > 0 && (
-                <GroupList
-                  groups={filteredGroups}
-                  activeChat={activeChat}
-                  onSelect={handleGroupSelect}
-                  unreadByGroupId={unreadGroupMessages}
-                />
+              {activeView !== 'chats' && filteredGroups.length > 0 && (
+                <>
+                  <div className='px-4 pt-4 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider'>
+                    Groups
+                  </div>
+                  <GroupList
+                    groups={filteredGroups}
+                    activeChat={activeChat}
+                    onSelect={handleGroupSelect}
+                    unreadByGroupId={unreadGroupMessages}
+                  />
+                </>
               )}
 
-              {filteredConversations.length > 0 && (
-                <div className='px-4 pt-4 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider'>
-                  Direct messages
-                </div>
-              )}
-              {filteredConversations.length > 0 ? (
-                <ConversationList
-                  conversations={filteredConversations}
-                  activeChat={activeChat}
-                  userId={userId}
-                  handleChatSelect={handleChatSelect}
-                  setIsHovered={setIsChatItemHovered}
-                  ref={conversationsListRef}
-                />
-              ) : (
-                <p className='text-gray-400 text-sm p-4'>
-                  {conversationsSearchTerm
-                    ? 'No conversations match your search'
-                    : 'No recent conversations'}
-                </p>
+              {activeView !== 'groups' && (
+                <>
+                  {filteredConversations.length > 0 && (
+                    <div className='px-4 pt-4 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider'>
+                      Direct messages
+                    </div>
+                  )}
+                  {filteredConversations.length > 0 ? (
+                    <ConversationList
+                      conversations={filteredConversations}
+                      activeChat={activeChat}
+                      userId={userId}
+                      handleChatSelect={handleChatSelect}
+                      setIsHovered={setIsChatItemHovered}
+                      ref={conversationsListRef}
+                    />
+                  ) : (
+                    activeView === 'chats' && (
+                      <p className='text-gray-400 text-sm p-4'>
+                        {conversationsSearchTerm
+                          ? 'No conversations match your search'
+                          : 'No recent conversations'}
+                      </p>
+                    )
+                  )}
+                </>
               )}
             </div>
           )}
@@ -1005,7 +1025,9 @@ const Dashboard = () => {
         flex-1 flex-col bg-black
       `}
       >
-        {activeChat ? (
+        {activeView === 'settings' ? (
+          <SettingsView />
+        ) : activeChat ? (
           <div className='flex flex-col h-full'>
             {/* Mobile back button integrated with ChatHeader */}
             <div className='flex items-center md:block'>

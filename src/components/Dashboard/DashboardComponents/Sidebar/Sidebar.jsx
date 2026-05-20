@@ -1,243 +1,223 @@
-import { MessageCircle, User, Users, LogOut, PaintbrushVertical } from 'lucide-react'
-import { useState, useRef, useEffect } from 'react'
-import { useTranslation } from 'react-i18next'
-import { WALLPAPER_PREVIEWS } from '../utils/wallpaper.jsx'
+import {
+  MessageSquareText,
+  Users,
+  UsersRound,
+  Settings,
+  LogOut,
+  Plus,
+  ChevronLeft,
+} from 'lucide-react'
+import PropTypes from 'prop-types'
 
-// Custom hook para detectar clics fuera del elemento
-const useClickOutside = (ref, callback) => {
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (ref.current && !ref.current.contains(event.target)) {
-        callback()
-      }
-    }
+const NAV = [
+  { id: 'chats', label: 'Chats', icon: MessageSquareText },
+  { id: 'contacts', label: 'Contacts', icon: Users },
+  { id: 'groups', label: 'Groups', icon: UsersRound },
+  { id: 'settings', label: 'Settings', icon: Settings },
+]
 
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [ref, callback])
+/* Echo logo (matches landing) */
+function EchoMark({ size = 30 }) {
+  return (
+    <img
+      src='/echo-logo.svg'
+      alt='ECHO Logo'
+      style={{ width: size, height: size }}
+      className='object-contain'
+    />
+  )
 }
 
-const getConsistentColor = (username) => {
+EchoMark.propTypes = {
+  size: PropTypes.number,
+}
+
+const getConsistentColor = (username = '') => {
   const colors = ['FF5733', '33FF57', '3357FF', 'F033FF', 'FF33F0']
   const index = username.length % colors.length
   return colors[index]
 }
 
-const WallpaperThumbnail = ({ wp, isActive, onClick }) => {
-  const videoRef = useRef(null)
-
-  const handleMouseEnter = () => {
-    if (videoRef.current && wp.type === 'video') {
-      videoRef.current.currentTime = 0
-      videoRef.current.play()
-    }
-  }
+export default function Sidebar({
+  active,
+  onChange,
+  user,
+  collapsed,
+  onToggleCollapsed,
+  onOpenProfile,
+  onLogout,
+  unreadMessages = {},
+}) {
+  const totalUnread = Object.values(unreadMessages).reduce((a, b) => a + b, 0)
 
   return (
-    <button
-      onClick={onClick}
-      onMouseEnter={handleMouseEnter}
-      className={`group relative overflow-hidden rounded-md aspect-square ${
-        isActive ? 'ring-2 ring-[#8e79f2]' : ''
+    <aside
+      data-testid='echo-sidebar'
+      className={`echo-floating relative flex h-full shrink-0 flex-col items-stretch transition-[width] duration-300 ease-out border-r border-white/[0.06] ${
+        collapsed ? 'w-[78px]' : 'w-[230px]'
       }`}
-      title={wp.name}
     >
-      {wp.type === 'video' ? (
-        <div className='w-full h-full relative'>
-          <video
-            ref={videoRef}
-            loop
-            muted
-            playsInline
-            poster={wp.posterUrl}
-            className='w-full h-full object-cover absolute inset-0'
-          >
-            <source src={wp.videoUrl} type='video/mp4' />
-          </video>
-          <div className='absolute inset-0 bg-black/20 flex items-center justify-center'>
-            <span className='text-xl'>{wp.icon}</span>
-          </div>
-        </div>
-      ) : wp.type === 'image' ? (
-        <div
-          className='w-full h-full bg-cover bg-center transition-all duration-300 group-hover:scale-110'
-          style={{ backgroundImage: `url(${wp.imageUrl})` }}
-        >
-          <div className='absolute inset-0 bg-black/20 flex items-center justify-center'>
-            <span className='text-xl'>{wp.icon}</span>
-          </div>
-        </div>
-      ) : (
-        <div
-          className={`w-full h-full ${wp.className} transition-all duration-300 group-hover:scale-110`}
-        >
-          <div className='absolute inset-0 bg-black/20 flex items-center justify-center'>
-            <span className='text-xl'>{wp.icon}</span>
-          </div>
-        </div>
-      )}
-
-      <div className='absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-1 opacity-0 group-hover:opacity-100 transition-opacity'>
-        <span className='text-xs text-white truncate block'>{wp.name}</span>
-      </div>
-    </button>
-  )
-}
-
-const Sidebar = ({
-  activeView,
-  handleViewChange,
-  handleProfileClick,
-  handleLogout,
-  profileImage,
-  username,
-  unreadMessages,
-  onWallpaperChange,
-  currentWallpaper,
-}) => {
-  const { t } = useTranslation()
-  const [showWallpaperMenu, setShowWallpaperMenu] = useState(false);
-  const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const wallpaperMenuRef = useRef(null);
-  const profileMenuRef = useRef(null);
-  const totalUnread = Object.values(unreadMessages).reduce((a, b) => a + b, 0);
-
-  useClickOutside(wallpaperMenuRef, () => {
-    setShowWallpaperMenu(false)
-  })
-
-  useClickOutside(profileMenuRef, () => {
-    setShowProfileMenu(false);
-  });
-
-  return (
-    <div className='w-16 h-full bg-[#303030] flex flex-col items-center py-4 space-y-6 border-r border-gray-800 relative'>
-      {/* Navegación principal */}
-      <nav className='flex flex-col items-center space-y-6 flex-grow'>
-        {/* Botón de chats */}
-        <button
-          data-testid="nav-chats"
-          className={`relative p-3 rounded-xl transition-colors duration-200 ${
-            activeView === 'chats'
-              ? 'bg-[#8e79f2] text-white'
-              : 'text-gray-400 hover:bg-[#c7b9ff] hover:text-[#4a3a8a]'
-          }`}
-          onClick={() => handleViewChange('chats')}
-        >
-          <MessageCircle className='w-5 h-5' />
-          {totalUnread > 0 && (
-            <span className='absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center'>
-              {totalUnread}
-            </span>
-          )}
-        </button>
-
-        {/* Botón de amigos */}
-        <button
-          data-testid="nav-friends"
-          className={`p-3 rounded-xl transition-colors duration-200 ${
-            activeView === 'friends'
-              ? 'bg-[#8e79f2] text-white'
-              : 'text-gray-400 hover:bg-[#c7b9ff] hover:text-[#4a3a8a]'
-          }`}
-          onClick={() => handleViewChange('friends')}
-        >
-          <Users className='w-5 h-5' />
-        </button>
-
-        {/* Botón de wallpapers */}
-        <div className='relative' ref={wallpaperMenuRef}>
-          <button
-            className={`p-3 rounded-xl transition-colors duration-200 ${
-              showWallpaperMenu
-                ? 'bg-[#8e79f2] text-white'
-                : 'text-gray-400 hover:bg-[#c7b9ff] hover:text-[#4a3a8a]'
-            }`}
-            onClick={() => setShowWallpaperMenu(!showWallpaperMenu)}
-          >
-            <PaintbrushVertical className='w-5 h-5' />
-          </button>
-
-          {showWallpaperMenu && (
-            <div className='absolute left-full top-0 ml-2 w-48 bg-[#404040] rounded-lg shadow-xl z-50 overflow-hidden border border-gray-600'>
-              <div className='p-2 border-b border-gray-600'>
-                <h3 className='text-xs font-semibold text-gray-300'>
-                  {t('sidebar.wallpapers.title')}
-                </h3>
-              </div>
-              <div className='grid grid-cols-2 gap-2 p-2'>
-                {Object.entries(WALLPAPER_PREVIEWS).map(([id, wp]) => (
-                  <WallpaperThumbnail
-                    key={id}
-                    wp={wp}
-                    isActive={currentWallpaper === id}
-                    onClick={() => {
-                      onWallpaperChange(id)
-                      setShowWallpaperMenu(false)
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </nav>
-
-      {/* Sección inferior - Profile with dropdown menu */}
-      <div className="relative" ref={profileMenuRef}>
-        {/* Avatar de usuario */}
-        <div
-          className="relative w-10 h-10 rounded-full overflow-hidden border-2 border-black cursor-pointer hover:border-[#8e79f2] transition-colors"
-          onClick={() => setShowProfileMenu(!showProfileMenu)}
-        >
-          <img
-            src={
-              profileImage ||
-              `https://ui-avatars.com/api/?name=${username}&background=${getConsistentColor(username)}&color=fff`
-            }
-            alt='User Avatar'
-            className='w-full h-full object-cover'
-            onError={(e) => {
-              e.target.src = `https://ui-avatars.com/api/?name=${username}&background=${getConsistentColor(username)}&color=fff`
-            }}
-          />
-        </div>
-
-        {/* Profile dropdown menu */}
-        {showProfileMenu && (
-          <div className="absolute left-full bottom-0 ml-2 w-40 bg-[#404040] rounded-lg shadow-xl z-50 overflow-hidden border border-gray-600">
-            <div className="p-2 border-b border-gray-600">
-              <p className="text-xs font-semibold text-white truncate">{username}</p>
-            </div>
-            <div className="py-1">
-              <button
-                className="w-full px-3 py-2 text-sm text-gray-300 hover:bg-[#8e79f2] hover:text-white flex items-center gap-2 transition-colors"
-                onClick={() => {
-                  handleProfileClick();
-                  setShowProfileMenu(false);
-                }}
-              >
-                <User className="w-4 h-4" />
-                Profile
-              </button>
-              <button
-                className="w-full px-3 py-2 text-sm text-gray-300 hover:bg-red-600 hover:text-white flex items-center gap-2 transition-colors"
-                onClick={() => {
-                  handleLogout();
-                  setShowProfileMenu(false);
-                }}
-              >
-                <LogOut className="w-4 h-4" />
-                Logout
-              </button>
+      {/* Brand — matches landing nav style */}
+      <div className='flex items-center gap-2.5 px-5 pt-6 pb-5'>
+        <EchoMark size={28} />
+        {!collapsed && (
+          <div className='leading-tight animate-fade-in'>
+            <div className='text-[15px] font-semibold tracking-[-0.04em]'>ECHO</div>
+            <div className='text-[9.5px] uppercase tracking-[0.22em] text-white/35 mono mt-0.5'>
+              v3.2.0
             </div>
           </div>
         )}
       </div>
-    </div>
+
+      <div className='mx-5 mb-4 h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent' />
+
+      {/* New chat CTA — landing pill style */}
+      <div className='px-3.5'>
+        <button
+          data-testid='sidebar-compose-btn'
+          className='echo-cta group inline-flex w-full items-center justify-center gap-2 rounded-full px-3.5 py-2.5 text-[12.5px] font-medium'
+        >
+          <Plus size={15} strokeWidth={2.4} />
+          {!collapsed && <span className='animate-fade-in'>New chat</span>}
+        </button>
+      </div>
+
+      {/* Nav — left accent bar, no pill bg */}
+      <nav className='mt-5 flex flex-col px-2.5 gap-1'>
+        {NAV.map(({ id, label, icon: Icon }) => {
+          const isActive = active === id
+          return (
+            <button
+              key={id}
+              data-testid={`sidebar-${id}`}
+              onClick={() => onChange(id)}
+              className={`group relative flex items-center gap-3 px-4 py-2.5 transition-colors rounded-xl hover:bg-white/[0.02] ${
+                isActive ? 'text-white' : 'text-white/50 hover:text-white'
+              }`}
+            >
+              {/* Left accent bar */}
+              <span
+                aria-hidden
+                className={`absolute left-0 top-1/2 h-5 w-[2px] -translate-y-1/2 rounded-full transition-all ${
+                  isActive
+                    ? 'bg-violet-400 shadow-[0_0_10px_rgba(168,85,247,0.85)]'
+                    : 'bg-transparent group-hover:bg-white/15'
+                }`}
+              />
+              <Icon size={16.5} strokeWidth={1.6} className={isActive ? 'text-violet-300' : ''} />
+              {!collapsed && (
+                <span className='text-[12.5px] font-medium tracking-[-0.01em] animate-fade-in'>
+                  {label}
+                </span>
+              )}
+
+              {/* Unread badge */}
+              {id === 'chats' && totalUnread > 0 && (
+                <span
+                  className={`absolute bg-violet-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center ${
+                    collapsed ? 'top-1 right-2 h-4 w-4' : 'right-4 h-4 min-w-[16px] px-1'
+                  }`}
+                >
+                  {totalUnread}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </nav>
+
+      {/* Footer — terminal ticker */}
+      <div className='mt-auto px-5 pb-3'>
+        {!collapsed && (
+          <div className='mb-3 flex flex-col gap-1.5 animate-fade-in'>
+            <div className='mono flex items-center gap-2 text-[9.5px] uppercase tracking-[0.22em] text-emerald-300/80'>
+              <span className='h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(34,197,94,0.7)] animate-pulse' />
+              256<span className='text-white/25'>·</span>bit · sealed
+            </div>
+            <div className='mono text-[10px] tracking-[0.05em] text-white/30 leading-relaxed'>
+              <span className='text-white/55'>argon2id</span>
+              <span className='text-white/25'> / </span>
+              <span className='text-white/55'>x25519</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <button
+        data-testid='sidebar-collapse-btn'
+        onClick={onToggleCollapsed}
+        className='mx-3.5 mb-2 flex items-center justify-center rounded-full border border-white/[0.06] bg-white/[0.015] py-1.5 text-white/45 hover:border-violet-400/40 hover:text-white transition-all'
+        title={collapsed ? 'Expand' : 'Collapse'}
+      >
+        <ChevronLeft
+          size={13}
+          className={`transition-transform duration-300 ${collapsed ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {/* Profile */}
+      <div
+        data-testid='sidebar-profile'
+        className='mx-2.5 mb-3 flex items-center gap-3 rounded-2xl border border-transparent p-2 text-left transition-all hover:border-white/[0.07] hover:bg-white/[0.02]'
+      >
+        <button
+          onClick={onOpenProfile}
+          className='relative shrink-0 focus:outline-none group/avatar'
+          title='View profile'
+        >
+          <img
+            src={
+              user.avatar ||
+              `https://ui-avatars.com/api/?name=${user.name}&background=${getConsistentColor(user.name)}&color=fff`
+            }
+            alt={user.name}
+            className='h-9 w-9 rounded-full object-cover ring-1 ring-white/10 group-hover/avatar:ring-violet-400 transition-all'
+            onError={(e) => {
+              e.target.src = `https://ui-avatars.com/api/?name=${user.name}&background=${getConsistentColor(user.name)}&color=fff`
+            }}
+          />
+          <span className='absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-black bg-emerald-400 shadow-[0_0_6px_rgba(34,197,94,0.7)]' />
+        </button>
+
+        {!collapsed && (
+          <button
+            onClick={onOpenProfile}
+            className='min-w-0 flex-1 text-left focus:outline-none animate-fade-in'
+          >
+            <div className='truncate text-[12.5px] font-medium leading-tight text-white hover:text-violet-300 transition-colors'>
+              {user.name}
+            </div>
+            <div className='truncate text-[9.5px] uppercase tracking-[0.18em] text-emerald-400/80 mono mt-0.5'>
+              Online
+            </div>
+          </button>
+        )}
+
+        {!collapsed && (
+          <button
+            onClick={onLogout}
+            className='ml-auto p-1.5 rounded-lg text-white/30 hover:text-red-400 hover:bg-red-500/10 transition-all animate-fade-in'
+            title='Log out'
+          >
+            <LogOut size={13} />
+          </button>
+        )}
+      </div>
+    </aside>
   )
 }
 
-export default Sidebar
+Sidebar.propTypes = {
+  active: PropTypes.string.isRequired,
+  onChange: PropTypes.func.isRequired,
+  user: PropTypes.shape({
+    name: PropTypes.string.isRequired,
+    avatar: PropTypes.string,
+  }).isRequired,
+  collapsed: PropTypes.bool.isRequired,
+  onToggleCollapsed: PropTypes.func.isRequired,
+  onOpenProfile: PropTypes.func.isRequired,
+  onLogout: PropTypes.func.isRequired,
+  unreadMessages: PropTypes.object,
+}

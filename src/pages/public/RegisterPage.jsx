@@ -9,10 +9,11 @@ import {
   ArrowRight,
   Check,
 } from "lucide-react";
+import PropTypes from "prop-types";
 import AuthLayout from "@/features/auth/AuthLayout";
 import eld from "../../utils/storage/EncryptedLocalDatabase";
-import { connectWithoutAuth } from "../../socket";
 import { generateOneTimePreKeys } from "@/components/Dashboard/Chat/utils/crypto/opk";
+import AuthService from "@services/auth.service";
 
 import init, {
   generate_ed25519_private_key,
@@ -68,7 +69,7 @@ export default function RegisterPage() {
 
   const score = useMemo(() => {
     const str = getPasswordStrength(password);
-    return Math.min(str, 4); // Max index is 4 for STRENGTH
+    return Math.min(str, 4);
   }, [password]);
 
   const meta = STRENGTH[score];
@@ -106,115 +107,97 @@ export default function RegisterPage() {
     setSubmitting(true);
 
     try {
-      // Initialize WASM
+      // ── 1. Initialize WASM ───────────────────────────────────────────────────
       await init();
 
-      // Generate identity pair
-      const randomBytes_IK = crypto.getRandomValues(new Uint8Array(32));
+      // ── 2. Generate identity keypair (Ed25519 + X25519) ──────────────────────
+      const randomBytes_IK  = crypto.getRandomValues(new Uint8Array(32));
       const randomBytes_SPK = crypto.getRandomValues(new Uint8Array(32));
 
-      const privateKey = generate_ed25519_private_key(randomBytes_IK);
+      const privateKey    = generate_ed25519_private_key(randomBytes_IK);
       const privatePreKey = generate_private_prekey(randomBytes_SPK);
-      const publicPreKey = generate_public_prekey(privatePreKey);
+      const publicPreKey  = generate_public_prekey(privatePreKey);
 
-      const x25519_key_pair = derive_x25519_from_ed25519_private(privateKey);
+      const x25519_key_pair                   = derive_x25519_from_ed25519_private(privateKey);
       const { x25519_private_key, x25519_public_key } = x25519_key_pair;
 
-      const xeddsaKey = convert_x25519_to_xeddsa(x25519_private_key);
-      const edPrivScaler = xeddsaKey.slice(0, 32);
-      const prefix = xeddsaKey.slice(32, 64);
-      const deterministicNonce = compute_determenistic_nonce(prefix, publicPreKey);
-      const noncePoint = compute_nonce_point(deterministicNonce);
-      const publicEdKey = derive_ed25519_keypair_from_x25519(x25519_private_key);
-      const challenge_hash = compute_challenge_hash(noncePoint, publicEdKey, publicPreKey);
-      const signature_scaler = compute_signature_scaler(
-        deterministicNonce,
-        challenge_hash,
-        edPrivScaler
-      );
-      const signature = compute_signature(noncePoint, signature_scaler);
+      const xeddsaKey           = convert_x25519_to_xeddsa(x25519_private_key);
+      const edPrivScaler        = xeddsaKey.slice(0, 32);
+      const prefix              = xeddsaKey.slice(32, 64);
+      const deterministicNonce  = compute_determenistic_nonce(prefix, publicPreKey);
+      const noncePoint          = compute_nonce_point(deterministicNonce);
+      const publicEdKey         = derive_ed25519_keypair_from_x25519(x25519_private_key);
+      const challenge_hash      = compute_challenge_hash(noncePoint, publicEdKey, publicPreKey);
+      const signature_scaler    = compute_signature_scaler(deterministicNonce, challenge_hash, edPrivScaler);
+      const signature           = compute_signature(noncePoint, signature_scaler);
 
       const valid = verify_signature(signature, publicPreKey, publicEdKey);
-      if (!valid) {
-        throw new Error("Failed to verify the generated signed pre-key");
-      }
+      if (!valid) throw new Error("Failed to verify the generated signed pre-key");
 
-      // Generate OPK bundle
+      // ── 3. Generate OPK bundle ──────────────────────────────────────────────
       const { privateKeys: opkPrivateKeys, publicBundle: opkPublicBundle } =
         await generateOneTimePreKeys(100);
 
+      // ── 4. Encode keys to Base64 strings ────────────────────────────────────
+      const arrayBufferToBase64 = (buffer) =>
+        btoa(String.fromCharCode(...new Uint8Array(buffer)));
+
       const publicKeyStringX25519 = Buffer.from(x25519_public_key).toString("base64");
       const publicKeyStringED25519 = Buffer.from(publicEdKey).toString("base64");
-      const publicPreKeyString = Buffer.from(publicPreKey).toString("base64");
-      const signatureString = Buffer.from(signature).toString("base64");
+      const publicPreKeyString    = Buffer.from(publicPreKey).toString("base64");
+      const signatureString       = Buffer.from(signature).toString("base64");
 
-      const arrayBufferToBase64 = (buffer) => {
-        return btoa(String.fromCharCode(...new Uint8Array(buffer)));
-      };
+      const privatePreKeyBase64       = arrayBufferToBase64(privatePreKey);
+      const ed25519PrivateKeyBase64   = arrayBufferToBase64(privateKey);
+      const x25519PrivateKeyBase64    = arrayBufferToBase64(x25519_private_key);
+      const x25519PublicKeyBase64     = arrayBufferToBase64(x25519_public_key);
 
-      const privatePreKeyBase64 = arrayBufferToBase64(privatePreKey);
-      const ed25519PrivateKeyBase64 = arrayBufferToBase64(privateKey);
-      const x25519PrivateKeyBase64 = arrayBufferToBase64(x25519_private_key);
-      const x25519PublicKeyBase64 = arrayBufferToBase64(x25519_public_key);
-
+      // ── 5. Build keyBundle (matches backend schema exactly) ──────────────────
       const keyBundle = {
-        publicIdentityKeyX25519: publicKeyStringX25519,
+        publicIdentityKeyX25519:  publicKeyStringX25519,
         publicIdentityKeyEd25519: publicKeyStringED25519,
-        publicSignedPreKey: [publicPreKeyString, signatureString],
-        oneTimePreKeys: opkPublicBundle,
+        publicSignedPreKey:       [publicPreKeyString, signatureString],
+        oneTimePreKeys:           opkPublicBundle,  // [{ opkId, opkPub, publicKey }]
       };
 
-      const socket = connectWithoutAuth();
-      socket.emit(
-        "register",
-        { username, password, keyBundle, aboutme: "", profilePicture: "" },
-        async (response) => {
-          if (response.success) {
-            try {
-              // Create encrypted database
-              await eld.createUser(response.userId, password);
-
-              // Store keybundle encrypted
-              await eld.storeIdentityKeys({
-                privateKeyEd25519: ed25519PrivateKeyBase64,
-                privateKeyX25519: x25519PrivateKeyBase64,
-                publicKeyX25519: x25519PublicKeyBase64,
-                publicKeyEd25519: publicKeyStringED25519,
-                privatePreKey: privatePreKeyBase64,
-              });
-
-              await eld.storeOPKs(opkPrivateKeys);
-
-              // Lock database until next unlock on login
-              eld.lock();
-
-              setSuccess("Registration successful! Redirecting to login...");
-              setTimeout(() => {
-                setSubmitting(false);
-                navigate("/login");
-              }, 1200);
-
-            } catch (err) {
-              console.error("[ELD] Storage generation failed:", err);
-              setError("Encrypted storage generation failed: " + err.message);
-              setSubmitting(false);
-            }
-          } else {
-            setError(response.error || "Registration failed on server");
-            setSubmitting(false);
-          }
-        }
-      );
-
-      socket.once("connect_error", (err) => {
-        console.error("Connection error:", err);
-        setError("Could not reach authentication server.");
-        setSubmitting(false);
+      // ── 6. Register via REST ─────────────────────────────────────────────────
+      const res = await AuthService.register({
+        username,
+        password,
+        keyBundle,
+        aboutme: "",
+        profilePicture: "",
       });
+
+      if (!res?.success) {
+        setError(res?.error || "Registration failed on server");
+        setSubmitting(false);
+        return;
+      }
+
+      const userId = res.userId;
+
+      // ── 7. Create and populate encrypted local database ──────────────────────
+      await eld.createUser(userId, password);
+      await eld.storeIdentityKeys({
+        privateKeyEd25519: ed25519PrivateKeyBase64,
+        privateKeyX25519:  x25519PrivateKeyBase64,
+        publicKeyX25519:   x25519PublicKeyBase64,
+        publicKeyEd25519:  publicKeyStringED25519,
+        privatePreKey:     privatePreKeyBase64,
+      });
+      await eld.storeOPKs(opkPrivateKeys);
+      eld.lock();
+
+      setSuccess("Registration successful! Redirecting to login…");
+      setTimeout(() => {
+        setSubmitting(false);
+        navigate("/login");
+      }, 1200);
 
     } catch (err) {
       console.error("Registration failed:", err);
-      setError("Registration flow failed: " + err.message);
+      setError(err?.message || "Registration flow failed. Please try again.");
       setSubmitting(false);
     }
   };
@@ -383,16 +366,16 @@ export default function RegisterPage() {
 
         <ul className="grid grid-cols-2 gap-2 text-[11px] text-[#a0a0a0]">
           {[
-            "Curve25519 keys via WASM",
-            "Zero-knowledge local DB",
-            "No phone number required",
-            "Argon2id local hashing",
-          ].map((t) => (
-            <li key={t} className="flex items-center gap-1.5">
+            "Curve25519 keypair on-device",
+            "Zero-knowledge by design",
+            "No phone number ever",
+            "Export & rotate any time",
+          ].map((txt) => (
+            <li key={txt} className="flex items-center gap-1.5">
               <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gradient-to-br from-[#7c3aed] to-[#a855f7]">
                 <Check className="h-2 w-2 text-white" strokeWidth={3} />
               </span>
-              {t}
+              {txt}
             </li>
           ))}
         </ul>
@@ -401,15 +384,7 @@ export default function RegisterPage() {
   );
 }
 
-function Field({
-  id,
-  label,
-  icon: Icon,
-  value,
-  onChange,
-  testid,
-  ...rest
-}) {
+function Field({ id, label, icon: Icon, value, onChange, testid, ...rest }) {
   return (
     <div>
       <label
@@ -432,3 +407,12 @@ function Field({
     </div>
   );
 }
+
+Field.propTypes = {
+  id: PropTypes.string.isRequired,
+  label: PropTypes.string.isRequired,
+  icon: PropTypes.elementType.isRequired,
+  value: PropTypes.string.isRequired,
+  onChange: PropTypes.func.isRequired,
+  testid: PropTypes.string,
+};
