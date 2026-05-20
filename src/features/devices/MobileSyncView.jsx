@@ -337,16 +337,14 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
       deviceId = resolvedDeviceId
     }
 
-    const patchedPackage = deviceJwt
-      ? { ...historyPackage, auth: { ...historyPackage.auth, token: deviceJwt } }
-      : historyPackage
-
-    const importResult = await importHistoryPackage(patchedPackage, { unlockSecret })
+    const importResult = await importHistoryPackage(historyPackage, { unlockSecret, deviceJwt })
 
     try {
       await generateAndUploadDeviceKeyBundle(deviceId)
     } catch {
-      // Non-fatal — forwarding will still work via the shared-IK envelope key.
+      // Non-fatal at the UI level, but this device won't receive fan-out from
+      // peers until its public bundle is uploaded. Surfaced via the device
+      // list rather than blocking the pairing handshake.
     }
 
     setSynced({
@@ -402,10 +400,11 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
           ? await derivePairingDhDebug(ik.priv, receivedEpk, 'DH(scanner_IK_priv, ek_pub)')
           : null
         const keyB64 = encodeKeyBase64(ik.pub)
-        if (!localStorage.getItem('userId')) resetDeviceId()
-
-        let scannerDeviceMetadata = getDeviceMetadata()
-        let deviceId = scannerDeviceMetadata.deviceId
+        const deviceId = resetDeviceId()
+        let scannerDeviceMetadata = {
+          ...getDeviceMetadata(),
+          deviceId,
+        }
 
         if (pairingPayload.type === 'echo_dh_pairing') {
           await deviceService.submitDhIdentityToServer(pairingPayload.serverUrl, {

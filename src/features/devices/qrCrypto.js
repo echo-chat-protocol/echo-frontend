@@ -32,27 +32,18 @@ function b64dec(str) {
 }
 
 // ── IK resolution ───────────────────────────────────────────────────────────
-// Priority: account IK from ELD (same across all logged-in devices of this
-// account) → device-local IK in localStorage → freshly generated IK.
+// Each device holds its own X25519 identity key in localStorage and NEVER
+// imports a sibling's IK private. The primary writes its IK to localStorage at
+// registration; secondaries generate fresh on first open.
+//
+// One-time bootstrap path: existing primary installations registered before
+// per-device IKs were enforced kept their IK only in ELD. If localStorage is
+// empty and ELD already has identity keys, we copy ELD → localStorage exactly
+// once; from then on localStorage is authoritative and ELD is never read here.
 
 export async function getOrCreateDeviceIK() {
   await init()
 
-  // Account IK — available when ELD is unlocked (user is logged in)
-  if (eld.isUnlocked?.()) {
-    try {
-      const keys = await eld.getIdentityKeys()
-      if (keys?.privateKeyX25519 && keys?.publicKeyX25519) {
-        return {
-          priv: b64dec(keys.privateKeyX25519),
-          pub: b64dec(keys.publicKeyX25519),
-          source: 'eld',
-        }
-      }
-    } catch {}
-  }
-
-  // Device-local IK — persists across app opens without requiring login
   const stored = localStorage.getItem(LS_IK_KEY)
   if (stored) {
     try {
@@ -61,7 +52,27 @@ export async function getOrCreateDeviceIK() {
     } catch {}
   }
 
-  // First open — generate and persist a fresh X25519 key pair
+  // Migration for pre-split primary installs: adopt the in-ELD account IK as
+  // this device's permanent IK, then persist it to localStorage so subsequent
+  // calls never need to consult ELD again.
+  if (eld.isUnlocked?.()) {
+    try {
+      const keys = await eld.getIdentityKeys()
+      if (keys?.privateKeyX25519 && keys?.publicKeyX25519) {
+        localStorage.setItem(
+          LS_IK_KEY,
+          JSON.stringify({ priv: keys.privateKeyX25519, pub: keys.publicKeyX25519 })
+        )
+        return {
+          priv: b64dec(keys.privateKeyX25519),
+          pub: b64dec(keys.publicKeyX25519),
+          source: 'local',
+        }
+      }
+    } catch {}
+  }
+
+  // Fresh device — generate and persist a brand-new IK pair.
   const rand = crypto.getRandomValues(new Uint8Array(32))
   const priv = await generate_private_ephemeral_key(rand)
   const pub = await generate_public_ephemeral_key(priv)

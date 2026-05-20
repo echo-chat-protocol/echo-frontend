@@ -22,15 +22,18 @@ import {
 import { encryptOutgoingMessage } from './utils/chat/messageEncryption'
 import { decryptIncomingMessage } from './utils/chat/messageDecryption'
 import { forwardMessageToDevices, requestSessionSync } from '../../../utils/deviceForward'
+import { buildDmFanoutTargetsIncludingSiblings } from './utils/chat/perDeviceSession'
 
 function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
   const socket = getSocket()
 
   const token = tokenProp ?? localStorage.getItem('token') ?? ''
 
-  const userId = token ? jwtDecode(token).id : ''
+  const decodedToken = token ? jwtDecode(token) : null
+  const userId = decodedToken?.id || ''
   const targetUserId = activeChat
-  const username = token ? jwtDecode(token).username : ''
+  const username = decodedToken?.username || ''
+  const ownDeviceUserId = decodedToken?.deviceUserId || null
   const [messages, setMessages] = useState([])
   const [privateKeyArray, setPrivateKeyArray] = useState(null)
   const [sendBlocked, setSendBlocked] = useState(false)
@@ -136,6 +139,8 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
         throw new Error('No private key available in ELD')
       }
 
+      const ownDeviceId = localStorage.getItem('echo-device-id') || null
+
       const messages = Array.isArray(payload) ? payload : [payload]
 
       for (const message of messages) {
@@ -155,33 +160,78 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
           continue
         }
 
-        if (message.userId == activeChat || message.userId == userId) {
+        // Per-device fan-out filter: if the message is tagged with a
+        // peerDeviceId, only the matching device should decrypt it. Every
+        // device of both the sender's and the recipient's accounts receives
+        // every fanout copy via the user-id rooms — drop the ones that
+        // aren't addressed to this device.
+        if (
+          message.peerDeviceId &&
+          ownDeviceId &&
+          String(message.peerDeviceId) !== String(ownDeviceId)
+        ) {
+          continue
+        }
+
+        // Sibling-display branch: message.userId === own user id, peerDeviceId
+        // matches this device → another of our own devices sent this; we
+        // receive a sibling-fanout copy and need to display it under the
+        // peer conversation (message.targetUserId).
+        const isSiblingFanout =
+          Boolean(message.peerDeviceId) && String(message.userId) === String(userId)
+        const conversationPartner = isSiblingFanout
+          ? String(message.conversationUserId || targetUserId)
+          : String(message.userId)
+        const isLegacySiblingForward =
+          !message.peerDeviceId && String(message.userId) === String(userId)
+
+        if (conversationPartner === activeChat || isLegacySiblingForward) {
           try {
-            const sender = String(message.userId)
-            if (activeChat === sender) {
+            if (!isSiblingFanout && conversationPartner === activeChat) {
               socket.emit('messageSeen', { targetUserId })
             }
-            if (message.userId == userId) {
-              // Sent by another device of this account — Dashboard's persistent
-              // deviceEnvelope listener handles storage and display.
+            if (isLegacySiblingForward) {
+              // Legacy single-target path: sent by another device of this
+              // account via the deviceEnvelope channel (display-only).
               continue
             }
 
-            if (activeChat === sender) {
+            if (conversationPartner === activeChat) {
               const resolvedPrivateKey = await ensurePrivateKey()
+
+              const senderDeviceUserIdRaw = message.senderDeviceUserId
+              const senderUserId = String(message.userId)
+              const senderDeviceUserId =
+                senderDeviceUserIdRaw && String(senderDeviceUserIdRaw) !== senderUserId
+                  ? String(senderDeviceUserIdRaw)
+                  : null
+              const cryptoPeerUserId = senderDeviceUserId || senderUserId
+              const sessionTargetId = senderDeviceUserId || null
+
               const decrypted = await decryptIncomingMessage(
                 message,
                 nonce,
                 userId,
-                sender,
+                cryptoPeerUserId,
                 resolvedPrivateKey,
                 socket,
-                setMessages
+                setMessages,
+                sessionTargetId
+                  ? {
+                      sessionTargetId,
+                      peerUserId: cryptoPeerUserId,
+                      // For sibling-fanout the visual conversation belongs to
+                      // the peer conversation, not the sender (us).
+                      conversationKeyOverride: isSiblingFanout
+                        ? String(message.conversationUserId || targetUserId)
+                        : senderUserId,
+                    }
+                  : {}
               )
-              if (decrypted) {
+              if (decrypted && !isSiblingFanout) {
                 forwardMessageToDevices({
                   userId,
-                  targetUserId: sender,
+                  targetUserId: senderUserId,
                   text: decrypted.text ?? '',
                   image: decrypted.image ?? null,
                   direction: 'incoming',
@@ -265,83 +315,191 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
     }
 
     const privateKey = await ensurePrivateKey()
+    const ownDeviceId = localStorage.getItem('echo-device-id') || null
 
-    let outgoing
-    try {
-      outgoing = await encryptOutgoingMessage({
-        text,
-        imageData,
-        userId,
-        targetUserId,
-        username,
-        socket,
-        privateKeyArray: privateKey,
-      })
-    } catch (err) {
-      if (err?.code === 'PEER_IDENTITY_CHANGED') {
-        setSendBlocked(true)
-        setSendBlockedReason('Peer identity key changed. Verify this contact before sending.')
-        setIdentityChangeDetail({
-          savedPeer: err.savedPeer ?? null,
-          fetchedPeer: err.fetchedPeer ?? null,
-        })
-      }
-      throw err
-    }
+    // Build per-device fan-out targets: every trusted device of the peer +
+    // every trusted sibling device of this account (excluding ourselves).
+    // If the peer has not yet published any per-device bundle (legacy peer),
+    // fall back to a single user-level send so existing conversations still
+    // work end-to-end.
+    const fanoutTargets = await buildDmFanoutTargetsIncludingSiblings(
+      userId,
+      targetUserId,
+      ownDeviceId
+    ).catch(() => [])
 
-    const lastAccepted = await fetchLatestMessageNumber(socket, targetUserId)
-    const lastInt = Number.isSafeInteger(lastAccepted) ? lastAccepted : -1
-    outgoing.messageNumber = lastInt + 1
-
-    const sendOnce = (payload) =>
-      new Promise((resolve) => {
-        socket.emit('newMessage', payload, (ack) => resolve(ack))
-      })
-
-    let ack = await sendOnce(outgoing)
-    if (!ack?.success && (ack?.error === 'out_of_sync' || ack?.error === 'replay_detected')) {
-      const last = Number.isSafeInteger(ack?.lastAccepted) ? ack.lastAccepted : null
-      if (last != null) {
-        outgoing.messageNumber = last + 1
-        ack = await sendOnce(outgoing)
-      }
-    }
-
-    if (!ack?.success) {
-      throw new Error(ack?.error || 'Failed to send message')
-    }
-
-    if (ack?.success && outgoing?.peerIdentityToPin) {
-      storePeerIdentityKeys(targetUserId, {
-        ...outgoing.peerIdentityToPin,
-        firstSeenAt: Date.now(),
-      })
-    }
-
+    const messageId = crypto.randomUUID()
+    const createdAt = new Date().toISOString()
     const outgoingMsg = {
-      _id: crypto.randomUUID(),
+      _id: messageId,
       userId,
       targetUserId,
       username,
       text: text || '',
       image: imageData || null,
       seenStatus: false,
-      createdAt: new Date().toISOString(),
+      createdAt,
     }
 
-    await updateSavedMessages(userId, targetUserId, outgoingMsg, setMessages)
+    const sendOnce = (payload) =>
+      new Promise((resolve) => {
+        socket.emit('newMessage', payload, (ack) => resolve(ack))
+      })
 
-    forwardMessageToDevices({
-      userId,
-      targetUserId,
-      text: outgoingMsg.text,
-      image: outgoingMsg.image,
-      direction: 'outgoing',
-      messageId: outgoingMsg._id,
-      createdAt: outgoingMsg.createdAt,
-      seenStatus: outgoingMsg.seenStatus,
-      username,
-    }).catch(() => {})
+    const sendWithResync = async (payload, target) => {
+      // Each (sender_device, recipient_device) pair has its own conversation
+      // sequence on the server. Probe the latest accepted number for this
+      // specific pair, then send; on out_of_sync, re-probe and retry.
+      const sequenceScope = target
+        ? {
+            peerDeviceId: target.peerDeviceId ?? null,
+            peerDeviceUserId: target.peerDeviceUserId ?? null,
+            senderDeviceId: ownDeviceId,
+            senderDeviceUserId:
+              ownDeviceUserId && String(ownDeviceUserId) !== String(userId)
+                ? ownDeviceUserId
+                : null,
+          }
+        : {}
+      const lastAccepted = await fetchLatestMessageNumber(
+        socket,
+        payload.targetUserId || targetUserId,
+        sequenceScope
+      ).catch(() => -1)
+      const lastInt = Number.isSafeInteger(lastAccepted) ? lastAccepted : -1
+      payload.messageNumber = lastInt + 1
+      let ack = await sendOnce(payload)
+      if (!ack?.success && (ack?.error === 'out_of_sync' || ack?.error === 'replay_detected')) {
+        const last = Number.isSafeInteger(ack?.lastAccepted) ? ack.lastAccepted : null
+        if (last != null) {
+          payload.messageNumber = last + 1
+          ack = await sendOnce(payload)
+        }
+      }
+      return ack
+    }
+
+    if (fanoutTargets.length === 0) {
+      // Legacy single-target path: no per-device bundles published.
+      let outgoing
+      try {
+        outgoing = await encryptOutgoingMessage({
+          text,
+          imageData,
+          userId,
+          targetUserId,
+          username,
+          socket,
+          privateKeyArray: privateKey,
+        })
+      } catch (err) {
+        if (err?.code === 'PEER_IDENTITY_CHANGED') {
+          setSendBlocked(true)
+          setSendBlockedReason('Peer identity key changed. Verify this contact before sending.')
+          setIdentityChangeDetail({
+            savedPeer: err.savedPeer ?? null,
+            fetchedPeer: err.fetchedPeer ?? null,
+          })
+        }
+        throw err
+      }
+
+      const ack = await sendWithResync(outgoing, null)
+      if (!ack?.success) throw new Error(ack?.error || 'Failed to send message')
+
+      if (outgoing?.peerIdentityToPin) {
+        storePeerIdentityKeys(targetUserId, {
+          ...outgoing.peerIdentityToPin,
+          firstSeenAt: Date.now(),
+        })
+      }
+
+      await updateSavedMessages(userId, targetUserId, outgoingMsg, setMessages)
+
+      // Legacy own-outbound display-sync (no-op under per-device IK; harmless).
+      forwardMessageToDevices({
+        userId,
+        targetUserId,
+        text: outgoingMsg.text,
+        image: outgoingMsg.image,
+        direction: 'outgoing',
+        messageId: outgoingMsg._id,
+        createdAt: outgoingMsg.createdAt,
+        seenStatus: outgoingMsg.seenStatus,
+        username,
+      }).catch(() => {})
+      return
+    }
+
+    // Per-device fan-out: one encrypt + emit per (sender_device, target_device)
+    // pair. The peer's primary identity is pinned only on first contact (when
+    // PEER_IDENTITY_CHANGED is raised) — and we pin per-compound-session via
+    // the encrypt path so each device's session has its own identity scope.
+    let anySucceeded = false
+    let firstError = null
+
+    for (const target of fanoutTargets) {
+      let outgoing
+      try {
+        outgoing = await encryptOutgoingMessage({
+          text,
+          imageData,
+          userId,
+          targetUserId,
+          username,
+          socket,
+          privateKeyArray: privateKey,
+          sessionTargetId: target.sessionTargetId,
+          peerUserId: target.peerUserId,
+          precomputedBundle: target.bundle,
+        })
+      } catch (err) {
+        if (err?.code === 'PEER_IDENTITY_CHANGED') {
+          setSendBlocked(true)
+          setSendBlockedReason(
+            'A device identity key for this contact changed. Verify the contact before sending.'
+          )
+          setIdentityChangeDetail({
+            savedPeer: err.savedPeer ?? null,
+            fetchedPeer: err.fetchedPeer ?? null,
+          })
+          throw err
+        }
+        firstError = firstError ?? err
+        continue
+      }
+
+      // Tag the wire payload with the device-pair so the server keys the
+      // sequence by (senderDeviceId, peerDeviceId) and the recipient device
+      // can self-filter on receive.
+      outgoing.senderDeviceId = ownDeviceId
+      outgoing.senderDeviceUserId =
+        ownDeviceUserId && String(ownDeviceUserId) !== String(userId) ? ownDeviceUserId : null
+      outgoing.peerDeviceId = target.peerDeviceId
+      outgoing.peerDeviceUserId = target.peerDeviceUserId
+      if (target.peerUserId !== targetUserId) outgoing.conversationUserId = targetUserId
+
+      const ack = await sendWithResync(outgoing, target)
+      if (!ack?.success) {
+        firstError = firstError ?? new Error(ack?.error || 'Failed to send message')
+        continue
+      }
+      anySucceeded = true
+
+      if (outgoing?.peerIdentityToPin) {
+        storePeerIdentityKeys(target.sessionTargetId, {
+          ...outgoing.peerIdentityToPin,
+          firstSeenAt: Date.now(),
+        })
+      }
+    }
+
+    if (!anySucceeded) {
+      throw firstError ?? new Error('Failed to send message to any device')
+    }
+
+    // Persist the visual message once, under the user-level conversation key.
+    await updateSavedMessages(userId, targetUserId, outgoingMsg, setMessages)
     return
   }
 

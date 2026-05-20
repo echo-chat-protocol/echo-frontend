@@ -174,6 +174,18 @@ export default function RegisterPage() {
           if (response.success) {
             try {
               if (response.deviceId) localStorage.setItem("echo-device-id", response.deviceId);
+
+              // Persist this device's IK to localStorage so getOrCreateDeviceIK
+              // returns the same key the account was registered under, without
+              // needing ELD to be unlocked.
+              localStorage.setItem(
+                "echo_device_ik",
+                JSON.stringify({
+                  priv: x25519PrivateKeyBase64,
+                  pub: x25519PublicKeyBase64,
+                })
+              );
+
               await eld.createUser(response.userId, password);
 
               try {

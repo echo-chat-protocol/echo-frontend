@@ -91,6 +91,7 @@ export const deviceService = {
 
   listDevices: (userId) => request('GET', `/users/${userId}/devices`),
   getDeviceBundles: (userId) => request('GET', `/users/${userId}/devices/bundles`),
+  getDeviceIdentities: (userId) => request('GET', `/users/${userId}/devices/identities`),
   revokeDevice: (deviceId) => request('POST', `/devices/${deviceId}/revoke`, {}),
   registerDeviceKeys: (deviceId, keyBundle) =>
     request('POST', `/devices/${deviceId}/keys`, keyBundle),

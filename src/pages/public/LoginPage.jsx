@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { User, Lock, Eye, EyeOff, ArrowRight } from "lucide-react";
+import { User, Lock, Eye, EyeOff, ArrowRight, Bug, Loader2, QrCode } from "lucide-react";
 import { connectWithoutAuth } from "../../socket";
 import { jwtDecode } from "jwt-decode";
 import init from "@mascaro101/echo-protocol";
 import eld from "../../utils/storage/EncryptedLocalDatabase";
 import AuthLayout from "@/features/auth/AuthLayout";
 import { getDeviceMetadata } from "@/features/devices/deviceMetadata";
+import { createDebugUserAccount } from "@/features/auth/debugUser";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -15,6 +16,8 @@ export default function LoginPage() {
   const [show, setShow] = useState(false);
   const [remember, setRemember] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [debugCreating, setDebugCreating] = useState(false);
+  const [debugUser, setDebugUser] = useState(null);
   const [error, setError] = useState("");
 
   const onSubmit = async (e) => {
@@ -97,6 +100,23 @@ export default function LoginPage() {
     }
   };
 
+  const handleCreateDebugUser = async () => {
+    setDebugCreating(true);
+    setDebugUser(null);
+    setError("");
+
+    try {
+      const created = await createDebugUserAccount();
+      setUsername(created.username);
+      setPassword(created.password);
+      setDebugUser(created);
+    } catch (err) {
+      setError(err.message || "Failed to create debug user.");
+    } finally {
+      setDebugCreating(false);
+    }
+  };
+
   return (
     <AuthLayout
       title={
@@ -169,12 +189,43 @@ export default function LoginPage() {
         <button
           type="submit"
           data-testid="login-submit"
-          disabled={submitting}
+          disabled={submitting || debugCreating}
           className="btn-primary w-full"
         >
           {submitting ? "Verifying…" : "Sign in"}
           {!submitting && <ArrowRight className="h-4 w-4" />}
         </button>
+
+        <button
+          type="button"
+          onClick={() => navigate("/device-sync")}
+          disabled={submitting || debugCreating}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-white/75 transition-colors hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <QrCode className="h-4 w-4" />
+          Sync device
+        </button>
+
+        <button
+          type="button"
+          onClick={handleCreateDebugUser}
+          disabled={submitting || debugCreating}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-white/75 transition-colors hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {debugCreating ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Bug className="h-4 w-4" />
+          )}
+          {debugCreating ? "Creating debug user..." : "DEBUG"}
+        </button>
+
+        {debugUser && (
+          <div className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white/75">
+            Created <span className="font-mono text-white">{debugUser.username}</span> with{" "}
+            <span className="font-mono text-white">Pass123%</span>
+          </div>
+        )}
       </form>
 
       <p className="mt-6 text-[11px] text-[#7a7a8a] leading-relaxed">

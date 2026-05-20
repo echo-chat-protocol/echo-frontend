@@ -30,6 +30,12 @@ function storageEntriesForUser(userId) {
   return entries
 }
 
+// Visual-only history blob: plaintext messages, conversation/group lists, and
+// the minimum identifiers the new device needs to render the past. The new
+// device runs the protocol independently as its own cryptographic identity, so
+// the package MUST NOT carry the source device's IK private, DR ratchet state,
+// MLS leaf private keys, OPK privates, account JWT, or any other secret. Peers
+// rediscover and fan out to the new device via its own published bundle.
 export async function buildHistoryPackage() {
   if (!eld.isUnlocked()) {
     throw new Error('Unlock ECHO on this device before compiling chat history.')
@@ -39,10 +45,7 @@ export async function buildHistoryPackage() {
   if (!userId) throw new Error('Missing current user id.')
 
   const messages = await eld.exportMessagesForCurrentUser()
-  const mlsGroupStates = await eld.exportMlsGroupStatesForCurrentUser()
   const localStorageEntries = storageEntriesForUser(userId)
-  const identityKeys = await eld.getIdentityKeys().catch(() => null)
-  const sessionData = await eld.exportSessionDataForCurrentUser().catch(() => null)
 
   return {
     version: HISTORY_PACKAGE_VERSION,
@@ -51,18 +54,10 @@ export async function buildHistoryPackage() {
       userId,
       username: localStorage.getItem('username') || null,
     },
-    auth: {
-      token: localStorage.getItem('token') || null,
-      userId,
-      username: localStorage.getItem('username') || null,
-    },
     chats: safeJsonParse(localStorage.getItem(`recentConversations-${userId}`), []),
     groups: safeJsonParse(localStorage.getItem(`groups-${userId}`), []),
     messages,
-    mlsGroupStates,
     localStorageEntries,
-    identityKeys: identityKeys || null,
-    sessionData: sessionData || null,
   }
 }
 
@@ -98,24 +93,21 @@ export async function unlockOrCreateHistoryDatabase(historyPackage, unlockSecret
   sessionStorage.setItem(passKeyForUser(userId), unlockSecret)
 }
 
-export async function importHistoryPackage(historyPackage, { unlockSecret } = {}) {
+export async function importHistoryPackage(historyPackage, { unlockSecret, deviceJwt } = {}) {
   await unlockOrCreateHistoryDatabase(historyPackage, unlockSecret)
 
   const userId =
     eld.getCurrentUserId() || historyPackage.user?.userId || localStorage.getItem('userId')
-  if (historyPackage.auth?.token) {
-    localStorage.setItem('token', historyPackage.auth.token)
-  }
-  if (historyPackage.auth?.userId) {
-    localStorage.setItem('userId', historyPackage.auth.userId)
-  }
-  if (historyPackage.auth?.username) {
-    localStorage.setItem('username', historyPackage.auth.username)
-  }
-  if (historyPackage.user?.userId && !localStorage.getItem('userId')) {
+
+  // The new device receives a device-scoped JWT from the pairing flow itself —
+  // not from the package. The package never carries the source device's
+  // account-level token.
+  if (deviceJwt) localStorage.setItem('token', deviceJwt)
+
+  if (historyPackage.user?.userId) {
     localStorage.setItem('userId', historyPackage.user.userId)
   }
-  if (historyPackage.user?.username && !localStorage.getItem('username')) {
+  if (historyPackage.user?.username) {
     localStorage.setItem('username', historyPackage.user.username)
   }
 
@@ -131,24 +123,12 @@ export async function importHistoryPackage(historyPackage, { unlockSecret } = {}
     localStorage.setItem(`groups-${userId}`, JSON.stringify(historyPackage.groups || []))
   }
 
-  if (historyPackage.identityKeys) {
-    await eld.storeIdentityKeys(historyPackage.identityKeys)
-  }
-
-  if (historyPackage.sessionData) {
-    await eld.importSessionDataForCurrentUser(historyPackage.sessionData)
-  }
-
   const importedMessages = await eld.importMessagesForCurrentUser(historyPackage.messages || [])
-  const importedGroupStates = await eld.importMlsGroupStatesForCurrentUser(
-    historyPackage.mlsGroupStates || []
-  )
 
   window.dispatchEvent(new CustomEvent('localStorageUpdated', { detail: { userId } }))
 
   return {
     importedMessages,
-    importedGroupStates,
     chats: historyPackage.chats?.length || 0,
     groups: historyPackage.groups?.length || 0,
   }

@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { UserPlus, Monitor, QrCode } from 'lucide-react'
+import { Bug, Loader2, UserPlus, Monitor, QrCode } from 'lucide-react'
 import { useTauri } from '@/hooks/useTauri'
 import ParticlesBackground from '@/components/animations/ParticlesBackground'
 import DesktopSyncView from '@/features/devices/DesktopSyncView'
 import MobileSyncView from '@/features/devices/MobileSyncView'
 import { getOrCreateDeviceIK } from '@/features/devices/qrCrypto'
+import { createDebugUserAccount } from '@/features/auth/debugUser'
 
 export default function DeviceSyncPage() {
   const navigate = useNavigate()
@@ -16,6 +17,24 @@ export default function DeviceSyncPage() {
   }, [])
   const { isMobile } = useTauri()
   const [view, setView] = useState('landing') // 'landing' | 'sync'
+  const [debugCreating, setDebugCreating] = useState(false)
+  const [debugUser, setDebugUser] = useState(null)
+  const [debugError, setDebugError] = useState('')
+
+  const handleCreateDebugUser = async () => {
+    setDebugCreating(true)
+    setDebugError('')
+    setDebugUser(null)
+
+    try {
+      const created = await createDebugUserAccount()
+      setDebugUser(created)
+    } catch (err) {
+      setDebugError(err.message || 'Failed to create debug user.')
+    } finally {
+      setDebugCreating(false)
+    }
+  }
 
   if (view === 'sync') {
     return isMobile ? (
@@ -57,6 +76,40 @@ export default function DeviceSyncPage() {
               </p>
             </div>
           </button>
+
+          <button
+            onClick={handleCreateDebugUser}
+            disabled={debugCreating}
+            className='mt-2 flex w-full items-center gap-4 rounded-[26px] px-5 py-4 text-left text-white/75 transition-colors hover:bg-white/[0.04] hover:text-white disabled:cursor-not-allowed disabled:opacity-60'
+          >
+            <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03]'>
+              {debugCreating ? (
+                <Loader2 className='h-5 w-5 animate-spin' />
+              ) : (
+                <Bug className='h-5 w-5' />
+              )}
+            </div>
+            <div className='min-w-0 flex-1'>
+              <p className='font-medium'>DEBUG</p>
+              <p className='mt-0.5 text-xs text-white/35'>
+                {debugCreating ? 'Creating user...' : 'Password Pass123%'}
+              </p>
+            </div>
+          </button>
+
+          {(debugUser || debugError) && (
+            <div className='mt-3 rounded-[22px] border border-white/10 bg-black/35 px-4 py-3 text-sm'>
+              {debugUser ? (
+                <>
+                  <p className='text-white/45'>Created debug user</p>
+                  <p className='mt-1 font-mono text-white'>{debugUser.username}</p>
+                  <p className='mt-1 font-mono text-white/70'>Pass123%</p>
+                </>
+              ) : (
+                <p className='text-red-300'>{debugError}</p>
+              )}
+            </div>
+          )}
 
           <button
             onClick={() => navigate('/register')}

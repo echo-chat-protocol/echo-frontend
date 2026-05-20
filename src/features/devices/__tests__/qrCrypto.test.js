@@ -76,7 +76,32 @@ afterEach(() => vi.clearAllMocks())
 // ── getOrCreateDeviceIK ───────────────────────────────────────────────────────
 
 describe('getOrCreateDeviceIK', () => {
-  it('returns ELD keys with source="eld" when ELD is unlocked and has X25519 keys', async () => {
+  it('prefers localStorage over ELD when both are populated', async () => {
+    const localPriv = new Uint8Array(32).fill(0x11)
+    const localPub = new Uint8Array(32).fill(0x22)
+    localStorage.setItem(
+      LS_IK_KEY,
+      JSON.stringify({ priv: toB64(localPriv), pub: toB64(localPub) })
+    )
+
+    // ELD has a different key — we must NOT pick it up.
+    const eldPriv = new Uint8Array(32).fill(0xaa)
+    const eldPub = new Uint8Array(32).fill(0xbb)
+    eld.isUnlocked.mockReturnValue(true)
+    eld.getIdentityKeys.mockResolvedValue({
+      privateKeyX25519: toB64(eldPriv),
+      publicKeyX25519: toB64(eldPub),
+    })
+
+    const ik = await getOrCreateDeviceIK()
+
+    expect(ik.source).toBe('local')
+    expect(Array.from(ik.priv)).toEqual(Array.from(localPriv))
+    expect(Array.from(ik.pub)).toEqual(Array.from(localPub))
+    expect(eld.getIdentityKeys).not.toHaveBeenCalled()
+  })
+
+  it('one-time bootstrap: adopts ELD IK and persists it to localStorage when localStorage is empty', async () => {
     const privKey = new Uint8Array(32).fill(0xaa)
     const pubKey = new Uint8Array(32).fill(0xbb)
     eld.isUnlocked.mockReturnValue(true)
@@ -87,13 +112,16 @@ describe('getOrCreateDeviceIK', () => {
 
     const ik = await getOrCreateDeviceIK()
 
-    expect(ik.source).toBe('eld')
-    expect(ik.priv).toBeInstanceOf(Uint8Array)
+    expect(ik.source).toBe('local')
     expect(Array.from(ik.priv)).toEqual(Array.from(privKey))
     expect(Array.from(ik.pub)).toEqual(Array.from(pubKey))
+    // bootstrap must have persisted to localStorage
+    const stored = JSON.parse(localStorage.getItem(LS_IK_KEY))
+    expect(stored.priv).toBe(toB64(privKey))
+    expect(stored.pub).toBe(toB64(pubKey))
   })
 
-  it('falls back to localStorage when ELD is locked', async () => {
+  it('returns localStorage IK with source="local" when ELD is locked', async () => {
     eld.isUnlocked.mockReturnValue(false)
     const privKey = new Uint8Array(32).fill(0x11)
     const pubKey = new Uint8Array(32).fill(0x22)

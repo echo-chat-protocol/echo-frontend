@@ -79,11 +79,29 @@ export const decryptIncomingMessage = async (
   targetUserId,
   privateKeyArray,
   socket,
-  setMessages = null
+  setMessages = null,
+  options = {}
 ) => {
+  // Per-device fan-out: `sessionTargetId` is the keyManagement storage key
+  // (compound `peerUserId@peerDeviceId` for per-device, plain `peerUserId`
+  // legacy). `peerUserId` is the real peer user id used for any user-level
+  // lookups. `senderDevicePub` lets the X3DH response side use the sender's
+  // device-specific IK pub instead of fetching by user id.
+  const {
+    sessionTargetId = null,
+    peerUserId = null,
+    senderDevicePub = null,
+    conversationKeyOverride = null,
+  } = options
+  const sessionId = sessionTargetId ?? targetUserId
+  const realPeerUserId = peerUserId ?? targetUserId
+  // Visual conversation storage key — always the user-level id so all of a
+  // peer's devices roll up into one thread in the UI.
+  const conversationKey = conversationKeyOverride ?? realPeerUserId
+
   try {
-    const ephData = await getEphemeralData(userId, targetUserId)
-    console.log('Current ephemeral data for targetUserId', targetUserId, ephData)
+    const ephData = await getEphemeralData(userId, sessionId)
+    console.log('Current ephemeral data for sessionId', sessionId, ephData)
 
     const currentTargetPublicEphemeralKey =
       ephData?.currentTargetPublicEphemeralKey ?? ephData?.previousTargetPublicEphemeralKey ?? null
@@ -99,7 +117,7 @@ export const decryptIncomingMessage = async (
       knownTargetPublicEphemeralKeys[currentTargetPublicEphemeralKey] = true
     }
 
-    let root_key = await getRootKey(userId, targetUserId)
+    let root_key = await getRootKey(userId, sessionId)
     let messageKey = null
     let derivedNonce = null
 
@@ -109,7 +127,7 @@ export const decryptIncomingMessage = async (
     const n = Number(message.sendingNumber ?? 0)
     const pn = Number(message.previousSendingNumber ?? 0)
 
-    const rawSkipped = (await getSkippedMessages(targetUserId)) ?? {}
+    const rawSkipped = (await getSkippedMessages(sessionId)) ?? {}
     let skipped = JSON.parse(
       JSON.stringify(
         typeof rawSkipped === 'object' && rawSkipped !== null && !Array.isArray(rawSkipped)
@@ -145,7 +163,7 @@ export const decryptIncomingMessage = async (
             } else {
               nextSkipped[dh] = nextBucket
             }
-            await setSkippedMessages(targetUserId, nextSkipped)
+            await setSkippedMessages(sessionId, nextSkipped)
           }
         })
       }
@@ -161,23 +179,24 @@ export const decryptIncomingMessage = async (
       const init = await initializeDoubleRatchetResponse(
         socket,
         message,
-        targetUserId,
-        privateKeyArray
+        realPeerUserId,
+        privateKeyArray,
+        { senderDevicePub, peerIdentityScope: sessionId }
       )
       root_key = init?.root_key ?? null
       if (init?.peerIdentityToPin) {
         postDecryptActions.push(() =>
-          storePeerIdentityKeys(targetUserId, {
+          storePeerIdentityKeys(sessionId, {
             ...init.peerIdentityToPin,
             firstSeenAt: Date.now(),
           })
         )
       }
 
-      postDecryptActions.push(() => setRootKey(userId, targetUserId, root_key))
+      postDecryptActions.push(() => setRootKey(userId, sessionId, root_key))
       if (message?.opkId) postDecryptActions.push(() => deleteOPKPrivateKey(message.opkId))
 
-      const { receivingChainKey } = deriveChainKeys(root_key, userId, targetUserId)
+      const { receivingChainKey } = deriveChainKeys(root_key, userId, sessionId)
 
       if (!Number.isFinite(n) || n < 0) {
         throw new Error(`Invalid sendingNumber: ${message.sendingNumber}`)
@@ -209,17 +228,15 @@ export const decryptIncomingMessage = async (
       const nextReceivingChainKey = materialN.slice(32, 64)
       derivedNonce = materialN.slice(64, 76)
 
-      postDecryptActions.push(() =>
-        setReceivingChainKey(userId, targetUserId, nextReceivingChainKey)
-      )
-      postDecryptActions.push(() => setCurrentReceivingNumber(targetUserId, n + 1))
-      postDecryptActions.push(() => setSkippedMessages(targetUserId, evictSkipped(skipped)))
+      postDecryptActions.push(() => setReceivingChainKey(userId, sessionId, nextReceivingChainKey))
+      postDecryptActions.push(() => setCurrentReceivingNumber(sessionId, n + 1))
+      postDecryptActions.push(() => setSkippedMessages(sessionId, evictSkipped(skipped)))
 
       const publicEphemeralKeyBase64 = arrayBufferToBase64(publicEphemeralKey)
       postDecryptActions.push(() =>
         setOwnEphemeralKeys(
           userId,
-          targetUserId,
+          sessionId,
           publicEphemeralKeyBase64,
           arrayBufferToBase64(privateEphemeralKey)
         )
@@ -232,15 +249,15 @@ export const decryptIncomingMessage = async (
         const newRootKey2 = okm.slice(0, 32)
         const sendingKeyChain = okm.slice(32)
 
-        postDecryptActions.push(() => setRootKey(userId, targetUserId, newRootKey2))
+        postDecryptActions.push(() => setRootKey(userId, sessionId, newRootKey2))
         root_key = newRootKey2
-        postDecryptActions.push(() => setSendingChainKey(userId, targetUserId, sendingKeyChain))
+        postDecryptActions.push(() => setSendingChainKey(userId, sessionId, sendingKeyChain))
         derivedSendingFromDh = true
 
-        let currentSendingNumber = await getCurrentSendingNumber(targetUserId)
+        let currentSendingNumber = await getCurrentSendingNumber(sessionId)
         if (currentSendingNumber == null) currentSendingNumber = 0
-        postDecryptActions.push(() => setPreviousSendingNumber(targetUserId, currentSendingNumber))
-        postDecryptActions.push(() => setCurrentSendingNumber(targetUserId, 0))
+        postDecryptActions.push(() => setPreviousSendingNumber(sessionId, currentSendingNumber))
+        postDecryptActions.push(() => setCurrentSendingNumber(sessionId, 0))
       }
     }
     // If the RECEIVED message has continued the RATCHET, advance the RECEIVING chain.
@@ -252,7 +269,7 @@ export const decryptIncomingMessage = async (
         return null
       }
 
-      let Nr = await getCurrentReceivingNumber(targetUserId)
+      let Nr = await getCurrentReceivingNumber(sessionId)
       if (Nr == null) Nr = 0
 
       // 1) Close out OLD receiving chain: derive/store skipped keys Nr..pn-1 (if we have an old DH).
@@ -262,9 +279,9 @@ export const decryptIncomingMessage = async (
         if (!skipped[oldDh] || typeof skipped[oldDh] !== 'object' || Array.isArray(skipped[oldDh]))
           skipped[oldDh] = {}
 
-        oldCkr = await getReceivingChainKey(userId, targetUserId)
+        oldCkr = await getReceivingChainKey(userId, sessionId)
         if (!oldCkr) {
-          const { receivingChainKey } = deriveChainKeys(root_key, userId, targetUserId)
+          const { receivingChainKey } = deriveChainKeys(root_key, userId, sessionId)
           oldCkr = receivingChainKey
         }
       }
@@ -301,7 +318,7 @@ export const decryptIncomingMessage = async (
       }
 
       // Retrieve the private ephemeral key from ELD and decode
-      const currentEphData = await getEphemeralData(userId, targetUserId)
+      const currentEphData = await getEphemeralData(userId, sessionId)
       let privateEphemeralBase64 = currentEphData?.ephPriv
 
       const privateEphemeral = base64ToArrayBuffer(privateEphemeralBase64)
@@ -309,13 +326,13 @@ export const decryptIncomingMessage = async (
       // 2) DH ratchet: derive NEW receiving chain seed + new root key
       const { receivingChainKey: newCkrSeed, newRootKey } = await continueDoubleRatchetChain(
         socket,
-        targetUserId,
+        realPeerUserId,
         message.publicEphemeralKey,
         privateEphemeral,
         root_key
       )
 
-      postDecryptActions.push(() => setRootKey(userId, targetUserId, newRootKey))
+      postDecryptActions.push(() => setRootKey(userId, sessionId, newRootKey))
       //update local variable for same session use
       root_key = newRootKey
 
@@ -343,11 +360,9 @@ export const decryptIncomingMessage = async (
       const nextReceivingChainKey = materialN.slice(32, 64)
       derivedNonce = materialN.slice(64, 76)
 
-      postDecryptActions.push(() =>
-        setReceivingChainKey(userId, targetUserId, nextReceivingChainKey)
-      )
-      postDecryptActions.push(() => setCurrentReceivingNumber(targetUserId, n + 1))
-      postDecryptActions.push(() => setSkippedMessages(targetUserId, evictSkipped(skipped)))
+      postDecryptActions.push(() => setReceivingChainKey(userId, sessionId, nextReceivingChainKey))
+      postDecryptActions.push(() => setCurrentReceivingNumber(sessionId, n + 1))
+      postDecryptActions.push(() => setSkippedMessages(sessionId, evictSkipped(skipped)))
 
       const randomBytes = crypto.getRandomValues(new Uint8Array(32))
       await init_dh()
@@ -356,7 +371,7 @@ export const decryptIncomingMessage = async (
       postDecryptActions.push(() =>
         setOwnEphemeralKeys(
           userId,
-          targetUserId,
+          sessionId,
           arrayBufferToBase64(newPublicEph),
           arrayBufferToBase64(newPrivateEph)
         )
@@ -373,31 +388,31 @@ export const decryptIncomingMessage = async (
         sendingKeyChain: hkdf_expand.slice(32),
       }
 
-      postDecryptActions.push(() => setRootKey(userId, targetUserId, newRootKey2))
+      postDecryptActions.push(() => setRootKey(userId, sessionId, newRootKey2))
       root_key = newRootKey2
-      postDecryptActions.push(() => setSendingChainKey(userId, targetUserId, sendingKeyChain))
+      postDecryptActions.push(() => setSendingChainKey(userId, sessionId, sendingKeyChain))
       derivedSendingFromDh = true
 
-      let currentSendingNumber = await getCurrentSendingNumber(targetUserId)
+      let currentSendingNumber = await getCurrentSendingNumber(sessionId)
       if (currentSendingNumber == null) {
         currentSendingNumber = 0
       }
-      postDecryptActions.push(() => setPreviousSendingNumber(targetUserId, currentSendingNumber))
-      postDecryptActions.push(() => setCurrentSendingNumber(targetUserId, 0))
+      postDecryptActions.push(() => setPreviousSendingNumber(sessionId, currentSendingNumber))
+      postDecryptActions.push(() => setCurrentSendingNumber(sessionId, 0))
     } else {
       // If we already found a cached skipped key for this (dh, n), don't touch ratchet state.
       if (usedSkippedKey) {
         // The skipped key path already has the correct message key and state updates queued.
       } else {
-        let Nr = await getCurrentReceivingNumber(targetUserId)
+        let Nr = await getCurrentReceivingNumber(sessionId)
         if (Nr == null) Nr = 0
 
-        let receivingChainKey = await getReceivingChainKey(userId, targetUserId)
+        let receivingChainKey = await getReceivingChainKey(userId, sessionId)
         if (!receivingChainKey) {
           const { receivingChainKey: derivedReceivingChainKey } = deriveChainKeys(
             root_key,
             userId,
-            targetUserId
+            sessionId
           )
           receivingChainKey = derivedReceivingChainKey
         }
@@ -451,9 +466,9 @@ export const decryptIncomingMessage = async (
         const nextChainKey = materialN.slice(32, 64)
         derivedNonce = materialN.slice(64, 76)
 
-        postDecryptActions.push(() => setReceivingChainKey(userId, targetUserId, nextChainKey))
-        postDecryptActions.push(() => setCurrentReceivingNumber(targetUserId, n + 1))
-        postDecryptActions.push(() => setSkippedMessages(targetUserId, evictSkipped(skipped)))
+        postDecryptActions.push(() => setReceivingChainKey(userId, sessionId, nextChainKey))
+        postDecryptActions.push(() => setCurrentReceivingNumber(sessionId, n + 1))
+        postDecryptActions.push(() => setSkippedMessages(sessionId, evictSkipped(skipped)))
       }
     }
 
@@ -499,14 +514,14 @@ export const decryptIncomingMessage = async (
     // Only update the "current receiving DH" when we actually processed a message on that chain.
     // If we decrypted using a skipped key from an older chain, do NOT move DHr backwards.
     if (dh) {
-      const existingEphData = (await getEphemeralData(userId, targetUserId)) || {}
+      const existingEphData = (await getEphemeralData(userId, sessionId)) || {}
       const existingKnown = existingEphData?.knownTargetPublicEphemeralKeys
       const nextKnown =
         typeof existingKnown === 'object' && existingKnown != null && !Array.isArray(existingKnown)
           ? { ...existingKnown, [dh]: true }
           : { [dh]: true }
 
-      await setEphemeralData(userId, targetUserId, {
+      await setEphemeralData(userId, sessionId, {
         ...existingEphData,
         knownTargetPublicEphemeralKeys: nextKnown,
         ...(usedSkippedKey
@@ -520,18 +535,17 @@ export const decryptIncomingMessage = async (
       })
     }
 
-    // Save the DECRYPTED message to local storage
-    // If setMessages is provided (foreground mode), update state
-    // If not provided (background mode), just save to localStorage
+    // Save the DECRYPTED message to local storage under the visual conversation
+    // key (user-level), so all of a peer's devices roll up into one thread.
     await updateSavedMessages(
       userId,
-      targetUserId,
+      conversationKey,
       decryptedMessage,
       setMessages || (() => {}) // Provide no-op function for background mode
     )
 
     // Save the derived key temporarily for potential next message in same session
-    setSessionKey(userId, targetUserId, root_key)
+    setSessionKey(userId, sessionId, root_key)
     return decryptedMessage
   } catch (error) {
     console.error('❌ [Decryption Service] Error decrypting message:', error)

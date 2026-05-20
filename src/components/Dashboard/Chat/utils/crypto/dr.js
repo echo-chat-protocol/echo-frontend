@@ -23,18 +23,43 @@ const peerIdentityChangedError = (peerId, savedPeer, fetchedPeer) => {
   return err
 }
 
+// Per-device bundles from deviceService.getDeviceBundles use slightly different
+// field names than the legacy user-level fetchPreKeyBundle. Normalize so the
+// rest of the X3DH path doesn't have to care.
+function normalizeBundleShape(b) {
+  if (!b) return b
+  return {
+    publicIdentityKeyX25519: b.publicIdentityKeyX25519,
+    publicIdentityKeyEd25519: b.publicIdentityKeyEd25519,
+    signedPreKey: b.signedPreKey,
+    signature: b.signature ?? b.signedPreKeySignature ?? null,
+    spkId: b.spkId ?? b.signedPreKeyId ?? null,
+    opk: b.opk ?? null,
+  }
+}
+
 const initializeDoubleRatchet = async (
   socket,
   targetUserId,
   ephemeralKey_private,
   publicEphemeralKey,
-  privateKeyArray
+  privateKeyArray,
+  options = {}
 ) => {
   await init()
 
-  const bundle = await fetchPreKeyBundle(socket, targetUserId)
+  // `peerIdentityScope` overrides the storage key for getPeerIdentityKeys so a
+  // per-device session pins identity per (peerUserId, peerDeviceId) rather than
+  // per peerUserId. `precomputedBundle` lets the caller pass a device-scoped
+  // bundle (from deviceService.getDeviceBundles) and skip the user-level fetch.
+  const { precomputedBundle = null, peerIdentityScope = null } = options
+  const identityScope = peerIdentityScope ?? targetUserId
 
-  const savedPeer = await getPeerIdentityKeys(targetUserId)
+  const bundle = precomputedBundle
+    ? normalizeBundleShape(precomputedBundle)
+    : await fetchPreKeyBundle(socket, targetUserId)
+
+  const savedPeer = await getPeerIdentityKeys(identityScope)
 
   if (savedPeer) {
     const x = savedPeer.publicIdentityKeyX25519
@@ -42,7 +67,7 @@ const initializeDoubleRatchet = async (
     const fetchedEd = bundle.publicIdentityKeyEd25519 ?? null
 
     if (x !== bundle.publicIdentityKeyX25519 || (ed && fetchedEd && ed !== fetchedEd)) {
-      throw peerIdentityChangedError(targetUserId, savedPeer, {
+      throw peerIdentityChangedError(identityScope, savedPeer, {
         publicIdentityKeyX25519: bundle.publicIdentityKeyX25519,
         ...(bundle.publicIdentityKeyEd25519
           ? { publicIdentityKeyEd25519: bundle.publicIdentityKeyEd25519 }
@@ -126,8 +151,20 @@ const continueDoubleRatchetChain = async (
   return { receivingChainKey, newRootKey }
 }
 
-const initializeDoubleRatchetResponse = async (socket, message, targetUserId, privateKeyArray) => {
+const initializeDoubleRatchetResponse = async (
+  socket,
+  message,
+  targetUserId,
+  privateKeyArray,
+  options = {}
+) => {
   await init()
+  // `senderDevicePub` lets the caller (per-device receive path) skip the
+  // user-level identity fetch and use the sender's device-specific IK pub
+  // directly. `peerIdentityScope` controls the storage key for pinning.
+  const { senderDevicePub = null, peerIdentityScope = null } = options
+  const identityScope = peerIdentityScope ?? targetUserId
+
   const identityKeysResponse = await getIdentityKeys()
   const storedPrivatePreKey = identityKeysResponse?.privatePreKey
   if (!storedPrivatePreKey) {
@@ -135,13 +172,18 @@ const initializeDoubleRatchetResponse = async (socket, message, targetUserId, pr
   }
   const privatePreKey = base64ToArrayBuffer(storedPrivatePreKey)
 
-  const encTargetPublicIdentityKeyX25519 = await fetchPublicIdentityKeyX25519(socket, targetUserId)
-  const encTargetPublicIdentityKeyEd25519 = await fetchPublicIdentityKeyEd25519(
-    socket,
-    targetUserId
-  ).catch(() => null)
+  if (peerIdentityScope && peerIdentityScope !== targetUserId && !senderDevicePub) {
+    throw new Error(`Sender device identity not found for per-device session ${peerIdentityScope}`)
+  }
 
-  const savedPeer = await getPeerIdentityKeys(targetUserId)
+  const encTargetPublicIdentityKeyX25519 =
+    senderDevicePub?.publicIdentityKeyX25519 ??
+    (await fetchPublicIdentityKeyX25519(socket, targetUserId))
+  const encTargetPublicIdentityKeyEd25519 =
+    senderDevicePub?.publicIdentityKeyEd25519 ??
+    (await fetchPublicIdentityKeyEd25519(socket, targetUserId).catch(() => null))
+
+  const savedPeer = await getPeerIdentityKeys(identityScope)
   const peerIdentityToPin = savedPeer
     ? null
     : {
@@ -159,7 +201,7 @@ const initializeDoubleRatchetResponse = async (socket, message, targetUserId, pr
       x !== encTargetPublicIdentityKeyX25519 ||
       (ed && encTargetPublicIdentityKeyEd25519 && ed !== encTargetPublicIdentityKeyEd25519)
     ) {
-      throw peerIdentityChangedError(targetUserId, savedPeer, {
+      throw peerIdentityChangedError(identityScope, savedPeer, {
         publicIdentityKeyX25519: encTargetPublicIdentityKeyX25519,
         ...(encTargetPublicIdentityKeyEd25519
           ? { publicIdentityKeyEd25519: encTargetPublicIdentityKeyEd25519 }

@@ -12,13 +12,11 @@ export function getSocket() {
       transports: ['websocket'],
     })
     currentToken = token
-  } else if (token && !currentToken) {
-    socket.auth = { token }
+  } else if (token !== currentToken) {
+    socket.auth = token ? { token } : {}
     currentToken = token
-    if (socket.connected) {
-      socket.disconnect()
-      socket.connect()
-    }
+    socket.disconnect()
+    socket.connect()
   }
   if (!socket.connected) {
     socket.connect()

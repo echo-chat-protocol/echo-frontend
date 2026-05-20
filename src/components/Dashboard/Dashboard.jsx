@@ -50,7 +50,6 @@ import {
   invalidatePairedDevicesCache,
 } from '../../utils/deviceForward'
 import wasmInit, { diffie_hellman } from '@mascaro101/echo-protocol'
-import { deviceService } from '../../features/devices/deviceService'
 import { getDeviceMetadata } from '../../features/devices/deviceMetadata'
 import { revokeCurrentDeviceForLogout } from '../../features/devices/logoutDevice'
 import GroupList from './DashboardComponents/Groups/GroupList'
@@ -661,27 +660,54 @@ const Dashboard = () => {
       }
 
       const privateKeyArray = base64ToArrayBuffer(identityKeys.privateKeyX25519)
-
+      const ownDeviceId = localStorage.getItem('echo-device-id') || null
       for (const message of messages) {
         const currentUserId = String(userIdRef.current)
         const messageSenderId = String(message.userId)
         const activeChatId = activeChatRef.current?.id ? String(activeChatRef.current.id) : null
 
-        if (message.userId && messageSenderId !== currentUserId) {
-          const senderId = messageSenderId
+        // Per-device fan-out filter — drop copies not addressed to this
+        // device. A peerDeviceId tag means the message is part of a per-
+        // device fanout; if it doesn't match our deviceId, skip it.
+        if (
+          message.peerDeviceId &&
+          ownDeviceId &&
+          String(message.peerDeviceId) !== String(ownDeviceId)
+        ) {
+          continue
+        }
 
-          if (senderId === activeChatId) {
+        // Sibling-display branch: another of our own devices sent this and
+        // fanned it to us as a sibling target. The visual conversation key
+        // is message.targetUserId (the peer Alice was chatting with), not
+        // message.userId (Alice herself). Direction: outgoing.
+        const isSiblingFanout = Boolean(message.peerDeviceId) && messageSenderId === currentUserId
+
+        if (message.userId && (isSiblingFanout || messageSenderId !== currentUserId)) {
+          const senderId = messageSenderId
+          // Conversation thread that this message belongs to in the UI.
+          const conversationPartner = isSiblingFanout
+            ? String(message.conversationUserId || activeChatId || message.targetUserId)
+            : senderId
+
+          if (!isSiblingFanout && senderId === activeChatId) {
+            // Active-chat handler (Chat.jsx) will process this — avoid
+            // double-decryption.
+            continue
+          }
+          if (isSiblingFanout && conversationPartner === activeChatId) {
+            // Active-chat handler will decrypt + display this sibling copy.
             continue
           }
 
-          const existingMessages = await getSavedMessages(userIdRef.current, senderId)
+          const existingMessages = await getSavedMessages(userIdRef.current, conversationPartner)
           if (existingMessages.some((msg) => msg._id === message._id)) {
             continue
           }
 
           try {
             if (message.messageType === 'call_event') {
-              await updateSavedMessages(userIdRef.current, senderId, message, null)
+              await updateSavedMessages(userIdRef.current, conversationPartner, message, null)
               continue
             }
 
@@ -690,14 +716,30 @@ const Dashboard = () => {
               // Fall through — still update unread count and conversation list below.
             } else {
               const nonce = base64ToArrayBuffer(message.nonce || '')
+              const senderDeviceUserIdRaw = message.senderDeviceUserId
+              const senderDeviceUserId =
+                senderDeviceUserIdRaw && String(senderDeviceUserIdRaw) !== senderId
+                  ? String(senderDeviceUserIdRaw)
+                  : null
+              const cryptoPeerUserId = senderDeviceUserId || senderId
+              const sessionTargetId = senderDeviceUserId || null
               await decryptIncomingMessage(
                 message,
                 nonce,
                 userIdRef.current,
-                senderId,
+                cryptoPeerUserId,
                 privateKeyArray,
                 sharedSocket,
-                null
+                null,
+                sessionTargetId
+                  ? {
+                      sessionTargetId,
+                      peerUserId: cryptoPeerUserId,
+                      conversationKeyOverride: isSiblingFanout
+                        ? String(message.conversationUserId || message.targetUserId)
+                        : senderId,
+                    }
+                  : {}
               )
             }
           } catch (error) {
@@ -712,27 +754,31 @@ const Dashboard = () => {
             )
           }
 
-          if (senderId !== activeChatId)
+          // Sibling-display messages do not bump unread (the user already
+          // saw them on the other device when they typed them).
+          if (!isSiblingFanout && conversationPartner !== activeChatId)
             setUnreadMessages((prev) => {
-              const currentUnread = prev[senderId] || 0
+              const currentUnread = prev[conversationPartner] || 0
               const newCount = currentUnread + 1
 
-              localStorage.setItem(`unread-${userIdRef.current}-${senderId}`, newCount)
+              localStorage.setItem(`unread-${userIdRef.current}-${conversationPartner}`, newCount)
 
               return {
                 ...prev,
-                [senderId]: newCount,
+                [conversationPartner]: newCount,
               }
             })
 
           const conversationExists = recentConversationsRef.current.some(
-            (conv) => String(conv.id) === senderId
+            (conv) => String(conv.id) === conversationPartner
           )
 
           if (!conversationExists) {
             const placeholderUser = {
-              id: senderId,
-              username: message.username || `User ${senderId}`,
+              id: conversationPartner,
+              username: isSiblingFanout
+                ? `User ${conversationPartner}`
+                : message.username || `User ${conversationPartner}`,
               profileImage: null,
             }
 
@@ -741,10 +787,10 @@ const Dashboard = () => {
               timestamp: message.timestamp || message.createdAt || new Date().toISOString(),
             })
 
-            sharedSocket.emit('getUserInfo', { userId: senderId }, (response) => {
+            sharedSocket.emit('getUserInfo', { userId: conversationPartner }, (response) => {
               if (response.success && response.user) {
                 const conversationUser = {
-                  id: senderId,
+                  id: conversationPartner,
                   username: response.user.username,
                   profileImage: response.user.profilePicture,
                 }
@@ -756,7 +802,7 @@ const Dashboard = () => {
             })
           } else {
             const existingConv = recentConversationsRef.current.find(
-              (conv) => String(conv.id) === senderId
+              (conv) => String(conv.id) === conversationPartner
             )
             if (existingConv) {
               updateRecentConversationsRef.current?.(existingConv, {
@@ -819,36 +865,38 @@ const Dashboard = () => {
 
     // ── Device sync – lives here so it persists across view/chat changes ─────────
 
-    // Register this browser as a named device so paired devices can forward
-    // envelopes to it, even before any Chat pane is opened.
+    // Ensure this device's published per-device bundle is complete and
+    // properly signed. We run this at most once per install (gated by
+    // localStorage) — `generateAndUploadDeviceKeyBundle` mints a fresh SPK +
+    // OPK set, signs the SPK under this device's IK, and uploads the full
+    // bundle. The legacy code here used to call `registerDeviceKeys` with a
+    // partial payload on every mount, which the backend then "filled in" with
+    // the X25519 pub for the signature/Ed25519 fields — clobbering the
+    // original signature and breaking X3DH on the sender side.
     let devicePollInterval = null
+    // Bumped to v3: prior v2 runs could complete with an unlocked-ELD bypass
+    // that left ELD.privatePreKey out of sync with Device.signedPreKey, so
+    // every install needs one more clean re-upload under the stricter rule
+    // (the call now throws if ELD is locked).
+    const DEVICE_BUNDLE_FLAG = 'echo-device-bundle-uploaded-v3'
+    // Clean up stale flag from the v2 attempt so we don't accidentally short-
+    // circuit on it via future changes.
+    localStorage.removeItem('echo-device-bundle-uploaded-v2')
     const initDeviceSync = async () => {
-      if (!localStorage.getItem('echo-device-id')) {
+      const deviceMetadata = getDeviceMetadata()
+      const deviceId = deviceMetadata.deviceId
+
+      if (!localStorage.getItem(DEVICE_BUNDLE_FLAG)) {
         try {
-          const keys = await getIdentityKeys()
-          if (keys?.publicKeyX25519) {
-            const deviceMetadata = getDeviceMetadata()
-            await deviceService.registerDeviceKeys(deviceMetadata.deviceId, {
-              ...deviceMetadata,
-              publicIdentityKeyX25519: keys.publicKeyX25519,
-            })
-            invalidatePairedDevicesCache()
-          }
-        } catch {
-          // non-fatal — retry on next mount
-        }
-      } else {
-        try {
-          const keys = await getIdentityKeys()
-          if (keys?.publicKeyX25519) {
-            const deviceMetadata = getDeviceMetadata()
-            await deviceService.registerDeviceKeys(deviceMetadata.deviceId, {
-              ...deviceMetadata,
-              publicIdentityKeyX25519: keys.publicKeyX25519,
-            })
-          }
-        } catch {
-          // non-fatal — lastSeen and metadata refresh on next successful touch
+          const { generateAndUploadDeviceKeyBundle } =
+            await import('@/features/devices/deviceKeyBundle')
+          await generateAndUploadDeviceKeyBundle(deviceId)
+          localStorage.setItem(DEVICE_BUNDLE_FLAG, '1')
+          invalidatePairedDevicesCache()
+        } catch (err) {
+          console.warn('[Dashboard] Initial device bundle upload failed:', err)
+          // Leave the flag unset so we retry on the next mount (typically once
+          // ELD is unlocked via EldUnlockGate).
         }
       }
 

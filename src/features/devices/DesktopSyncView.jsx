@@ -159,6 +159,9 @@ export default function DesktopSyncView({ onBack, embedded = false }) {
                         <p className='text-xs text-white/35'>
                           {d.platform || 'Unknown platform'} · Last seen {formatDate(d.lastSeen)}
                         </p>
+                        <p className='mt-1 font-mono text-[11px] text-white/35'>
+                          User ID {d.deviceUserId || 'Unknown'}
+                        </p>
                         <p className='mt-1 flex items-center gap-1 text-[11px] text-white/30'>
                           <Wifi className='h-3 w-3' />
                           {d.ipAddress || 'No IP recorded'}
