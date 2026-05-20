@@ -5,14 +5,15 @@ import topLevelAwait from 'vite-plugin-top-level-await'
 
 import path, { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import pkg from './package.json'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
-// Inline plugin: make Vite treat src/index.js as JSX
-// (avoids renaming the file while keeping all other .js handling untouched)
-
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   plugins: [
     react({
       // Parse JSX in both .jsx and plain .js files

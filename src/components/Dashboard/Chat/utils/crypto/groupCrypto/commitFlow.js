@@ -56,6 +56,7 @@ import {
   deriveWelcomeSecret,
   deriveWelcomeKeyAndNonce,
 } from '../keySchedule.js'
+import { LABEL_PATH, LABEL_NODE, LABEL_COMMIT } from './labels.js'
 
 // Read the previous confirmed transcript hash from state.
 async function resolvePrevTranscriptHash(state) {
@@ -88,16 +89,16 @@ export async function buildUpdatePath(treeNodes, senderLeafIndex, leafCount) {
   const pathSecrets = [randomBytes(32)]
 
   for (let i = 1; i < pathNodes.length; i++) {
-    pathSecrets.push(await deriveSecret(pathSecrets[i - 1], 'path'))
+    pathSecrets.push(await deriveSecret(pathSecrets[i - 1], LABEL_PATH))
   }
 
-  const commitSecret = await deriveSecret(pathSecrets[pathSecrets.length - 1], 'path')
+  const commitSecret = await deriveSecret(pathSecrets[pathSecrets.length - 1], LABEL_COMMIT)
 
   const updatePath = []
   for (let i = 0; i < pathNodes.length; i++) {
     const nodeIndex = pathNodes[i]
     const pathSecret = pathSecrets[i]
-    const nodePrivBytes = await expandWithLabel(pathSecret, 'node', new Uint8Array(0), 32)
+    const nodePrivBytes = await expandWithLabel(pathSecret, LABEL_NODE, new Uint8Array(0), 32)
     const nodePubBytes = generate_public_ephemeral_key(nodePrivBytes)
 
     const recipientNodeIndices = new Set()
@@ -187,7 +188,7 @@ export async function applyUpdatePath(
     // Re-derive each node key locally and compare it to the claimed path entry.
     let current = decryptedPathSecret
     for (let j = pathIndex; j < pathNodes.length; j++) {
-      const nodePriv = await expandWithLabel(current, 'node', new Uint8Array(0), 32)
+      const nodePriv = await expandWithLabel(current, LABEL_NODE, new Uint8Array(0), 32)
       const nodePub = generate_public_ephemeral_key(nodePriv)
       const expectedPubB64 = bytesToBase64(nodePub)
 
@@ -210,9 +211,9 @@ export async function applyUpdatePath(
         }
       }
 
-      if (j + 1 < pathNodes.length) current = await deriveSecret(current, 'path')
+      if (j + 1 < pathNodes.length) current = await deriveSecret(current, LABEL_PATH)
     }
-    return deriveSecret(current, 'path')
+    return deriveSecret(current, LABEL_COMMIT)
   }
 
   if (myLeafIndex === senderLeafIndex) {

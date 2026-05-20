@@ -3,19 +3,24 @@ import { base64ToBytes, bytesToBase64 } from '../../helpers.js'
 import init, { decrypt_aad_bytes, diffie_hellman, hkdf_derive } from '@mascaro101/echo-protocol'
 
 import { hpkeSeal, hpkeOpen } from './hpke.js'
+import {
+  HPKE_WELCOME_WRAP_INFO,
+  HPKE_PATH_SECRET_WRAP_INFO,
+  AAD_COMMIT_PREFIX,
+  AAD_PATH_SECRET_PREFIX,
+} from './labels.js'
 
 export const MLS_HEADER_VERSION = 1
 
 const TEXT_ENCODER = new TextEncoder()
 const TEXT_DECODER = new TextDecoder('utf-8', { fatal: true })
 
-// These labels support older wraps that still use the non-HPKE format.
+// Legacy non-HPKE wrap infos kept only for backwards-compat decryption.
 const WRAP_INFO = TEXT_ENCODER.encode('EchoMLS/v1/WelcomeWrap')
 const PATH_SECRET_WRAP_INFO = TEXT_ENCODER.encode('EchoMLS/v1/PathSecretWrap')
 
-// These labels are used by the current HPKE-based wraps.
-const HPKE_WRAP_INFO = TEXT_ENCODER.encode('EchoMLS/v1/HPKE/WelcomeWrap')
-const HPKE_PATH_SECRET_INFO = TEXT_ENCODER.encode('EchoMLS/v1/HPKE/PathSecretWrap')
+const HPKE_WRAP_INFO = TEXT_ENCODER.encode(HPKE_WELCOME_WRAP_INFO)
+const HPKE_PATH_SECRET_INFO = TEXT_ENCODER.encode(HPKE_PATH_SECRET_WRAP_INFO)
 
 // Normalize arbitrary byte-like input into a Uint8Array.
 export function normalizeBytes(value, fieldName) {
@@ -64,12 +69,12 @@ export function normalizePlaintextBytes(plaintextBytes) {
 
 // Build the AAD used for commit and welcome wrapping.
 export function makeCommitAadBytes(groupId, epoch) {
-  return TEXT_ENCODER.encode(`EchoMLS/v1/Commit|${groupId}|${epoch}`)
+  return TEXT_ENCODER.encode(`${AAD_COMMIT_PREFIX}|${groupId}|${epoch}`)
 }
 
 // Build the AAD used for one encrypted path secret.
 export function makePathSecretAadBytes(nodeIndex) {
-  return TEXT_ENCODER.encode(`EchoMLS/v1/PathSecret|nodeIndex:${nodeIndex}`)
+  return TEXT_ENCODER.encode(`${AAD_PATH_SECRET_PREFIX}|nodeIndex:${nodeIndex}`)
 }
 
 // Wrap one group secret for a single init key.

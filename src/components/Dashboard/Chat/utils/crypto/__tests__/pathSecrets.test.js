@@ -243,7 +243,7 @@ describe('makeCommitAadBytes', () => {
   it('returns a Uint8Array starting with the EchoMLS/v1/Commit domain prefix', () => {
     const aad = makeCommitAadBytes('grp-1', 0)
     const text = new TextDecoder().decode(aad)
-    expect(text.startsWith('EchoMLS/v1/Commit|')).toBe(true)
+    expect(text.startsWith('Echo/v1/Commit|')).toBe(true)
   })
 
   it('encodes groupId and epoch into the bytes', () => {
@@ -271,7 +271,7 @@ describe('makeCommitAadBytes', () => {
 describe('makePathSecretAadBytes', () => {
   it('starts with the EchoMLS/v1/PathSecret domain prefix', () => {
     const text = new TextDecoder().decode(makePathSecretAadBytes(0))
-    expect(text.startsWith('EchoMLS/v1/PathSecret|')).toBe(true)
+    expect(text.startsWith('Echo/v1/PathSecret|')).toBe(true)
   })
 
   it('encodes nodeIndex into the bytes', () => {

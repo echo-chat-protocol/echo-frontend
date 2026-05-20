@@ -58,7 +58,7 @@ describe('MLS vectors', () => {
   it('matches the KeyPackage encoding vector', () => {
     const vector = vectors.find((entry) => entry.name === 'keypackage-encoding-01')
     const actual = encodeKeyPackageForSigning({
-      version: 'EchoMLS/v1',
+      version: 'Echo/v1',
       cipherSuite: 'ECHO-MLS/X25519_AES256GCM_SHA256',
       userId: 'bob',
       initKeyB64: 'AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=',

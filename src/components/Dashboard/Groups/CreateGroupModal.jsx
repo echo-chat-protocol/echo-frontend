@@ -16,7 +16,6 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
   const [searchTerm, setSearchTerm] = useState('')
   const [results, setResults] = useState([])
   const [selected, setSelected] = useState([])
-  const [mlsEnabled, setMlsEnabled] = useState(false)
   const [loading, setLoading] = useState(false)
   const socketRef = useRef(null)
 
@@ -71,7 +70,8 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
     if (!groupName) return
     const memberIds = selected.map((u) => u.id).filter(Boolean)
     if (memberIds.length === 0) return
-    const cipherSuite = mlsEnabled ? 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256' : null
+    const mlsEnabled = true
+    const cipherSuite = 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256'
     const emitWithAck = (event, payload) =>
       new Promise((resolve, reject) => {
         socket.emit(event, payload, (ack) => {
@@ -87,36 +87,33 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
 
     // Fetch KeyPackages for all invited members BEFORE creating the group.
     // We need their X25519 public keys to encrypt the group key to them.
-    let memberInitKeys = []
-    if (mlsEnabled) {
-      const results = await Promise.all(
-        selected.map(
-          (u) =>
-            new Promise((resolve) => {
-              socket.emit('fetchKeyPackage', { userId: u.id }, (res) => {
-                if (res?.success && res.initKeyB64) {
-                  resolve({ userId: String(u.id), initKeyB64: res.initKeyB64 })
-                } else {
-                  console.warn(`[CreateGroupModal] No KeyPackage for user ${u.id} (${u.username})`)
-                  resolve(null)
-                }
-              })
+    const results = await Promise.all(
+      selected.map(
+        (u) =>
+          new Promise((resolve) => {
+            socket.emit('fetchKeyPackage', { userId: u.id }, (res) => {
+              if (res?.success && res.initKeyB64) {
+                resolve({ userId: String(u.id), initKeyB64: res.initKeyB64 })
+              } else {
+                console.warn(`[CreateGroupModal] No KeyPackage for user ${u.id} (${u.username})`)
+                resolve(null)
+              }
             })
-        )
+          })
       )
-      memberInitKeys = results.filter(Boolean)
+    )
+    const memberInitKeys = results.filter(Boolean)
 
-      // Block creation if any invited member has no KeyPackage — they'd be locked out silently.
-      const missing = selected.filter(
-        (u) => !memberInitKeys.some((mk) => String(mk.userId) === String(u.id))
+    // Block creation if any invited member has no KeyPackage — they'd be locked out silently.
+    const missing = selected.filter(
+      (u) => !memberInitKeys.some((mk) => String(mk.userId) === String(u.id))
+    )
+    if (missing.length > 0) {
+      console.error(
+        `[CreateGroupModal] Cannot create MLS group: missing KeyPackage for: ${missing.map((u) => u.username).join(', ')}`
       )
-      if (missing.length > 0) {
-        console.error(
-          `[CreateGroupModal] Cannot create MLS group: missing KeyPackage for: ${missing.map((u) => u.username).join(', ')}`
-        )
-        setLoading(false)
-        return
-      }
+      setLoading(false)
+      return
     }
 
     socket.emit(
@@ -223,7 +220,6 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
         setSearchTerm('')
         setResults([])
         setSelected([])
-        setMlsEnabled(false)
         onClose?.()
       }
     )
@@ -249,22 +245,6 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
             placeholder='Group name'
             className='w-full p-3 bg-gray-800 text-white rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-[#8e79f2]'
           />
-
-          <label className='flex items-start gap-3 rounded-lg border border-gray-700 bg-gray-800/60 p-3 text-sm text-gray-200'>
-            <input
-              type='checkbox'
-              checked={mlsEnabled}
-              onChange={(e) => setMlsEnabled(e.target.checked)}
-              className='mt-1 h-4 w-4 rounded border-gray-500 bg-gray-900 text-indigo-500 focus:ring-indigo-500'
-            />
-            <span className='flex flex-col'>
-              <span className='font-medium text-white'>Enable MLS encryption</span>
-              <span className='text-xs text-gray-400'>
-                New messages use opaque MLS envelopes. Members without local key state will not be
-                able to send until welcome handling exists.
-              </span>
-            </span>
-          </label>
 
           <div className='flex gap-2'>
             <div className='relative w-full'>

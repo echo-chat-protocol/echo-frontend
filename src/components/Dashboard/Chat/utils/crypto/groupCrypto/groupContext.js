@@ -1,5 +1,6 @@
 import { base64ToBytes } from '../../helpers.js'
 import { level, left, right, nodeWidth, root } from './treemath.js'
+import { TREE_HASH_BLANK, TREE_HASH_LEAF, TREE_HASH_PARENT, TREE_HASH_PHASH } from './labels.js'
 
 const TEXT_ENCODER = new TextEncoder()
 
@@ -94,7 +95,7 @@ export async function advanceTranscriptHash(prevConfirmedTH, prevConfirmationTag
 // Compute the root tree hash for a public tree snapshot.
 export async function computeTreeHash(treePublicNodes, leafCount, leafData = {}) {
   if (!Array.isArray(treePublicNodes) || treePublicNodes.length === 0 || !leafCount) {
-    return sha256(TEXT_ENCODER.encode('EchoMLS/v1/blank'))
+    return sha256(TEXT_ENCODER.encode(TREE_HASH_BLANK))
   }
   const nodes = treePublicNodes.map((k) =>
     typeof k === 'string' && k.length > 0 ? { publicKeyB64: k } : { publicKeyB64: null }
@@ -109,13 +110,13 @@ export async function computeNodeSubtreeHash(nodes, nodeIndex, leafCount, leafDa
   const w = nodeWidth(leafCount)
 
   if (!Array.isArray(nodes) || nodeIndex >= w) {
-    if (level(nodeIndex) === 0) return sha256(enc.encode('EchoMLS/v1/blank'))
-    return sha256(enc.encode('EchoMLS/v1/blank'))
+    if (level(nodeIndex) === 0) return sha256(enc.encode(TREE_HASH_BLANK))
+    return sha256(enc.encode(TREE_HASH_BLANK))
   }
 
   if (level(nodeIndex) === 0) {
     const pubKeyB64 = nodes[nodeIndex]?.publicKeyB64 ?? null
-    const prefix = enc.encode('EchoMLS/v1/leaf|')
+    const prefix = enc.encode(`${TREE_HASH_LEAF}|`)
     const pubBytes = pubKeyB64 ? base64ToBytes(pubKeyB64) : new Uint8Array(0)
 
     const leafIndex = nodeIndex / 2
@@ -139,7 +140,7 @@ export async function computeNodeSubtreeHash(nodes, nodeIndex, leafCount, leafDa
   ])
 
   const pubKeyB64 = nodes[nodeIndex]?.publicKeyB64 ?? null
-  const prefix = enc.encode('EchoMLS/v1/parent|')
+  const prefix = enc.encode(`${TREE_HASH_PARENT}|`)
   const pubBytes = pubKeyB64 ? base64ToBytes(pubKeyB64) : new Uint8Array(0)
   const buf = new Uint8Array(prefix.length + 2 + pubBytes.length + 32 + 32)
   let o = 0
@@ -157,7 +158,7 @@ export async function computeNodeSubtreeHash(nodes, nodeIndex, leafCount, leafDa
 
 // Bind one path node to its sibling subtree hash.
 export async function computeParentHash(nodePubBytes, siblingSubtreeHash) {
-  const prefix = TEXT_ENCODER.encode('EchoMLS/v1/phash|')
+  const prefix = TEXT_ENCODER.encode(`${TREE_HASH_PHASH}|`)
   const buf = new Uint8Array(prefix.length + nodePubBytes.length + siblingSubtreeHash.length)
   let o = 0
   buf.set(prefix, o)

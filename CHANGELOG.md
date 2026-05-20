@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.0.8](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.6...v0.0.8) (2026-05-14)
+
+
+### Features
+
+* add public pages, routing config and core navigation map ([7eb5d39](https://github.com/echo-chat-protocol/echo-frontend/commit/7eb5d390487e89a9305af50b78031a9750939e5b))
+* added periodical SPK rotation ([7cbe05d](https://github.com/echo-chat-protocol/echo-frontend/commit/7cbe05d8fa7bb0b68161b5848db83df791067ed1))
+* **auth:** update login and register pages with real data and fixed links ([a175a79](https://github.com/echo-chat-protocol/echo-frontend/commit/a175a7958d4cfbd181ab0279e628341be8e3ae3d))
+* completed the MLS-TreeKEM implementation with parent hash binding ([af2ba37](https://github.com/echo-chat-protocol/echo-frontend/commit/af2ba372d50b3171151c44be4deaad4e1acdf9de))
+* implement brand-new luxury design system, landing page features, animations and core layout utilities ([747a963](https://github.com/echo-chat-protocol/echo-frontend/commit/747a9635379c04b7599977fd057cadd0281b205e))
+* implement multi-language support (i18n) for Navbar and Hero with English and Spanish locales ([273802e](https://github.com/echo-chat-protocol/echo-frontend/commit/273802e98c4c2efa8f7ba5816731d5a38b13fac9))
+* implement RFC 9180 HPKE and RFC 9420 group protocol improvements ([0bab3ba](https://github.com/echo-chat-protocol/echo-frontend/commit/0bab3baa4e59941141214e40e5e76881cfba69c3))
+* initialize React root and render App component in index.js ([0fdee13](https://github.com/echo-chat-protocol/echo-frontend/commit/0fdee133b85e9beb65b38648a7cacd8a62a5582e))
+* **landing:** update landing page data with real technical specifications and realistic samples ([9e5431c](https://github.com/echo-chat-protocol/echo-frontend/commit/9e5431cf461d1ec214825b8d559bcc8c122b0f69))
+* modernize login and registration flows, merging real cryptographic logic into premium layouts ([8a285e1](https://github.com/echo-chat-protocol/echo-frontend/commit/8a285e191106bad97dfa9653498c90045e50d367))
+
+
+### Bug Fixes
+
+* deriveRootKey and continueDR use proper HKDF tags ([683e166](https://github.com/echo-chat-protocol/echo-frontend/commit/683e1667f58b3646dd47ce91a79d7c2e2c101ba1))
+* epoch0Secret is now cleared whencreator recieves server ack ([b491b49](https://github.com/echo-chat-protocol/echo-frontend/commit/b491b498eefb0ae7735bbb1733af941a868c5d7b))
+* fixed lint violation and removed dynamic import in commitFlow.js ([cf0712b](https://github.com/echo-chat-protocol/echo-frontend/commit/cf0712b2e037f77d32cccedcc705f994769271a9))
+* removed vestigial call files ([c312fbc](https://github.com/echo-chat-protocol/echo-frontend/commit/c312fbc3a52889e8a76aafd01bcd6933675862a8))
+* welcome messages are now signed by the senders leaf node ([c026150](https://github.com/echo-chat-protocol/echo-frontend/commit/c02615047ef85ba06560aafc66f85ea81a87af9a))
+
 ## [0.0.7](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.6...v0.0.7) (2026-05-13)
 
 

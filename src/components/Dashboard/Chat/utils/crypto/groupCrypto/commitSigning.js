@@ -1,4 +1,5 @@
 import { bytesToBase64, base64ToBytes } from '../../helpers.js'
+import { SIG_COMMIT_DOMAIN, SIG_WELCOME_DOMAIN } from './labels.js'
 
 const TEXT_ENCODER = new TextEncoder()
 
@@ -112,7 +113,7 @@ export function encodeCommitForSigning(commit) {
 
   const header = encodeLengthPrefixed(
     TEXT_ENCODER.encode(
-      `EchoMLS/v1/CommitSig` +
+      SIG_COMMIT_DOMAIN +
         `|${commit.groupId}` +
         `|${commit.epoch}` +
         `|${commit.type}` +
@@ -148,7 +149,7 @@ export function encodeCommitForSigning(commit) {
 export function encodeWelcomeForSigning(welcome) {
   const header = encodeLengthPrefixed(
     TEXT_ENCODER.encode(
-      `EchoMLS/v1/WelcomeSig` +
+      SIG_WELCOME_DOMAIN +
         `|${welcome.groupId}` +
         `|${welcome.epoch}` +
         `|${welcome.cipherSuite ?? ''}` +

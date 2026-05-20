@@ -162,11 +162,11 @@ export default function LoginPage() {
 
       <p className="mt-6 text-[11px] text-[#7a7a8a] leading-relaxed">
         By continuing, you agree to ECHO&apos;s{" "}
-        <a href="/terms" className="underline">
+        <a href="/terms" className="underline hover:text-white">
           Terms
         </a>{" "}
         and{" "}
-        <a href="/privacy" className="underline">
+        <a href="/privacy" className="underline hover:text-white">
           Privacy Policy
         </a>
         . Your password is hashed with Argon2id on this device — it never
@@ -209,4 +209,4 @@ Field.propTypes = {
   value: PropTypes.string.isRequired,
   onChange: PropTypes.func.isRequired,
   testid: PropTypes.string,
-}
+};
