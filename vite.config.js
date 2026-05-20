@@ -1,38 +1,16 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import wasm from 'vite-plugin-wasm'
+import topLevelAwait from 'vite-plugin-top-level-await'
 
-import path, { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import path, { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 // Inline plugin: make Vite treat src/index.js as JSX
 // (avoids renaming the file while keeping all other .js handling untouched)
-const jsxInJs = {
-  name: 'jsx-in-js',
-  enforce: 'pre',
-  transform(code, id) {
-    if (/\/src\/index\.js$/.test(id)) {
-      // Hand off to the React plugin by returning with the jsx loader hint
-      return { code, map: null }
-    }
-  },
-  options(o) {
-    // Tell Rollup to treat the file as jsx for the purpose of the entry point
-    if (o?.input) {
-      const inputs = Array.isArray(o.input) ? o.input : Object.values(o.input);
-      inputs.forEach((f) => {
-        if (/index\.js$/.test(f)) {
-          // Mark the extension for Rollup
-          this.addWatchFile?.(f);
-        }
-      });
-    }
-  },
-};
 
 export default defineConfig({
   plugins: [
@@ -43,6 +21,27 @@ export default defineConfig({
     wasm(),
     topLevelAwait(),
   ],
+
+  // ── Dev-server proxy ─────────────────────────────────────────────────────
+  // Forwards /api/v1/* and /socket.io/* from localhost to the Render backend
+  // so the browser never sees a cross-origin request (no CORS error).
+  // In production Vite is not involved — requests go directly to the backend.
+  server: {
+    proxy: {
+      '/api': {
+        target: 'https://echo-backend-preproduction.onrender.com',
+        changeOrigin: true,
+        secure: true,
+      },
+      '/socket.io': {
+        target: 'https://echo-backend-preproduction.onrender.com',
+        changeOrigin: true,
+        secure: true,
+        ws: true, // proxy WebSocket connections too
+      },
+    },
+  },
+
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -90,4 +89,4 @@ export default defineConfig({
       exclude: ['src/**/*.test.*', 'src/**/__tests__/**', 'src/**/*.spec.*'],
     },
   },
-});
+})
