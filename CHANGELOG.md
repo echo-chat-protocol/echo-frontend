@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.0.9](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.8...v0.0.9) (2026-05-20)
+
+
+### Features
+
+* add responsive collapsible Sidebar component to dashboard layout ([0ec9674](https://github.com/echo-chat-protocol/echo-frontend/commit/0ec9674b339dd5f9862fd58da5f20230b2ba1902))
+* added global label file for all HKDF labels ([9e72785](https://github.com/echo-chat-protocol/echo-frontend/commit/9e72785d8257c318751080856b370f681b90d180))
+* **auth:** migrate login & register from Socket.IO to REST API ([553c43e](https://github.com/echo-chat-protocol/echo-frontend/commit/553c43e993b81dfde14221790f2c28b1af367385))
+* change X logo on footer ([47c9f11](https://github.com/echo-chat-protocol/echo-frontend/commit/47c9f11623406ca1d9a1f81351fb1e3aadd0143d))
+* complete dashboard settings refactor, theme context integration, and UI cleanup ([f7565a0](https://github.com/echo-chat-protocol/echo-frontend/commit/f7565a0a65a8dec33e5496705975ba0af1d525ca))
+* enhance UI grouping, group views, chat modal and fix MLS error feedback ([c2ebae7](https://github.com/echo-chat-protocol/echo-frontend/commit/c2ebae73ca1bed32ca87ea7a01487bc71892d7ac))
+* implement core dashboard UI components, chat header, and theme context integration ([bce925e](https://github.com/echo-chat-protocol/echo-frontend/commit/bce925ea7f1c1f98fd08d4cc187275dfd46e0693))
+* implement dashboard sidebar and global theme configuration ([9d15cd5](https://github.com/echo-chat-protocol/echo-frontend/commit/9d15cd54b970f0d85b74cbf9e390ebcd55745064))
+* implement Footer component and CommunityPage landing page ([39d9432](https://github.com/echo-chat-protocol/echo-frontend/commit/39d9432a77960071060f257423805f560c1a62db))
+* implement modular dashboard settings with theme customization and data export functionality ([20c2bd8](https://github.com/echo-chat-protocol/echo-frontend/commit/20c2bd85056c1a33f38802b1e2a6bc239670cc62))
+* **services:** add REST API service layer for /api/v1 backend ([998e0bb](https://github.com/echo-chat-protocol/echo-frontend/commit/998e0bb737a6ec172b9f35817f060fcba60549c4))
+
+
+### Bug Fixes
+
+* removed debug MLS option ([51dcf63](https://github.com/echo-chat-protocol/echo-frontend/commit/51dcf63e3d7dcf448031b01678a3fec283c688db))
+
 ## [0.0.8](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.6...v0.0.8) (2026-05-14)
 
 
