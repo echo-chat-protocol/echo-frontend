@@ -1,0 +1,88 @@
+name: iOS Build (Unsigned IPA for AltStore)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+    paths:
+      - 'src-tauri/**'
+      - 'src/**'
+      - 'package.json'
+      - '.github/workflows/ios-build.yml'
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust + iOS targets
+        run: |
+          rustup default stable
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-ios-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Write .env.production
+        run: |
+          cat > .env.production <<'EOF'
+          VITE_API_URL=https://echo-backend-preproduction.onrender.com/api/v1
+          VITE_SOCKET_URL=https://echo-backend-preproduction.onrender.com
+          VITE_TENOR_API_KEY=
+          VITE_PUBLIC_BUILDER_KEY=
+          EOF
+
+      - name: Initialize iOS project
+        run: npx tauri ios init --ci
+
+      - name: Build iOS app (unsigned, archive)
+        env:
+          DEVELOPMENT_TEAM: ''
+        run: |
+          cd src-tauri/gen/apple
+          xcodebuild archive \
+            -workspace echo-chat.xcworkspace \
+            -scheme echo-chat_iOS \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$GITHUB_WORKSPACE/build/echo-chat.xcarchive" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_ENTITLEMENTS="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            ENABLE_BITCODE=NO
+
+      - name: Package unsigned IPA
+        run: |
+          cd build
+          mkdir -p Payload
+          cp -R echo-chat.xcarchive/Products/Applications/echo-chat.app Payload/
+          zip -qr echo-chat-unsigned.ipa Payload
+          ls -lh echo-chat-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: echo-chat-unsigned-ipa
+          path: build/echo-chat-unsigned.ipa
+          retention-days: 14
