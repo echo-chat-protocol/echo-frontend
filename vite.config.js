@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import wasm from 'vite-plugin-wasm'
 import topLevelAwait from 'vite-plugin-top-level-await'
 
+import os from 'node:os'
 import path, { dirname } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -12,19 +13,39 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const devProxyTarget =
   process.env.VITE_DEV_PROXY_TARGET || process.env.VITE_SOCKET_URL || 'http://127.0.0.1:3001'
+const devServerPort = Number(process.env.VITE_DEV_SERVER_PORT || 5173)
 const devProxy = {
   target: devProxyTarget,
   changeOrigin: true,
   secure: devProxyTarget.startsWith('https://'),
 }
 
+function resolveLanOrigin(port) {
+  const explicit = process.env.VITE_PAIRING_SERVER_URL || process.env.VITE_PUBLIC_APP_URL
+  if (explicit) return explicit.replace(/\/$/, '')
+
+  const interfaces = os.networkInterfaces()
+  for (const addresses of Object.values(interfaces)) {
+    for (const address of addresses || []) {
+      if (address.family === 'IPv4' && !address.internal) {
+        return `http://${address.address}:${port}`
+      }
+    }
+  }
+
+  return null
+}
+
+const devLanOrigin = resolveLanOrigin(devServerPort)
+
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    'import.meta.env.VITE_DEV_LAN_ORIGIN': JSON.stringify(devLanOrigin),
   },
   server: {
     host: true,
-    port: 5173,
+    port: devServerPort,
     proxy: {
       '/api': devProxy,
       '/sync': devProxy,

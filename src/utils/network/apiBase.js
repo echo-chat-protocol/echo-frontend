@@ -39,6 +39,9 @@ export function resolvePairingServerUrl() {
   if (configured) return configured.replace(/\/$/, '')
 
   if (typeof window !== 'undefined' && window.location?.origin) {
+    if (isLoopbackHost(window.location.hostname) && import.meta.env.VITE_DEV_LAN_ORIGIN) {
+      return import.meta.env.VITE_DEV_LAN_ORIGIN.replace(/\/$/, '')
+    }
     return window.location.origin.replace(/\/$/, '')
   }
 
