@@ -6,6 +6,7 @@ import {
   LogOut,
   Plus,
   ChevronLeft,
+  Smartphone,
 } from 'lucide-react'
 import PropTypes from 'prop-types'
 
@@ -45,6 +46,7 @@ export default function Sidebar({
   collapsed,
   onToggleCollapsed,
   onOpenProfile,
+  onOpenDeviceSync,
   onLogout,
   unreadMessages = {},
 }) {
@@ -156,6 +158,16 @@ export default function Sidebar({
         />
       </button>
 
+      <button
+        data-testid='sidebar-device-sync-btn'
+        onClick={onOpenDeviceSync}
+        className='mx-3.5 mb-2 flex items-center justify-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.015] py-1.5 text-white/45 hover:border-violet-400/40 hover:text-white transition-all'
+        title='Device sync'
+      >
+        <Smartphone size={13} />
+        {!collapsed && <span className='text-[11px] animate-fade-in'>Device sync</span>}
+      </button>
+
       {/* Profile */}
       <div
         data-testid='sidebar-profile'
@@ -218,6 +230,7 @@ Sidebar.propTypes = {
   collapsed: PropTypes.bool.isRequired,
   onToggleCollapsed: PropTypes.func.isRequired,
   onOpenProfile: PropTypes.func.isRequired,
+  onOpenDeviceSync: PropTypes.func.isRequired,
   onLogout: PropTypes.func.isRequired,
   unreadMessages: PropTypes.object,
 }

@@ -54,13 +54,24 @@ export const encryptOutgoingMessage = async ({
   username,
   socket,
   privateKeyArray,
+  // Per-device fan-out: `sessionTargetId` is the keyManagement storage key for
+  // this DR session (compound `peerUserId@peerDeviceId` for per-device, plain
+  // `peerUserId` for the legacy single-target path). `peerUserId` is the real
+  // user id used for X3DH identity pinning. `precomputedBundle` lets callers
+  // pass a device-scoped bundle and skip the user-level fetch.
+  sessionTargetId = null,
+  peerUserId = null,
+  precomputedBundle = null,
 }) => {
   if (!userId || !targetUserId) {
     throw new Error('encryptOutgoingMessage requires userId and targetUserId')
   }
   await ensureSocketConnected(socket)
 
-  let root_key = await getRootKey(userId, targetUserId)
+  const sessionId = sessionTargetId ?? targetUserId
+  const realPeerUserId = peerUserId ?? targetUserId
+
+  let root_key = await getRootKey(userId, sessionId)
 
   // If no existing root key, initialize a new session
   if (!root_key) {
@@ -72,39 +83,40 @@ export const encryptOutgoingMessage = async ({
 
     const initResult = await initializeDoubleRatchet(
       socket,
-      targetUserId,
+      realPeerUserId,
       privateEphemeralKey,
       publicEphemeralKey,
-      privateKeyArray
+      privateKeyArray,
+      { precomputedBundle, peerIdentityScope: sessionId }
     )
 
     root_key = initResult.root_key
     const spkId = initResult.spkId ?? null
     const opkId = initResult.opkId ?? null
     const peerIdentityToPin = initResult.peerIdentityToPin ?? null
-    await setRootKey(userId, targetUserId, root_key)
+    await setRootKey(userId, sessionId, root_key)
 
-    const { sendingChainKey } = deriveChainKeys(root_key, userId, targetUserId)
+    const { sendingChainKey } = deriveChainKeys(root_key, userId, sessionId)
 
     const chain_key_material = chain_key_KDF(sendingChainKey)
     const messageKey = chain_key_material.slice(0, 32)
     const newChainKey = chain_key_material.slice(32, 64)
     const nonceArray = chain_key_material.slice(64, 76)
 
-    await setSendingChainKey(userId, targetUserId, newChainKey)
+    await setSendingChainKey(userId, sessionId, newChainKey)
 
     const publicEphemeralKeyBase64 = arrayBufferToBase64(publicEphemeralKey)
     await setOwnEphemeralKeys(
       userId,
-      targetUserId,
+      sessionId,
       publicEphemeralKeyBase64,
       arrayBufferToBase64(privateEphemeralKey)
     )
 
-    let currentSendingNumber = await getCurrentSendingNumber(targetUserId)
+    let currentSendingNumber = await getCurrentSendingNumber(sessionId)
     if (currentSendingNumber == null) currentSendingNumber = 0
 
-    let previousSendingNumber = await getPreviousSendingNumber(targetUserId)
+    let previousSendingNumber = await getPreviousSendingNumber(sessionId)
     if (previousSendingNumber == null) previousSendingNumber = 0
 
     const payload = JSON.stringify({
@@ -124,7 +136,7 @@ export const encryptOutgoingMessage = async ({
 
     const encryptedPayload = await encryptWithAad(payload, messageKey, nonceArray, aadBytes)
 
-    await setCurrentSendingNumber(targetUserId, currentSendingNumber + 1)
+    await setCurrentSendingNumber(sessionId, currentSendingNumber + 1)
 
     return {
       payload: encryptedPayload,
@@ -141,15 +153,11 @@ export const encryptOutgoingMessage = async ({
     }
   }
 
-  let sendingChainKey = await getSendingChainKey(userId, targetUserId)
+  let sendingChainKey = await getSendingChainKey(userId, sessionId)
   if (!sendingChainKey) {
-    const { sendingChainKey: derivedSendingChainKey } = deriveChainKeys(
-      root_key,
-      userId,
-      targetUserId
-    )
+    const { sendingChainKey: derivedSendingChainKey } = deriveChainKeys(root_key, userId, sessionId)
     sendingChainKey = derivedSendingChainKey
-    await setSendingChainKey(userId, targetUserId, sendingChainKey)
+    await setSendingChainKey(userId, sessionId, sendingChainKey)
   }
 
   const chain_key_material = chain_key_KDF(sendingChainKey)
@@ -157,18 +165,18 @@ export const encryptOutgoingMessage = async ({
   const newChainKey = chain_key_material.slice(32, 64)
   const nonceArray = chain_key_material.slice(64, 76)
 
-  await setSendingChainKey(userId, targetUserId, newChainKey)
+  await setSendingChainKey(userId, sessionId, newChainKey)
 
-  const ownKeys = await getOwnEphemeralKeys(userId, targetUserId)
+  const ownKeys = await getOwnEphemeralKeys(userId, sessionId)
   const publicEphemeralKeyBase64 = ownKeys?.public
   if (!publicEphemeralKeyBase64) {
     throw new Error('Missing own ephemeral public key for outgoing message')
   }
 
-  let currentSendingNumber = await getCurrentSendingNumber(targetUserId)
+  let currentSendingNumber = await getCurrentSendingNumber(sessionId)
   if (currentSendingNumber == null) currentSendingNumber = 0
 
-  let previousSendingNumber = await getPreviousSendingNumber(targetUserId)
+  let previousSendingNumber = await getPreviousSendingNumber(sessionId)
   if (previousSendingNumber == null) previousSendingNumber = 0
 
   const payload = JSON.stringify({
@@ -186,7 +194,7 @@ export const encryptOutgoingMessage = async ({
 
   const encryptedPayload = await encryptWithAad(payload, messageKey, nonceArray, aadBytes)
 
-  await setCurrentSendingNumber(targetUserId, currentSendingNumber + 1)
+  await setCurrentSendingNumber(sessionId, currentSendingNumber + 1)
 
   return {
     payload: encryptedPayload,

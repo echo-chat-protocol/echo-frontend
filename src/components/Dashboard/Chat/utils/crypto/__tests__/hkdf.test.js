@@ -88,4 +88,27 @@ describe('deriveChainKeys', () => {
     expect(Buffer.from(alice.sendingChainKey)).toEqual(Buffer.from(bob.receivingChainKey))
     expect(Buffer.from(alice.receivingChainKey)).toEqual(Buffer.from(bob.sendingChainKey))
   })
+
+  it('uses device ids for compound per-device sessions, including sibling devices', () => {
+    dh.hkdf_derive.mockImplementationOnce((_ikm, _salt, _info, len) => {
+      const okm = new Uint8Array(len)
+      for (let i = 0; i < len; i++) okm[i] = i & 0xff
+      return okm
+    })
+    const sender = deriveChainKeys(new Uint8Array(32).fill(7), 'alice', 'alice@device-b', {
+      ownDeviceId: 'device-a',
+    })
+
+    dh.hkdf_derive.mockImplementationOnce((_ikm, _salt, _info, len) => {
+      const okm = new Uint8Array(len)
+      for (let i = 0; i < len; i++) okm[i] = i & 0xff
+      return okm
+    })
+    const receiver = deriveChainKeys(new Uint8Array(32).fill(7), 'alice', 'alice@device-a', {
+      ownDeviceId: 'device-b',
+    })
+
+    expect(Buffer.from(sender.sendingChainKey)).toEqual(Buffer.from(receiver.receivingChainKey))
+    expect(Buffer.from(sender.receivingChainKey)).toEqual(Buffer.from(receiver.sendingChainKey))
+  })
 })

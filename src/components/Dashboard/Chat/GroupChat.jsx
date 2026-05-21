@@ -22,6 +22,7 @@ import {
   updateSavedMessages,
 } from './utils/chat/keyManagement'
 import { decryptIncomingGroupMessage } from './utils/chat/groupMessageDecryption'
+import { forwardGroupStateToPairedDevices } from '../../../utils/deviceForward'
 
 const TEXT_ENCODER = new TextEncoder()
 const TEXT_DECODER = new TextDecoder()
@@ -274,7 +275,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
   )
 
   const replayFetchedMessages = useCallback(
-    async ({ fetchedMessages, initialState, initialMeta }) => {
+    async ({ fetchedMessages, initialState, initialMeta, cachedMessages = [] }) => {
       let replayState = initialState
       let replayMeta = initialMeta
       const formattedMessages = []
@@ -284,6 +285,15 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
           const seqB = Number.isInteger(b?.seq) ? b.seq : Number.MAX_SAFE_INTEGER
           return seqA - seqB
         }
+      )
+
+      // Messages already decrypted and saved on a previous visit. The persisted
+      // senderGenerations already accounts for them, so re-decrypting would fail
+      // with a generation mismatch. Use cached plaintext instead.
+      const cachedById = new Map(
+        (Array.isArray(cachedMessages) ? cachedMessages : [])
+          .filter((m) => m?._id && m.text && m.text !== MLS_UNAVAILABLE_TEXT)
+          .map((m) => [String(m._id), m])
       )
 
       const identityKeys = await getIdentityKeys()
@@ -341,6 +351,15 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
           continue
         }
 
+        // If we already have the decrypted plaintext in cache, use it directly.
+        // Attempting to re-decrypt would fail because senderGenerations has
+        // already been advanced past this message's generation.
+        const msgId = String(message?._id ?? '')
+        if (msgId && cachedById.has(msgId)) {
+          formattedMessages.push(cachedById.get(msgId))
+          continue
+        }
+
         const formatted = await formatMessage(message, replayState, replayMeta)
         replayState = formatted.nextState ?? replayState
         formattedMessages.push(formatted.formattedMessage)
@@ -373,8 +392,24 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
     }
     groupCryptoStateRef.current = null
     isInitialLoadRef.current = true
+    liveMessageQueueRef.current = Promise.resolve()
 
-    socket.emit('openGroup', { groupId: activeGroupId }, async (res) => {
+    // Defined here so the initial load can be enqueued before any live-message
+    // handler tasks, ensuring groupCryptoStateRef is fully up-to-date before
+    // incoming newGroupMessage events attempt to decrypt with it.
+    const enqueueLiveGroupMessageTask = (task) => {
+      const queuedTask = liveMessageQueueRef.current.catch(() => {}).then(task)
+      liveMessageQueueRef.current = queuedTask
+      return queuedTask
+    }
+
+    // Serialise the full initial load (openGroup + fetchGroupMessages + replay)
+    // with the live-message queue.  Any newGroupMessage that arrives while the
+    // replay is in flight will wait in the queue and see the final state.
+    enqueueLiveGroupMessageTask(async () => {
+      const res = await new Promise((resolve) =>
+        socket.emit('openGroup', { groupId: activeGroupId }, resolve)
+      )
       if (cancelled || !res?.success) return
 
       const roster = buildRoster(res.members)
@@ -402,31 +437,36 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
       groupCryptoStateRef.current = localState
       setMessages(Array.isArray(cachedMessages) ? cachedMessages : [])
 
-      socket.emit('fetchGroupMessages', { groupId: activeGroupId, limit: 50 }, async (msgRes) => {
-        if (cancelled || !msgRes?.success || !Array.isArray(msgRes.messages)) return
+      const msgRes = await new Promise((resolve) =>
+        socket.emit('fetchGroupMessages', { groupId: activeGroupId, limit: 50 }, resolve)
+      )
+      if (cancelled || !msgRes?.success || !Array.isArray(msgRes.messages)) return
 
-        const replayed = await replayFetchedMessages({
-          fetchedMessages: msgRes.messages,
-          initialState: localState,
-          initialMeta: nextMeta,
-        })
-        const persistedReplayState = replayed.replayState
-          ? await saveGroupState(activeGroupId, replayed.replayState)
-          : replayed.replayState
-        const mergedMessages = mergeCachedMessages(cachedMessages, replayed.formattedMessages)
-
-        for (const message of replayed.formattedMessages) {
-          await updateSavedMessages(userId, getGroupCacheId(activeGroupId), message)
-        }
-
-        if (!cancelled) {
-          setMessages(mergedMessages)
-          setGroupCryptoState(persistedReplayState)
-          groupCryptoStateRef.current = persistedReplayState
-          setGroupMeta(replayed.replayMeta)
-          groupMetaRef.current = replayed.replayMeta
-        }
+      const replayed = await replayFetchedMessages({
+        fetchedMessages: msgRes.messages,
+        initialState: localState,
+        initialMeta: nextMeta,
+        cachedMessages,
       })
+      const persistedReplayState = replayed.replayState
+        ? await saveGroupState(activeGroupId, replayed.replayState)
+        : replayed.replayState
+      const mergedMessages = mergeCachedMessages(cachedMessages, replayed.formattedMessages)
+
+      // Save using mergedMessages so cached plaintext is never overwritten by a
+      // decryption failure text from the replay pass.
+      for (const message of mergedMessages) {
+        if (!message?._id) continue
+        await updateSavedMessages(userId, getGroupCacheId(activeGroupId), message)
+      }
+
+      if (!cancelled) {
+        setMessages(mergedMessages)
+        setGroupCryptoState(persistedReplayState)
+        groupCryptoStateRef.current = persistedReplayState
+        setGroupMeta(replayed.replayMeta)
+        groupMetaRef.current = replayed.replayMeta
+      }
     })
 
     const handleMembershipChanged = (evt) => {
@@ -475,12 +515,6 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
       })
     }
 
-    const enqueueLiveGroupMessageTask = (task) => {
-      const queuedTask = liveMessageQueueRef.current.catch(() => {}).then(task)
-      liveMessageQueueRef.current = queuedTask
-      return queuedTask
-    }
-
     const handleNewGroupMessage = ({ groupId, ...message }) => {
       if (String(groupId ?? '') !== String(activeGroupId)) return
 
@@ -500,6 +534,17 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
           })
           formattedMessage = decrypted.formattedMessage
           nextState = decrypted.nextState ?? currentState
+
+          // Let Dashboard update the sidebar preview without touching crypto state.
+          window.dispatchEvent(
+            new CustomEvent('groupMessagePreview', {
+              detail: {
+                groupId,
+                text: formattedMessage?.text ?? '',
+                timestamp: formattedMessage?.createdAt ?? new Date().toISOString(),
+              },
+            })
+          )
         } else {
           const formatted = await formatMessage(message, currentState, currentMeta)
           formattedMessage = formatted.formattedMessage
@@ -524,9 +569,17 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
     const handleGroupWelcome = async ({ groupId, welcome }) => {
       if (String(groupId ?? '') !== String(activeGroupId)) return
 
+      // Each device only processes the Welcome addressed to it.
+      const thisDeviceId = localStorage.getItem('echo-device-id')
+      const targetClientId = welcome.recipientClientId ?? null
+      if (targetClientId !== null && targetClientId !== thisDeviceId) return
+
       try {
-        const identityKeys = await getIdentityKeys()
-        const myInitPrivKeyB64 = identityKeys?.privateKeyX25519 ?? null
+        // Use the device-specific MLS private key if available; fall back to ELD key.
+        const myInitPrivKeyB64 =
+          localStorage.getItem('echo-device-mls-priv') ||
+          (await getIdentityKeys())?.privateKeyX25519 ||
+          null
 
         const nextState = await processWelcome({
           welcome,
@@ -535,6 +588,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
         })
 
         const persistedState = await saveGroupState(activeGroupId, nextState)
+        forwardGroupStateToPairedDevices(userId, activeGroupId, persistedState).catch(() => {})
 
         if (cancelled) return
         setGroupCryptoState(persistedState)
@@ -559,6 +613,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
           myInitPrivKeyB64,
         })
         const persistedState = await saveGroupState(activeGroupId, nextState)
+        forwardGroupStateToPairedDevices(userId, activeGroupId, persistedState).catch(() => {})
 
         if (cancelled) return
         setGroupCryptoState(persistedState)
@@ -584,12 +639,25 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
       }
     }
 
+    const handleGroupStateSynced = async (event) => {
+      const { groupId } = event.detail ?? {}
+      if (String(groupId ?? '') !== String(activeGroupId)) return
+      try {
+        const fresh = await loadGroupState(activeGroupId)
+        if (fresh && !cancelled) {
+          setGroupCryptoState(fresh)
+          groupCryptoStateRef.current = fresh
+        }
+      } catch {}
+    }
+
     socket.on('groupCommit', handleGroupCommit)
     socket.on('groupWelcome', handleGroupWelcome)
     socket.on('newGroupMessage', handleNewGroupMessage)
     socket.on('groupMemberAdded', handleMembershipChanged)
     socket.on('groupMemberRemoved', handleMembershipChanged)
     window.addEventListener('localStorageUpdated', handleStoredGroupMessage)
+    window.addEventListener('groupStateSynced', handleGroupStateSynced)
 
     return () => {
       cancelled = true
@@ -599,6 +667,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
       socket.off('groupMemberAdded', handleMembershipChanged)
       socket.off('groupMemberRemoved', handleMembershipChanged)
       window.removeEventListener('localStorageUpdated', handleStoredGroupMessage)
+      window.removeEventListener('groupStateSynced', handleGroupStateSynced)
     }
   }, [
     activeGroupId,
@@ -661,6 +730,9 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
           async (ack) => {
             if (ack?.success) {
               const persistedState = await saveGroupState(activeGroupId, encrypted.newState)
+              forwardGroupStateToPairedDevices(userId, activeGroupId, persistedState).catch(
+                () => {}
+              )
               setGroupCryptoState(persistedState)
               groupCryptoStateRef.current = persistedState
               resolve(ack)

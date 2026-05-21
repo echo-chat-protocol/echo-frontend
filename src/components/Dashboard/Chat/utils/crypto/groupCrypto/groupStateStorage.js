@@ -82,8 +82,9 @@ export async function createNewGroupState({
 
   const genesisTH = await genesisTranscriptHash()
 
-  const treeHash = await computeTreeHash(treePublicNodes, leafCount, initialLeafData)
-
+  // Generate the creator's leaf signing keypair first so it can be folded into
+  // leafData before computing treeHash. Members derive treeHash from the Welcome's
+  // groupInfo.leafData which carries this signing key, so the hash inputs must match.
   const { leafSigningPrivKeyB64, leafSigningPubKeyB64 } = await generateLeafSigningKeypair()
   const credential = await issueCredential(
     creatorUserId,
@@ -104,8 +105,16 @@ export async function createNewGroupState({
     }
   }
 
+  // treeHash computed after the creator's signing key is baked into leafData so
+  // it matches what members recompute from groupInfo.leafData in processWelcome.
+  const treeHash = await computeTreeHash(treePublicNodes, leafCount, leafData)
+
+  // Only assign the signing key to the creator's own leaf (matched by leafIndex),
+  // not to any device leaves that share the same userId.
   const rosterWithSigningKeys = normalizedRoster.map((m) =>
-    String(m.userId) === String(creatorUserId) ? { ...m, leafSigningPubKeyB64, credential } : m
+    String(m.userId) === String(creatorUserId) && m.leafIndex === selfLeafIndex
+      ? { ...m, leafSigningPubKeyB64, credential }
+      : m
   )
 
   const {

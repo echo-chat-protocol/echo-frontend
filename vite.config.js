@@ -14,20 +14,9 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
-  plugins: [
-    react({
-      // Parse JSX in both .jsx and plain .js files
-      include: /\.(jsx?|tsx?)$/,
-    }),
-    wasm(),
-    topLevelAwait(),
-  ],
-
-  // ── Dev-server proxy ─────────────────────────────────────────────────────
-  // Forwards /api/v1/* and /socket.io/* from localhost to the Render backend
-  // so the browser never sees a cross-origin request (no CORS error).
-  // In production Vite is not involved — requests go directly to the backend.
   server: {
+    host: true,
+    port: 5173,
     proxy: {
       '/api': {
         target: 'https://echo-backend-preproduction.onrender.com',
@@ -38,10 +27,18 @@ export default defineConfig({
         target: 'https://echo-backend-preproduction.onrender.com',
         changeOrigin: true,
         secure: true,
-        ws: true, // proxy WebSocket connections too
+        ws: true,
       },
     },
   },
+  plugins: [
+    react({
+      // Parse JSX in both .jsx and plain .js files
+      include: /\.(jsx?|tsx?)$/,
+    }),
+    wasm(),
+    topLevelAwait(),
+  ],
 
   resolve: {
     alias: {

@@ -1,4 +1,6 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, lazy, Suspense } from 'react'
+
+const DeviceSyncModal = lazy(() => import('../../features/devices/DeviceSyncModal'))
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Search, Plus, Lock, MessageCircle, Menu, ArrowLeft } from 'lucide-react'
@@ -13,6 +15,7 @@ import SettingsView from './Settings/Settings'
 
 import { useConversations } from './DashboardComponents/hooks/useConversations'
 import { useGroups } from './DashboardComponents/hooks/useGroups'
+import { useTauri } from '@/hooks/useTauri'
 
 import {
   getUserData,
@@ -30,12 +33,26 @@ import {
 } from './Chat/utils/chat/keyManagement'
 
 import { decryptIncomingGroupMessage } from './Chat/utils/chat/groupMessageDecryption'
+import {
+  loadGroupState,
+  saveGroupState,
+  processWelcome,
+} from './Chat/utils/crypto/groupCryptoProvider'
 import { decryptIncomingMessage } from './Chat/utils/chat/messageDecryption'
 import { base64ToArrayBuffer } from './Chat/utils/helpers'
 import { generateOneTimePreKeys } from './Chat/utils/crypto/opk'
 import { createOpkReplenishHandler, requestOpkStatusAndReplenish } from '../../utils/opk/replenish'
 import { rotateSPKIfNeeded } from '../../utils/spk/rotate'
 import eld from '../../utils/storage/EncryptedLocalDatabase'
+import {
+  processRawDeviceEnvelope,
+  processIncomingEnvelopes,
+  broadcastSessionSync,
+  invalidatePairedDevicesCache,
+} from '../../utils/deviceForward'
+import wasmInit, { diffie_hellman } from '@mascaro101/echo-protocol'
+import { getDeviceMetadata } from '../../features/devices/deviceMetadata'
+import { revokeCurrentDeviceForLogout } from '../../features/devices/logoutDevice'
 import GroupList from './DashboardComponents/Groups/GroupList'
 import CreateGroupModal from './Groups/CreateGroupModal'
 import GroupChat from './Chat/GroupChat'
@@ -45,6 +62,7 @@ const Dashboard = () => {
   const { t } = useTranslation()
   const token = tokenStorage.getAccess()
   const navigate = useNavigate()
+  const { isMobile } = useTauri()
   const { username, userId, profileImage } = getUserData(token)
 
   // Estados
@@ -95,6 +113,7 @@ const Dashboard = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     return localStorage.getItem('sidebarCollapsed') === 'true'
   })
+  const [showDeviceSync, setShowDeviceSync] = useState(false)
   const GROUP_CACHE_PREFIX = 'group:'
 
   // Hooks personalizados - must be before useEffects that use them
@@ -104,6 +123,11 @@ const Dashboard = () => {
   const conversationsListRef = useRef(null)
   const hasRefreshedProfiles = useRef(false)
   const activeChatRef = useRef(activeChat)
+  const activeViewRef = useRef(activeView)
+  const showMobileChatRef = useRef(showMobileChat)
+  const isMobileMenuOpenRef = useRef(isMobileMenuOpen)
+  const createGroupOpenRef = useRef(createGroupOpen)
+  const showDeviceSyncRef = useRef(showDeviceSync)
   const recentConversationsRef = useRef(recentConversations)
   const userIdRef = useRef(userId)
   const mlsKeyPackagePublishedRef = useRef(false)
@@ -135,6 +159,52 @@ const Dashboard = () => {
   useEffect(() => {
     activeChatRef.current = activeChat
   }, [activeChat])
+
+  useEffect(() => {
+    activeViewRef.current = activeView
+  }, [activeView])
+
+  useEffect(() => {
+    showMobileChatRef.current = showMobileChat
+  }, [showMobileChat])
+
+  useEffect(() => {
+    isMobileMenuOpenRef.current = isMobileMenuOpen
+  }, [isMobileMenuOpen])
+
+  useEffect(() => {
+    createGroupOpenRef.current = createGroupOpen
+  }, [createGroupOpen])
+
+  useEffect(() => {
+    showDeviceSyncRef.current = showDeviceSync
+  }, [showDeviceSync])
+
+  useEffect(() => {
+    if (!isMobile) return undefined
+
+    window.history.pushState({ echoDashboardBackGuard: true }, '', window.location.href)
+
+    const handlePopState = () => {
+      if (showDeviceSyncRef.current) {
+        setShowDeviceSync(false)
+      } else if (createGroupOpenRef.current) {
+        setCreateGroupOpen(false)
+      } else if (isMobileMenuOpenRef.current) {
+        setIsMobileMenuOpen(false)
+      } else if (showMobileChatRef.current || activeChatRef.current) {
+        setShowMobileChat(false)
+      } else if (activeViewRef.current !== 'chats') {
+        setActiveView('chats')
+        localStorage.setItem('dashboardView', 'chats')
+      }
+
+      window.history.pushState({ echoDashboardBackGuard: true }, '', window.location.href)
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [isMobile])
 
   useEffect(() => {
     recentConversationsRef.current = recentConversations
@@ -222,10 +292,12 @@ const Dashboard = () => {
           return false
         }
 
+        const deviceId = localStorage.getItem('echo-device-id')
+        const mlsPub = localStorage.getItem('echo-device-mls-pub') || identityKeys.publicKeyX25519
         return await new Promise((resolve) => {
           sharedSocket.emit(
             'publishKeyPackage',
-            { initKeyB64: identityKeys.publicKeyX25519 },
+            { initKeyB64: mlsPub, clientId: deviceId || null },
             (res) => {
               if (res?.success) {
                 mlsKeyPackagePublishedRef.current = true
@@ -251,9 +323,78 @@ const Dashboard = () => {
       mlsKeyPackagePublishedRef.current = false
       clearMlsKeyPackageRetry()
 
-      sharedSocket.emit('listMyGroups', {}, (res) => {
-        if (res?.success && Array.isArray(res.groups)) {
-          setAllGroupsRef.current?.(res.groups)
+      sharedSocket.emit('listMyGroups', {}, async (res) => {
+        if (!res?.success || !Array.isArray(res.groups)) return
+
+        setAllGroupsRef.current?.(res.groups)
+
+        // Detect messages sent while offline by comparing against the timestamp stored
+        // when the socket last disconnected (logout, browser close, or network drop).
+        const disconnectKey = `lastDisconnectAt-${userIdRef.current}`
+        const lastDisconnectAt = localStorage.getItem(disconnectKey)
+        if (!lastDisconnectAt) return // First ever session — no offline period to check
+
+        const lastDisconnectTime = new Date(lastDisconnectAt).getTime()
+
+        for (const group of res.groups) {
+          const gid = String(group.groupId ?? '')
+          if (!gid) continue
+
+          sharedSocket.emit('fetchGroupMessages', { groupId: gid, limit: 50 }, async (msgRes) => {
+            if (!msgRes?.success || !Array.isArray(msgRes.messages) || msgRes.messages.length === 0)
+              return
+
+            const missedMessages = msgRes.messages.filter((m) => {
+              const t = new Date(m?.createdAt || m?.timestamp || 0).getTime()
+              return t > lastDisconnectTime
+            })
+            if (missedMessages.length === 0) return
+
+            const latestMsg = missedMessages[missedMessages.length - 1]
+            const timestamp =
+              latestMsg?.createdAt || latestMsg?.timestamp || new Date().toISOString()
+
+            // Read preview text from ELD cache only — no MLS state mutations.
+            // Advancing senderGenerations here races with GroupChat's own replay
+            // and causes generation mismatches on every subsequent message.
+            // GroupChat decrypts and caches the actual plaintexts when opened.
+            let previewText = ''
+            try {
+              const cached = await getSavedMessages(userIdRef.current, `group:${gid}`)
+              if (Array.isArray(cached) && cached.length > 0) {
+                const missedIds = new Set(
+                  missedMessages.map((m) => String(m._id ?? '')).filter(Boolean)
+                )
+                const cachedMissed = cached.filter(
+                  (m) =>
+                    m?._id &&
+                    missedIds.has(String(m._id)) &&
+                    m.text &&
+                    m.text !== '[Unable to decrypt message]'
+                )
+                previewText =
+                  cachedMissed.length > 0
+                    ? cachedMissed[cachedMissed.length - 1].text
+                    : (cached[cached.length - 1]?.text ?? '')
+              }
+            } catch {}
+
+            const senderName = latestMsg?.username || 'Member'
+            const displayText = previewText || `${senderName}: New message`
+
+            upsertGroupRef.current?.(
+              { groupId: gid, name: group.name || 'Group' },
+              { timestamp, text: displayText }
+            )
+
+            setUnreadGroupMessages((prev) => {
+              const nextCount = Math.max(prev[gid] || 0, missedMessages.length)
+              if (nextCount === (prev[gid] || 0)) return prev
+              const next = { ...prev, [gid]: nextCount }
+              localStorage.setItem(`unreadGroup-${userIdRef.current}-${gid}`, String(nextCount))
+              return next
+            })
+          })
         }
       })
 
@@ -316,7 +457,15 @@ const Dashboard = () => {
     const handleDisconnect = () => {
       mlsKeyPackagePublishedRef.current = false
       clearMlsKeyPackageRetry()
+      localStorage.setItem(`lastDisconnectAt-${userIdRef.current}`, new Date().toISOString())
     }
+
+    // Also capture disconnect time on page close/refresh so the timestamp
+    // is available on the very next login even if handleDisconnect races with unmount.
+    const handleBeforeUnload = () => {
+      localStorage.setItem(`lastDisconnectAt-${userIdRef.current}`, new Date().toISOString())
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
 
     sharedSocket.on('disconnect', handleDisconnect)
 
@@ -463,6 +612,7 @@ const Dashboard = () => {
               ? message.text
               : ''
 
+        let decryptOk = false
         try {
           const result = await decryptIncomingGroupMessage({
             message,
@@ -470,9 +620,16 @@ const Dashboard = () => {
             username,
           })
           msgText = result?.formattedMessage?.text ?? msgText
+          decryptOk = true
         } catch {
           console.warn('[Dashboard] Failed to decrypt incoming group message')
-          msgText = '[Unable to decrypt message]'
+          // Don't save the failure to the message cache — the correct plaintext
+          // will be stored when the user opens the group and the MLS state is loaded.
+          msgText = ''
+        }
+
+        // Only persist and preview the message when decryption succeeded.
+        if (decryptOk && msgText) {
           await updateSavedMessages(userIdRef.current, getGroupCacheId(gid), {
             _id: message._id || `${gid}:${String(message?.seq ?? timestamp)}`,
             userId: String(message?.userId ?? ''),
@@ -509,70 +666,128 @@ const Dashboard = () => {
       }
 
       const privateKeyArray = base64ToArrayBuffer(identityKeys.privateKeyX25519)
-
+      const ownDeviceId = localStorage.getItem('echo-device-id') || null
       for (const message of messages) {
         const currentUserId = String(userIdRef.current)
         const messageSenderId = String(message.userId)
         const activeChatId = activeChatRef.current?.id ? String(activeChatRef.current.id) : null
 
-        if (message.userId && messageSenderId !== currentUserId) {
-          const senderId = messageSenderId
+        // Per-device fan-out filter — drop copies not addressed to this
+        // device. A peerDeviceId tag means the message is part of a per-
+        // device fanout; if it doesn't match our deviceId, skip it.
+        if (
+          message.peerDeviceId &&
+          ownDeviceId &&
+          String(message.peerDeviceId) !== String(ownDeviceId)
+        ) {
+          continue
+        }
 
-          if (senderId === activeChatId) {
+        // Sibling-display branch: another of our own devices sent this and
+        // fanned it to us as a sibling target. The visual conversation key
+        // is message.targetUserId (the peer Alice was chatting with), not
+        // message.userId (Alice herself). Direction: outgoing.
+        const isSiblingFanout = Boolean(message.peerDeviceId) && messageSenderId === currentUserId
+
+        if (message.userId && (isSiblingFanout || messageSenderId !== currentUserId)) {
+          const senderId = messageSenderId
+          // Conversation thread that this message belongs to in the UI.
+          const conversationPartner = isSiblingFanout
+            ? String(message.conversationUserId || activeChatId || message.targetUserId)
+            : senderId
+
+          if (!isSiblingFanout && senderId === activeChatId) {
+            // Active-chat handler (Chat.jsx) will process this — avoid
+            // double-decryption.
+            continue
+          }
+          if (isSiblingFanout && conversationPartner === activeChatId) {
+            // Active-chat handler will decrypt + display this sibling copy.
             continue
           }
 
-          const existingMessages = await getSavedMessages(userIdRef.current, senderId)
+          const existingMessages = await getSavedMessages(userIdRef.current, conversationPartner)
           if (existingMessages.some((msg) => msg._id === message._id)) {
             continue
           }
 
           try {
             if (message.messageType === 'call_event') {
-              await updateSavedMessages(userIdRef.current, senderId, message, null)
+              await updateSavedMessages(userIdRef.current, conversationPartner, message, null)
               continue
             }
 
             if (!message.payload || !message.nonce || !message.publicEphemeralKey) {
               console.warn('⚠️ [Dashboard] Skipping background decryption (missing fields)')
-              continue
+              // Fall through — still update unread count and conversation list below.
+            } else {
+              const nonce = base64ToArrayBuffer(message.nonce || '')
+              const senderDeviceUserIdRaw = message.senderDeviceUserId
+              const senderDeviceUserId =
+                senderDeviceUserIdRaw && String(senderDeviceUserIdRaw) !== senderId
+                  ? String(senderDeviceUserIdRaw)
+                  : null
+              const cryptoPeerUserId = senderDeviceUserId || senderId
+              const sessionTargetId = senderDeviceUserId || null
+              const decryptOptions = {
+                ...(sessionTargetId
+                  ? {
+                      sessionTargetId,
+                      peerUserId: cryptoPeerUserId,
+                    }
+                  : {}),
+                conversationKeyOverride: isSiblingFanout
+                  ? String(message.conversationUserId || message.targetUserId)
+                  : senderId,
+              }
+              await decryptIncomingMessage(
+                message,
+                nonce,
+                userIdRef.current,
+                cryptoPeerUserId,
+                privateKeyArray,
+                sharedSocket,
+                null,
+                decryptOptions
+              )
             }
-
-            const nonce = base64ToArrayBuffer(message.nonce || '')
-            await decryptIncomingMessage(
-              message,
-              nonce,
-              userIdRef.current,
-              senderId,
-              privateKeyArray,
-              sharedSocket,
-              null
-            )
           } catch (error) {
-            console.error('❌ [Dashboard] Failed to decrypt message in background:', error)
+            // Background decryption can race with the sibling-device plaintext
+            // forward: another device that already advanced this conversation's
+            // Double Ratchet state may have decrypted first and pushed the text
+            // via a deviceEnvelope. Treat as recoverable — the plaintext will
+            // arrive shortly through the deviceEnvelope handler.
+            console.warn(
+              '[Dashboard] Background decrypt failed; waiting for sibling device forward:',
+              error?.message || error
+            )
           }
 
-          if (senderId !== activeChatId)
+          // Sibling-display messages do not bump unread (the user already
+          // saw them on the other device when they typed them).
+          if (!isSiblingFanout && conversationPartner !== activeChatId)
             setUnreadMessages((prev) => {
-              const currentUnread = prev[senderId] || 0
+              const currentUnread = prev[conversationPartner] || 0
               const newCount = currentUnread + 1
 
-              localStorage.setItem(`unread-${userIdRef.current}-${senderId}`, newCount)
+              localStorage.setItem(`unread-${userIdRef.current}-${conversationPartner}`, newCount)
 
               return {
                 ...prev,
-                [senderId]: newCount,
+                [conversationPartner]: newCount,
               }
             })
 
           const conversationExists = recentConversationsRef.current.some(
-            (conv) => String(conv.id) === senderId
+            (conv) => String(conv.id) === conversationPartner
           )
 
           if (!conversationExists) {
             const placeholderUser = {
-              id: senderId,
-              username: message.username || `User ${senderId}`,
+              id: conversationPartner,
+              username: isSiblingFanout
+                ? `User ${conversationPartner}`
+                : message.username || `User ${conversationPartner}`,
               profileImage: null,
             }
 
@@ -581,10 +796,10 @@ const Dashboard = () => {
               timestamp: message.timestamp || message.createdAt || new Date().toISOString(),
             })
 
-            sharedSocket.emit('getUserInfo', { userId: senderId }, (response) => {
+            sharedSocket.emit('getUserInfo', { userId: conversationPartner }, (response) => {
               if (response.success && response.user) {
                 const conversationUser = {
-                  id: senderId,
+                  id: conversationPartner,
                   username: response.user.username,
                   profileImage: response.user.profilePicture,
                 }
@@ -596,7 +811,7 @@ const Dashboard = () => {
             })
           } else {
             const existingConv = recentConversationsRef.current.find(
-              (conv) => String(conv.id) === senderId
+              (conv) => String(conv.id) === conversationPartner
             )
             if (existingConv) {
               updateRecentConversationsRef.current?.(existingConv, {
@@ -609,11 +824,193 @@ const Dashboard = () => {
       }
     }
 
+    // Process group Welcomes immediately so MLS state is in ELD before the chat
+    // is opened — this lets background decryption work from the first message.
+    const handleGroupWelcomeBackground = async ({ groupId, welcome }) => {
+      if (!groupId || !welcome) return
+      const gid = String(groupId)
+
+      const thisDeviceId = localStorage.getItem('echo-device-id')
+      const targetClientId = welcome.recipientClientId ?? null
+      if (targetClientId !== null && targetClientId !== thisDeviceId) return
+
+      try {
+        const existing = await loadGroupState(gid)
+        if (existing?.applicationSecretB64) return // already have key material
+
+        const identityKeys = await getIdentityKeys()
+        const myInitPrivKeyB64 =
+          localStorage.getItem('echo-device-mls-priv') || identityKeys?.privateKeyX25519 || null
+        if (!myInitPrivKeyB64) return
+
+        const nextState = await processWelcome({
+          welcome,
+          selfUserId: userIdRef.current,
+          myInitPrivKeyB64,
+        })
+        await saveGroupState(gid, nextState)
+      } catch (err) {
+        console.warn('[Dashboard] Background Welcome processing failed:', err)
+      }
+    }
+
+    // Update the sidebar preview when GroupChat decrypts a live message (active group).
+    const handleGroupMessagePreview = (event) => {
+      const { groupId, text, timestamp, groupName } = event.detail ?? {}
+      if (!groupId) return
+      upsertGroupRef.current?.(
+        { groupId: String(groupId), name: groupName || 'Group' },
+        { timestamp, text: text ?? '' }
+      )
+    }
+
     sharedSocket.on('newMessage', handleNewMessageNotification)
     sharedSocket.on('groupAdded', handleGroupAdded)
     sharedSocket.on('groupUpdated', handleGroupUpdated)
     sharedSocket.on('groupRemoved', handleGroupRemoved)
     sharedSocket.on('newGroupMessage', handleNewGroupMessageNotification)
+    sharedSocket.on('groupWelcome', handleGroupWelcomeBackground)
+    window.addEventListener('groupMessagePreview', handleGroupMessagePreview)
+
+    // ── Device sync – lives here so it persists across view/chat changes ─────────
+
+    // Ensure this device's published per-device bundle is complete and
+    // properly signed. We run this at most once per install (gated by
+    // localStorage) — `generateAndUploadDeviceKeyBundle` mints a fresh SPK +
+    // OPK set, signs the SPK under this device's IK, and uploads the full
+    // bundle. The legacy code here used to call `registerDeviceKeys` with a
+    // partial payload on every mount, which the backend then "filled in" with
+    // the X25519 pub for the signature/Ed25519 fields — clobbering the
+    // original signature and breaking X3DH on the sender side.
+    let devicePollInterval = null
+    // Bumped to v3: prior v2 runs could complete with an unlocked-ELD bypass
+    // that left ELD.privatePreKey out of sync with Device.signedPreKey, so
+    // every install needs one more clean re-upload under the stricter rule
+    // (the call now throws if ELD is locked).
+    const DEVICE_BUNDLE_FLAG = 'echo-device-bundle-uploaded-v3'
+    // Clean up stale flag from the v2 attempt so we don't accidentally short-
+    // circuit on it via future changes.
+    localStorage.removeItem('echo-device-bundle-uploaded-v2')
+    const initDeviceSync = async () => {
+      const deviceMetadata = getDeviceMetadata()
+      const deviceId = deviceMetadata.deviceId
+
+      if (!localStorage.getItem(DEVICE_BUNDLE_FLAG)) {
+        try {
+          const { generateAndUploadDeviceKeyBundle } =
+            await import('@/features/devices/deviceKeyBundle')
+          await generateAndUploadDeviceKeyBundle(deviceId)
+          localStorage.setItem(DEVICE_BUNDLE_FLAG, '1')
+          invalidatePairedDevicesCache()
+        } catch (err) {
+          console.warn('[Dashboard] Initial device bundle upload failed:', err)
+          // Leave the flag unset so we retry on the next mount (typically once
+          // ELD is unlocked via EldUnlockGate).
+        }
+      }
+
+      // Generate a device-specific X25519 key pair for MLS group membership.
+      // Each device has its own leaf in the group tree; the init key is what the
+      // group creator encrypts the Welcome's joiner secret to.
+      if (
+        !localStorage.getItem('echo-device-mls-pub') ||
+        !localStorage.getItem('echo-device-mls-priv')
+      ) {
+        try {
+          await wasmInit()
+          const privBytes = crypto.getRandomValues(new Uint8Array(32))
+          // X25519 base point u=9 → public key = X25519(private, base_u)
+          const basePoint = new Uint8Array(32)
+          basePoint[0] = 9
+          const pubBytes = diffie_hellman(privBytes, basePoint)
+          const b64 = (b) => btoa(String.fromCharCode(...b))
+          localStorage.setItem('echo-device-mls-priv', b64(privBytes))
+          localStorage.setItem('echo-device-mls-pub', b64(pubBytes))
+          // Re-publish key package with the new device-specific key
+          void publishMlsKeyPackage()
+        } catch {
+          // non-fatal — fall back to identity key
+        }
+      }
+
+      const poll = () => {
+        if (!eld.isUnlocked?.()) return
+        processIncomingEnvelopes(userId).catch(() => {})
+      }
+      poll()
+      devicePollInterval = setInterval(poll, 3_000)
+    }
+    initDeviceSync()
+
+    // Real-time: server relays opaque device envelopes to all other devices in
+    // the user's socket room. Store immediately so the message is in ELD before
+    // any Chat pane opens; the localStorageUpdated event wakes the active Chat.
+    const handleDeviceEnvelope = (rawEnvelope) => {
+      processRawDeviceEnvelope(userId, rawEnvelope).catch(() => {})
+    }
+    sharedSocket.on('deviceEnvelope', handleDeviceEnvelope)
+
+    // When another device requests session state (to align its DR ratchet before
+    // sending), respond with this device's current snapshot for that conversation.
+    const handleDeviceSessionRequest = ({ targetUserId: reqTargetUserId }) => {
+      if (reqTargetUserId) broadcastSessionSync(userId, reqTargetUserId).catch(() => {})
+    }
+    sharedSocket.on('deviceSessionRequest', handleDeviceSessionRequest)
+
+    // The primary device revoked this one. Tear down local state and bounce
+    // to the landing page; the server will also refuse any further HTTP/WS
+    // calls from this deviceId.
+    const evictThisDevice = (reason) => {
+      try {
+        eld.lock?.()
+      } catch {
+        /* eld may already be locked */
+      }
+      const uid = userIdRef.current
+      if (uid) {
+        sessionStorage.removeItem(`eld-pass-${uid}`)
+        localStorage.setItem(`lastDisconnectAt-${uid}`, new Date().toISOString())
+      }
+      localStorage.removeItem('echo_access_token')
+      localStorage.removeItem('echo_refresh_token')
+      localStorage.removeItem('token')
+      localStorage.removeItem('userId')
+      localStorage.removeItem('username')
+      localStorage.removeItem('echo-device-id')
+      localStorage.removeItem('echo_sync_account')
+      try {
+        sharedSocket.disconnect()
+      } catch {
+        /* ignore */
+      }
+      if (typeof window !== 'undefined') {
+        window.alert(
+          reason === 'device_not_registered'
+            ? 'This device is no longer registered with the account. Re-pair it from your primary device.'
+            : 'This device was removed from your account. Re-pair it from your primary device to continue.'
+        )
+      }
+      navigate('/')
+    }
+
+    const handleDeviceRevoked = () => evictThisDevice('revoked_by_owner')
+    sharedSocket.on('deviceRevoked', handleDeviceRevoked)
+
+    // If the server rejects the socket handshake with device_revoked /
+    // device_not_registered / device_forbidden, the JWT is permanently
+    // unusable on this deviceId — evict immediately rather than letting
+    // socket.io reconnect in a loop.
+    const handleConnectError = (err) => {
+      const reason = err?.message || ''
+      if (
+        reason === 'device_revoked' ||
+        reason === 'device_not_registered' ||
+        reason === 'device_forbidden'
+      ) {
+        evictThisDevice(reason)
+      }
+    }
+    sharedSocket.on('connect_error', handleConnectError)
 
     return () => {
       sharedSocket.off('connect', onConnect)
@@ -628,6 +1025,14 @@ const Dashboard = () => {
       sharedSocket.off('groupUpdated', handleGroupUpdated)
       sharedSocket.off('groupRemoved', handleGroupRemoved)
       sharedSocket.off('newGroupMessage', handleNewGroupMessageNotification)
+      sharedSocket.off('groupWelcome', handleGroupWelcomeBackground)
+      sharedSocket.off('deviceEnvelope', handleDeviceEnvelope)
+      sharedSocket.off('deviceSessionRequest', handleDeviceSessionRequest)
+      sharedSocket.off('deviceRevoked', handleDeviceRevoked)
+      sharedSocket.off('connect_error', handleConnectError)
+      window.removeEventListener('groupMessagePreview', handleGroupMessagePreview)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      if (devicePollInterval) clearInterval(devicePollInterval)
       clearMlsKeyPackageRetry()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -636,18 +1041,58 @@ const Dashboard = () => {
   useEffect(() => {
     const handleStorageUpdate = (event) => {
       const targetId = String(event?.detail?.targetUserId ?? '')
-      if (!targetId.startsWith(GROUP_CACHE_PREFIX)) return
+      if (!targetId) return
 
-      const gid = targetId.slice(GROUP_CACHE_PREFIX.length)
-      if (!gid) return
+      if (targetId.startsWith(GROUP_CACHE_PREFIX)) {
+        const gid = targetId.slice(GROUP_CACHE_PREFIX.length)
+        if (!gid) return
+        upsertGroupRef.current?.(
+          { groupId: gid },
+          {
+            text: event?.detail?.latestMessage ?? '',
+            timestamp: event?.detail?.timestamp || new Date().toISOString(),
+          }
+        )
+        return
+      }
 
-      upsertGroupRef.current?.(
-        { groupId: gid },
-        {
-          text: event?.detail?.latestMessage ?? '',
-          timestamp: event?.detail?.timestamp || new Date().toISOString(),
+      // DM device-forwarded message — update the conversation list so the
+      // secondary device's sidebar reflects messages received via envelope.
+      if (!event?.detail?.message?._fromDeviceForward) return
+
+      const message = event.detail.message
+      const existingConv = recentConversationsRef.current.find((c) => String(c.id) === targetId)
+      if (existingConv) {
+        updateRecentConversationsRef.current?.(existingConv, {
+          text: event.detail.latestMessage ?? '',
+          timestamp: event.detail.timestamp || new Date().toISOString(),
+        })
+      } else {
+        const placeholderUser = {
+          id: targetId,
+          username: message.username || `User ${targetId}`,
+          profileImage: null,
         }
-      )
+        updateRecentConversationsRef.current?.(placeholderUser, {
+          text: event.detail.latestMessage ?? '',
+          timestamp: event.detail.timestamp || new Date().toISOString(),
+        })
+        const sock = getSocket()
+        if (sock?.connected) {
+          sock.emit('getUserInfo', { userId: targetId }, (response) => {
+            if (response?.success && response.user) {
+              updateRecentConversationsRef.current?.(
+                {
+                  id: targetId,
+                  username: response.user.username,
+                  profileImage: response.user.profilePicture,
+                },
+                null
+              )
+            }
+          })
+        }
+      }
     }
 
     window.addEventListener('localStorageUpdated', handleStorageUpdate)
@@ -758,13 +1203,21 @@ const Dashboard = () => {
     navigate(`/profile/${userId}`, { state: { username, userId } })
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await revokeCurrentDeviceForLogout()
+
     eld.lock()
+
+    // Record disconnect time before clearing keys so the next login can detect
+    // messages that arrived during this offline period.
+    localStorage.setItem(`lastDisconnectAt-${userId}`, new Date().toISOString())
 
     sessionStorage.removeItem(`eld-pass-${userId}`)
     tokenStorage.clear()
     localStorage.removeItem('userId')
     localStorage.removeItem('username')
+    localStorage.removeItem('echo-device-id')
+    localStorage.removeItem('echo_sync_account')
 
     if (socket) {
       socket.disconnect()
@@ -854,6 +1307,13 @@ const Dashboard = () => {
 
   return (
     <div className='flex h-screen bg-black text-white'>
+      {/* Device Sync overlay */}
+      {showDeviceSync && (
+        <Suspense fallback={null}>
+          <DeviceSyncModal onClose={() => setShowDeviceSync(false)} />
+        </Suspense>
+      )}
+
       {/* Incoming Call Notification */}
       {incomingCall && (
         <IncomingCallNotification callData={incomingCall} onClose={() => setIncomingCall(null)} />
@@ -894,6 +1354,10 @@ const Dashboard = () => {
           }}
           onOpenProfile={() => {
             handleProfileClick()
+            setIsMobileMenuOpen(false)
+          }}
+          onOpenDeviceSync={() => {
+            setShowDeviceSync(true)
             setIsMobileMenuOpen(false)
           }}
           onLogout={handleLogout}

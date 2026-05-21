@@ -10,6 +10,7 @@ import {
   buildInitialWelcomes,
   saveGroupState,
 } from '../Chat/utils/crypto/groupCryptoProvider'
+import { forwardGroupStateToPairedDevices } from '../../../utils/deviceForward'
 
 const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
   const [name, setName] = useState('')
@@ -85,28 +86,41 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
 
     setLoading(true)
 
-    // Fetch KeyPackages for all invited members BEFORE creating the group.
-    // We need their X25519 public keys to encrypt the group key to them.
-    const results = await Promise.all(
-      selected.map(
-        (u) =>
-          new Promise((resolve) => {
-            socket.emit('fetchKeyPackage', { userId: u.id }, (res) => {
-              if (res?.success && res.initKeyB64) {
-                resolve({ userId: String(u.id), initKeyB64: res.initKeyB64 })
-              } else {
-                console.warn(`[CreateGroupModal] No KeyPackage for user ${u.id} (${u.username})`)
-                resolve(null)
-              }
+    // Fetch ALL KeyPackages for each invited member (one per device/clientId).
+    // Each package becomes a separate MLS leaf so every device can decrypt independently.
+    const fetchAllPackages = (targetUserId) =>
+      new Promise((resolve) => {
+        socket.emit('fetchAllKeyPackages', { userId: targetUserId }, (res) => {
+          if (res?.success && Array.isArray(res.packages) && res.packages.length > 0) {
+            resolve(res.packages.filter((p) => p.initKeyB64))
+          } else {
+            // Fall back to the single-package endpoint for backward compat.
+            socket.emit('fetchKeyPackage', { userId: targetUserId }, (r) => {
+              resolve(
+                r?.success && r.initKeyB64 ? [{ clientId: null, initKeyB64: r.initKeyB64 }] : []
+              )
             })
-          })
-      )
-    )
-    const memberInitKeys = results.filter(Boolean)
+          }
+        })
+      })
 
-    // Block creation if any invited member has no KeyPackage — they'd be locked out silently.
+    const memberPackageResults = await Promise.all(
+      selected.map(async (u) => ({ user: u, packages: await fetchAllPackages(u.id) }))
+    )
+
+    // Build flat list: { userId, username, clientId, initKeyB64 }
+    const allMemberPackages = memberPackageResults.flatMap(({ user, packages }) =>
+      packages.map((pkg) => ({
+        userId: String(user.id),
+        username: user.username,
+        clientId: pkg.clientId ?? null,
+        initKeyB64: pkg.initKeyB64,
+      }))
+    )
+
+    // Block creation if any invited user has no KeyPackage at all.
     const missing = selected.filter(
-      (u) => !memberInitKeys.some((mk) => String(mk.userId) === String(u.id))
+      (u) => !allMemberPackages.some((p) => String(p.userId) === String(u.id))
     )
     if (missing.length > 0) {
       console.error(
@@ -125,55 +139,92 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
 
         // Use server-assigned leafIndex values from ack.members.
         const serverMembers = Array.isArray(ack.members) ? ack.members : []
-        const roster =
+
+        // Build one roster entry per package (primary + each device).
+        // Server assigns leafIndices for primary members; device leaves get sequential indices after.
+        const serverLeafMap = new Map(serverMembers.map((m) => [String(m.userId), m.leafIndex]))
+        let nextLeafIndex =
           serverMembers.length > 0
-            ? serverMembers.map((m) => ({
-                userId: String(m.userId),
-                username:
-                  selected.find((u) => String(u.id) === String(m.userId))?.username ?? 'Member',
-                leafIndex: Number.isInteger(m.leafIndex) ? m.leafIndex : 0,
-              }))
-            : [
-                { userId: String(userId), username: 'me', leafIndex: 0 },
-                ...selected.map((u, index) => ({
-                  userId: String(u.id),
-                  username: u.username,
-                  leafIndex: index + 1,
-                })),
-              ]
+            ? Math.max(...serverMembers.map((m) => m.leafIndex ?? 0)) + 1
+            : selected.length + 1
+
+        // Creator's MLS key: use device-specific key if available, else identity key.
+        const identityKeys = mlsEnabled ? await getIdentityKeys() : null
+        const creatorInitPubKeyB64 =
+          localStorage.getItem('echo-device-mls-pub') || identityKeys?.publicKeyX25519 || null
+        const creatorInitPrivKeyB64 =
+          localStorage.getItem('echo-device-mls-priv') || identityKeys?.privateKeyX25519 || null
+        const creatorDeviceId = localStorage.getItem('echo-device-id') || null
+
+        if (mlsEnabled && (!creatorInitPubKeyB64 || !creatorInitPrivKeyB64)) {
+          console.error('[CreateGroupModal] Missing local MLS identity keys for group creator')
+          setLoading(false)
+          return
+        }
+
+        // Build the full roster: one entry per (user, device) pair.
+        const roster = []
+        const memberInitKeysWithLeaf = []
+
+        // Creator's primary leaf (server-assigned index).
+        const creatorServerLeaf =
+          serverLeafMap.get(String(userId)) ?? (serverMembers.length === 0 ? 0 : null)
+        const creatorLeafIndex = creatorServerLeaf ?? 0
+        roster.push({
+          userId: String(userId),
+          username: 'me',
+          leafIndex: creatorLeafIndex,
+          clientId: creatorDeviceId,
+        })
+        memberInitKeysWithLeaf.push({
+          userId: String(userId),
+          leafIndex: creatorLeafIndex,
+          clientId: creatorDeviceId,
+          initKeyB64: creatorInitPubKeyB64,
+        })
+
+        // Invited members: one leaf per package.
+        for (const { userId: memberId, username, clientId, initKeyB64 } of allMemberPackages) {
+          const serverLeaf = serverLeafMap.get(String(memberId))
+          let leafIndex
+          if (
+            serverLeaf != null &&
+            !roster.some((r) => String(r.userId) === String(memberId) && r.leafIndex === serverLeaf)
+          ) {
+            // First package for this user gets the server-assigned leaf.
+            leafIndex = serverLeaf
+          } else {
+            // Additional packages (extra devices) get sequentially assigned leaves.
+            leafIndex = nextLeafIndex++
+          }
+          roster.push({ userId: String(memberId), username, leafIndex, clientId: clientId ?? null })
+          memberInitKeysWithLeaf.push({
+            userId: String(memberId),
+            leafIndex,
+            clientId: clientId ?? null,
+            initKeyB64,
+          })
+        }
+
+        // Fill in fallback roster if server returned nothing.
+        if (serverMembers.length === 0 && roster.length === 1) {
+          selected.forEach((u, i) => {
+            roster.push({
+              userId: String(u.id),
+              username: u.username,
+              leafIndex: i + 1,
+              clientId: null,
+            })
+            memberInitKeysWithLeaf.push({
+              userId: String(u.id),
+              leafIndex: i + 1,
+              clientId: null,
+              initKeyB64: '',
+            })
+          })
+        }
 
         try {
-          const identityKeys = mlsEnabled ? await getIdentityKeys() : null
-          const creatorInitPubKeyB64 = identityKeys?.publicKeyX25519 ?? null
-          const creatorInitPrivKeyB64 = identityKeys?.privateKeyX25519 ?? null
-
-          if (mlsEnabled && (!creatorInitPubKeyB64 || !creatorInitPrivKeyB64)) {
-            throw new Error('Missing local MLS identity keys for group creator')
-          }
-
-          const memberInitKeysWithLeaf = mlsEnabled
-            ? roster
-                .map((member) => {
-                  if (String(member.userId) === String(userId)) {
-                    return {
-                      userId: String(userId),
-                      leafIndex: member.leafIndex,
-                      initKeyB64: creatorInitPubKeyB64,
-                    }
-                  }
-
-                  const existing = memberInitKeys.find(
-                    (entry) => String(entry.userId) === String(member.userId)
-                  )
-                  if (!existing?.initKeyB64) return null
-                  return {
-                    ...existing,
-                    leafIndex: member.leafIndex,
-                  }
-                })
-                .filter(Boolean)
-            : []
-
           const creatorState = await createNewGroupState({
             groupId: ack.group.groupId,
             creatorUserId: userId,
@@ -187,9 +238,7 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
             const welcomes = await buildInitialWelcomes({
               creatorState,
               roster,
-              memberInitKeys: memberInitKeysWithLeaf.filter(
-                (entry) => String(entry.userId) !== String(userId)
-              ),
+              memberInitKeys: memberInitKeysWithLeaf,
             })
 
             for (const welcome of welcomes) {
@@ -200,7 +249,7 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
               })
             }
 
-            await saveGroupState(ack.group.groupId, {
+            const savedCreatorState = await saveGroupState(ack.group.groupId, {
               ...creatorState,
               secrets: {
                 ...creatorState.secrets,
@@ -210,6 +259,9 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
                 epochCommitSecretB64: null,
               },
             })
+            forwardGroupStateToPairedDevices(userId, ack.group.groupId, savedCreatorState).catch(
+              () => {}
+            )
           }
         } catch (err) {
           console.error('[CreateGroupModal] Failed to initialize MLS state:', err)

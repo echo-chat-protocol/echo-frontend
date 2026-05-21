@@ -58,9 +58,16 @@ export async function buildInitialWelcomes({ creatorState, roster, memberInitKey
 
   const passedRoster = normalizeRoster(roster)
   const normalizedRoster = passedRoster.map((m) => {
-    const inState = state.roster.find((s) => String(s.userId) === String(m.userId))
-    const keyPackage = memberInitKeys?.find(
-      (entry) => String(entry.userId) === String(m.userId)
+    // Match by leafIndex first so device leaves don't inherit primary's signing key.
+    const inState = state.roster.find((s) =>
+      Number.isInteger(m.leafIndex) && Number.isInteger(s.leafIndex)
+        ? s.leafIndex === m.leafIndex
+        : String(s.userId) === String(m.userId)
+    )
+    const keyPackage = memberInitKeys?.find((entry) =>
+      entry.leafIndex != null
+        ? entry.leafIndex === m.leafIndex
+        : String(entry.userId) === String(m.userId)
     )?.keyPackage
     const kpIdentity = resolveRosterIdentityFromKeyPackage(keyPackage)
     return inState
@@ -133,15 +140,23 @@ export async function buildInitialWelcomes({ creatorState, roster, memberInitKey
 
   const welcomes = []
   for (const member of normalizedRoster) {
-    if (String(member.userId) === String(state.selfUserId)) continue
-
-    // Each recipient gets the same GroupInfo but their own wrapped joiner secret.
-    const initKeyB64 = resolveInitKeyB64(
-      memberInitKeys?.find((entry) => String(entry.userId) === String(member.userId))
+    // Skip creator's own leaf only; device leaves (same userId, different leafIndex) do get Welcomes.
+    if (
+      String(member.userId) === String(state.selfUserId) &&
+      member.leafIndex === state.selfLeafIndex
     )
+      continue
+
+    // Look up by leafIndex first (multi-device support), fall back to userId.
+    const initKeyEntry = memberInitKeys?.find((entry) =>
+      entry.leafIndex != null
+        ? entry.leafIndex === member.leafIndex
+        : String(entry.userId) === String(member.userId)
+    )
+    const initKeyB64 = resolveInitKeyB64(initKeyEntry)
     if (!initKeyB64) {
       throw new Error(
-        `Missing initKeyB64 for member ${member.userId} — fetch their KeyPackage before building Welcomes`
+        `Missing initKeyB64 for member ${member.userId} leaf ${member.leafIndex} — fetch their KeyPackage before building Welcomes`
       )
     }
 
@@ -159,6 +174,7 @@ export async function buildInitialWelcomes({ creatorState, roster, memberInitKey
       epoch: state.epoch,
       cipherSuite: state.cipherSuite,
       recipientUserId: member.userId,
+      recipientClientId: initKeyEntry?.clientId ?? null,
       recipientLeafIndex: member.leafIndex,
       senderLeafIndex: state.selfLeafIndex,
       senderSigningPubKeyB64: senderRosterEntry.leafSigningPubKeyB64,

@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">echo-chat</string>
+    <string name="main_activity_title">echo-chat</string>
+</resources>

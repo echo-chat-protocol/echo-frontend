@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import PropTypes from "prop-types";
 import AuthLayout from "@/features/auth/AuthLayout";
+import { getDeviceMetadata } from "@/features/devices/deviceMetadata";
 import eld from "../../utils/storage/EncryptedLocalDatabase";
 import { generateOneTimePreKeys } from "@/components/Dashboard/Chat/utils/crypto/opk";
 import AuthService from "@services/auth.service";
@@ -161,12 +162,15 @@ export default function RegisterPage() {
       };
 
       // ── 6. Register via REST ─────────────────────────────────────────────────
+      // ── 6. Register via REST ─────────────────────────────────────────────────
+      const deviceMetadata = getDeviceMetadata();
       const res = await AuthService.register({
         username,
         password,
         keyBundle,
         aboutme: "",
         profilePicture: "",
+        ...deviceMetadata,
       });
 
       if (!res?.success) {
@@ -176,6 +180,17 @@ export default function RegisterPage() {
       }
 
       const userId = res.userId;
+      if (res.deviceId) localStorage.setItem("echo-device-id", res.deviceId);
+
+      // Persist this device's IK so getOrCreateDeviceIK returns the same key
+      // the account was registered under before ELD is unlocked.
+      localStorage.setItem(
+        "echo_device_ik",
+        JSON.stringify({
+          priv: x25519PrivateKeyBase64,
+          pub: x25519PublicKeyBase64,
+        })
+      );
 
       // ── 7. Create and populate encrypted local database ──────────────────────
       await eld.createUser(userId, password);

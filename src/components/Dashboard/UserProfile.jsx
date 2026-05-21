@@ -1,9 +1,25 @@
 import { useState, useRef, useEffect } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Lock, Eye, EyeOff, Edit, X, Check, Trash2, Key, Shield, ArrowLeft } from 'lucide-react'
+import {
+  Lock,
+  Eye,
+  EyeOff,
+  Edit,
+  X,
+  Check,
+  Trash2,
+  Key,
+  Shield,
+  ArrowLeft,
+  Smartphone,
+} from 'lucide-react'
 import { jwtDecode } from 'jwt-decode'
-import { getSocket } from '../../services/socket'
+import { getSocket } from '../../socket'
+import { api } from '../../services/api'
+import { useTauri } from '@/hooks/useTauri'
+import DesktopSyncView from '@/features/devices/DesktopSyncView'
+import MobileSyncView from '@/features/devices/MobileSyncView'
 import Toast from '../common/Toast'
 import ParticlesBackground from '@/components/animations/ParticlesBackground.jsx'
 import { tokenStorage } from '@services/api'
@@ -14,6 +30,7 @@ const UserProfile = () => {
   const navigate = useNavigate()
   const params = useParams()
   const socket = getSocket()
+  const { isMobile } = useTauri()
 
   // Get user ID from params, location state, or token
   let userId = params.userId || (location.state && location.state.userId)
@@ -25,7 +42,6 @@ const UserProfile = () => {
     try {
       const decoded = jwtDecode(token)
       loggedInUserId = decoded.id || decoded.userId || decoded._id
-      // eslint-disable-next-line no-empty
     } catch {}
   }
 
@@ -40,6 +56,7 @@ const UserProfile = () => {
   const [originalProfileImage, setOriginalProfileImage] = useState('')
   const [originalUsername, setOriginalUsername] = useState('')
   const [originalAbout, setOriginalAbout] = useState('')
+  const [loadError, setLoadError] = useState('')
   const [editingUsername, setEditingUsername] = useState(false)
   const [editingAbout, setEditingAbout] = useState(false)
   const [showPasswordChange, setShowPasswordChange] = useState(false)
@@ -76,44 +93,62 @@ const UserProfile = () => {
       return
     }
 
+    let cancelled = false
     setLoading(true)
+    setLoadError('')
+
+    const applyUserProfile = (user) => {
+      setCurrentUsername(user.username || '')
+      setOriginalUsername(user.username || '')
+      setAboutMe(user.aboutme || '')
+      setOriginalAbout(user.aboutme || '')
+      setProfileImage(user.profilePicture || '')
+      setOriginalProfileImage(user.profilePicture || '')
+    }
 
     // Check cache first
     const cachedProfile = localStorage.getItem(`profile-${userId}`)
     if (cachedProfile) {
       try {
         const parsed = JSON.parse(cachedProfile)
-        setCurrentUsername(parsed.username || '')
-        setOriginalUsername(parsed.username || '')
-        setAboutMe(parsed.aboutme || '')
-        setOriginalAbout(parsed.aboutme || '')
-        setProfileImage(parsed.profilePicture || '')
-        setOriginalProfileImage(parsed.profilePicture || '')
-        // eslint-disable-next-line no-empty
+        applyUserProfile(parsed)
+        setLoading(false)
       } catch {}
     }
 
     // Fetch from server
-    socket.emit('getUserInfo', { userId }, (response) => {
-      if (response && response.success && response.user) {
-        setCurrentUsername(response.user.username || '')
-        setOriginalUsername(response.user.username || '')
-        setAboutMe(response.user.aboutme || '')
-        setOriginalAbout(response.user.aboutme || '')
-        setProfileImage(response.user.profilePicture || '')
-        setOriginalProfileImage(response.user.profilePicture || '')
-        localStorage.setItem(
-          `profile-${userId}`,
-          JSON.stringify({
-            username: response.user.username || '',
-            aboutme: response.user.aboutme || '',
-            profilePicture: response.user.profilePicture || '',
-          })
-        )
-      }
-      setLoading(false)
-    })
-  }, [userId, socket, navigate])
+    api
+      .get(`/users/${encodeURIComponent(userId)}`)
+      .then((response) => {
+        if (cancelled) return
+
+        if (response && response.success && response.user) {
+          applyUserProfile(response.user)
+          localStorage.setItem(
+            `profile-${userId}`,
+            JSON.stringify({
+              username: response.user.username || '',
+              aboutme: response.user.aboutme || '',
+              profilePicture: response.user.profilePicture || '',
+            })
+          )
+          return
+        }
+
+        setLoadError(response?.error || 'Unable to load this profile.')
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setLoadError(err?.message || 'Unable to load this profile.')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [userId, navigate])
 
   const handleCopy = (value, label) => {
     navigator.clipboard.writeText(value)
@@ -251,6 +286,24 @@ const UserProfile = () => {
     )
   }
 
+  if (loadError && !currentUsername) {
+    return (
+      <div className='flex h-screen bg-black text-white items-center justify-center p-6'>
+        <div className='max-w-md w-full rounded-lg border border-red-500/30 bg-red-500/10 p-6 text-center'>
+          <p className='text-red-300 mb-4'>{loadError}</p>
+          <button
+            className='px-4 py-2 bg-white/10 hover:bg-gray-700 text-white rounded-lg transition-colors inline-flex items-center gap-2 border border-gray-800'
+            onClick={() => navigate(-1)}
+            type='button'
+          >
+            <ArrowLeft size={16} />
+            {t('profile.goBack')}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className='relative flex h-screen bg-black text-white'>
       {/* Fondo de partículas */}
@@ -304,17 +357,30 @@ const UserProfile = () => {
                 {t('profile.tabs.profile')}
               </button>
               {isOwnProfile && (
-                <button
-                  className={`px-4 py-2 font-medium flex items-center gap-2 ${
-                    activeTab === 'security'
-                      ? 'text-purple-500 border-b-2 border-purple-500'
-                      : 'text-gray-400 hover:text-white'
-                  }`}
-                  onClick={() => setActiveTab('security')}
-                >
-                  <Shield size={16} />
-                  {t('profile.tabs.security')}
-                </button>
+                <>
+                  <button
+                    className={`px-4 py-2 font-medium flex items-center gap-2 ${
+                      activeTab === 'security'
+                        ? 'text-purple-500 border-b-2 border-purple-500'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                    onClick={() => setActiveTab('security')}
+                  >
+                    <Shield size={16} />
+                    {t('profile.tabs.security')}
+                  </button>
+                  <button
+                    className={`px-4 py-2 font-medium flex items-center gap-2 ${
+                      activeTab === 'devices'
+                        ? 'text-purple-500 border-b-2 border-purple-500'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                    onClick={() => setActiveTab('devices')}
+                  >
+                    <Smartphone size={16} />
+                    Devices
+                  </button>
+                </>
               )}
             </div>
 
@@ -649,6 +715,17 @@ const UserProfile = () => {
                     )}
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Devices Tab */}
+            {activeTab === 'devices' && isOwnProfile && (
+              <div className='bg-black/30 rounded-xl border border-gray-800 p-6 mb-6'>
+                {isMobile ? (
+                  <MobileSyncView embedded onBack={() => setActiveTab('security')} />
+                ) : (
+                  <DesktopSyncView embedded onBack={() => setActiveTab('security')} />
+                )}
               </div>
             )}
 
