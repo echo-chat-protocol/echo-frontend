@@ -59,13 +59,23 @@ jobs:
           ls -la src-tauri/gen/apple || true
           find src-tauri/gen/apple -maxdepth 3 -type d 2>/dev/null || true
 
-      - name: CocoaPods install (if Podfile exists)
+      - name: CocoaPods install (if real deps exist)
         run: |
-          if [ -f src-tauri/gen/apple/Podfile ]; then
+          PODFILE=src-tauri/gen/apple/Podfile
+          if [ ! -f "$PODFILE" ]; then
+            echo "No Podfile — skipping"
+            exit 0
+          fi
+          # Skip when the Podfile is the empty stub Tauri generates by default.
+          # That stub references an app_macOS target that doesn't exist when
+          # only `tauri ios init` has run, and pod install would fail.
+          if grep -E "^\s*pod\s+['\"]" "$PODFILE" > /dev/null 2>&1; then
             cd src-tauri/gen/apple
             pod install --repo-update
           else
-            echo "No Podfile — skipping pod install"
+            echo "Podfile has no real pod dependencies — skipping pod install"
+            echo "---- Podfile contents ----"
+            cat "$PODFILE"
           fi
 
       - name: Detect Xcode project + scheme
