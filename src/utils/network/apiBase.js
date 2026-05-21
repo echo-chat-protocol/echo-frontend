@@ -1,6 +1,4 @@
 const DEFAULT_API_BASE = 'http://127.0.0.1:3001'
-const DEFAULT_API_PORT = '3001'
-const FRONTEND_DEV_PORTS = new Set(['5173', '5174', '5175'])
 
 function isLoopbackHost(hostname) {
   return (
@@ -30,12 +28,19 @@ export function resolveApiBase(rawBase = import.meta.env.VITE_SOCKET_URL || DEFA
       return `${appProtocol}//${appHost}${appPort ? `:${appPort}` : ''}`
     }
 
-    if (FRONTEND_DEV_PORTS.has(apiUrl.port)) {
-      apiUrl.port = DEFAULT_API_PORT
-    }
-
     return apiUrl.toString().replace(/\/$/, '')
   } catch {
     return base
   }
+}
+
+export function resolvePairingServerUrl() {
+  const configured = import.meta.env.VITE_PAIRING_SERVER_URL || import.meta.env.VITE_PUBLIC_APP_URL
+  if (configured) return configured.replace(/\/$/, '')
+
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin.replace(/\/$/, '')
+  }
+
+  return resolveApiBase()
 }

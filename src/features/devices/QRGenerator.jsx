@@ -12,7 +12,7 @@ import {
   encryptHistoryPackageChunks,
 } from './qrCrypto'
 import { deviceService } from './deviceService'
-import { resolveApiBase } from '@/utils/network/apiBase'
+import { resolvePairingServerUrl } from '@/utils/network/apiBase'
 import { buildHistoryPackage } from './historyPackage'
 
 function Row({ label, value, mono = true }) {
@@ -63,7 +63,7 @@ export default function QRGenerator({ onDeviceLinked = null }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
-  const serverUrl = resolveApiBase()
+  const serverUrl = resolvePairingServerUrl()
 
   const createSetupQr = useCallback(async () => {
     setBusy(true)

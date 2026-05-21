@@ -4,11 +4,19 @@ import wasm from 'vite-plugin-wasm'
 import topLevelAwait from 'vite-plugin-top-level-await'
 
 import path, { dirname } from 'node:path'
+import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import pkg from './package.json'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
+const devProxyTarget =
+  process.env.VITE_DEV_PROXY_TARGET || process.env.VITE_SOCKET_URL || 'http://127.0.0.1:3001'
+const devProxy = {
+  target: devProxyTarget,
+  changeOrigin: true,
+  secure: devProxyTarget.startsWith('https://'),
+}
 
 export default defineConfig({
   define: {
@@ -18,15 +26,17 @@ export default defineConfig({
     host: true,
     port: 5173,
     proxy: {
-      '/api': {
-        target: 'https://echo-backend-preproduction.onrender.com',
-        changeOrigin: true,
-        secure: true,
-      },
+      '/api': devProxy,
+      '/sync': devProxy,
+      '/pairing': devProxy,
+      '/devices': devProxy,
+      '/messages': devProxy,
+      '/users': devProxy,
+      '/keys': devProxy,
       '/socket.io': {
-        target: 'https://echo-backend-preproduction.onrender.com',
+        target: devProxyTarget,
         changeOrigin: true,
-        secure: true,
+        secure: devProxyTarget.startsWith('https://'),
         ws: true,
       },
     },

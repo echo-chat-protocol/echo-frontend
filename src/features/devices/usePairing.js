@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { deviceService } from './deviceService'
-import { resolveApiBase } from '@/utils/network/apiBase'
+import { resolvePairingServerUrl } from '@/utils/network/apiBase'
 
-const SERVER_URL = resolveApiBase()
+const SERVER_URL = resolvePairingServerUrl()
 
 export function usePairing({ primaryDeviceId } = {}) {
   const [session, setSession] = useState(null)
