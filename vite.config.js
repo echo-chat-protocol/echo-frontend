@@ -25,15 +25,25 @@ function resolveLanOrigin(port) {
   if (explicit) return explicit.replace(/\/$/, '')
 
   const interfaces = os.networkInterfaces()
+  const candidates = []
   for (const addresses of Object.values(interfaces)) {
     for (const address of addresses || []) {
       if (address.family === 'IPv4' && !address.internal) {
-        return `http://${address.address}:${port}`
+        candidates.push(address.address)
       }
     }
   }
 
-  return null
+  const preferred = candidates.find((ip) => {
+    if (ip.startsWith('192.168.')) return true
+    if (ip.startsWith('10.')) return true
+    return /^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)
+  })
+
+  const nonOverlay = candidates.find((ip) => !/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip))
+  const selected = preferred || nonOverlay || candidates[0]
+
+  return selected ? `http://${selected}:${port}` : null
 }
 
 const devLanOrigin = resolveLanOrigin(devServerPort)
@@ -41,7 +51,7 @@ const devLanOrigin = resolveLanOrigin(devServerPort)
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
-    'import.meta.env.VITE_DEV_LAN_ORIGIN': JSON.stringify(devLanOrigin),
+    __DEV_LAN_ORIGIN__: JSON.stringify(devLanOrigin),
   },
   server: {
     host: true,

@@ -1,3 +1,5 @@
+/* global __DEV_LAN_ORIGIN__ */
+
 const DEFAULT_API_BASE = 'http://127.0.0.1:3001'
 
 function isLoopbackHost(hostname) {
@@ -39,8 +41,8 @@ export function resolvePairingServerUrl() {
   if (configured) return configured.replace(/\/$/, '')
 
   if (typeof window !== 'undefined' && window.location?.origin) {
-    if (isLoopbackHost(window.location.hostname) && import.meta.env.VITE_DEV_LAN_ORIGIN) {
-      return import.meta.env.VITE_DEV_LAN_ORIGIN.replace(/\/$/, '')
+    if (isLoopbackHost(window.location.hostname) && typeof __DEV_LAN_ORIGIN__ === 'string') {
+      return __DEV_LAN_ORIGIN__.replace(/\/$/, '')
     }
     return window.location.origin.replace(/\/$/, '')
   }
