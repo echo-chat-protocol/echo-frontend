@@ -5,8 +5,12 @@
  * Never instantiate `io()` directly in components.
  */
 import { io } from 'socket.io-client'
+import { resolveApiBase } from '@/utils/network/apiBase'
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001'
+// If VITE_SOCKET_URL is set (e.g., Render public URL), use it.
+// Otherwise, connect to same-origin so Vite dev proxy (host:5173) forwards /socket.io → backend.
+const RAW_SOCKET_URL = import.meta.env.VITE_SOCKET_URL
+const RESOLVED_SOCKET_URL = RAW_SOCKET_URL ? resolveApiBase(RAW_SOCKET_URL) : resolveApiBase()
 
 let socket = null
 
@@ -18,13 +22,14 @@ let socket = null
  */
 export function getSocket() {
   if (!socket) {
-    socket = io(SOCKET_URL, {
+    socket = io(RESOLVED_SOCKET_URL, {
       withCredentials: true,
       autoConnect: false,
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       transports: ['websocket'],
+      path: '/socket.io',
     })
 
     socket.on('connect_error', (err) => {

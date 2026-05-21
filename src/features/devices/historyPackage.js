@@ -30,12 +30,8 @@ function storageEntriesForUser(userId) {
   return entries
 }
 
-// Visual-only history blob: plaintext messages, conversation/group lists, and
-// the minimum identifiers the new device needs to render the past. The new
-// device runs the protocol independently as its own cryptographic identity, so
-// the package MUST NOT carry the source device's IK private, DR ratchet state,
-// MLS leaf private keys, OPK privates, account JWT, or any other secret. Peers
-// rediscover and fan out to the new device via its own published bundle.
+// History package: plaintext messages and lists needed for display.
+// Do not include private keys or ratchet state.
 export async function buildHistoryPackage() {
   if (!eld.isUnlocked()) {
     throw new Error('Unlock ECHO on this device before compiling chat history.')
@@ -99,9 +95,7 @@ export async function importHistoryPackage(historyPackage, { unlockSecret, devic
   const userId =
     eld.getCurrentUserId() || historyPackage.user?.userId || localStorage.getItem('userId')
 
-  // The new device receives a device-scoped JWT from the pairing flow itself —
-  // not from the package. The package never carries the source device's
-  // account-level token.
+  // Device JWT comes from pairing, not from this package.
   if (deviceJwt) {
     localStorage.setItem('echo_access_token', deviceJwt)
     localStorage.setItem('token', deviceJwt)

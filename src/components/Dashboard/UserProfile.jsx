@@ -394,7 +394,7 @@ const UserProfile = () => {
                         src={
                           profileImage
                             ? profileImage.startsWith('/uploads/')
-                              ? `http://localhost:3001${profileImage}`
+                              ? `${resolveApiBase()}${profileImage}`
                               : profileImage
                             : defaultAvatar
                         }
@@ -742,3 +742,4 @@ const UserProfile = () => {
 }
 
 export default UserProfile
+import { resolveApiBase } from '@/utils/network/apiBase'

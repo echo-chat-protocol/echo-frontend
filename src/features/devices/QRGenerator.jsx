@@ -242,7 +242,8 @@ export default function QRGenerator({ onDeviceLinked = null }) {
 
         for (const chunk of chunks) {
           if (cancelled) return
-          await deviceService.transferDhChunk({
+          // Upload via QR serverUrl to keep origin consistent.
+          await deviceService.transferDhChunkToServer(serverUrl, {
             sessionId: session.sessionId,
             targetAccessToken: session.targetAccessToken,
             chunk,

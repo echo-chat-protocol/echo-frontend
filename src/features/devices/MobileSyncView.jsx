@@ -240,7 +240,7 @@ function ScannerCryptoTrace({ debug, failed = false }) {
 export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
   const [ik, setIk] = useState(null)
   const [ikLoading, setIkLoading] = useState(true)
-  const [phase, setPhase] = useState('scan') // 'scan' | 'decrypting' | 'message' | 'synced' | 'error'
+  const [phase, setPhase] = useState('scan') // scan | decrypting | message | synced | error
   const [message, setMessage] = useState(null)
   const [synced, setSynced] = useState(null)
   const [debug, setDebug] = useState(null)
@@ -342,9 +342,7 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
     try {
       await generateAndUploadDeviceKeyBundle(deviceId)
     } catch {
-      // Non-fatal at the UI level, but this device won't receive fan-out from
-      // peers until its public bundle is uploaded. Surfaced via the device
-      // list rather than blocking the pairing handshake.
+      // Non-fatal: device will not receive fan-out until its bundle is uploaded.
     }
 
     setSynced({
@@ -468,7 +466,7 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
       return
     }
 
-    // ── ECHO message QR (echo-qr-v1) ────────────────────────────────────────
+    // QR: echo-qr-v1 message
     const msgPayload = parseQRPayload(input)
     if (msgPayload) {
       try {
@@ -485,7 +483,7 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
       return
     }
 
-    // ── Device sync QR (echo-sync-v1) ────────────────────────────────────────
+    // QR: echo-sync-v1 device sync
     const syncPayload = parseSyncPayload(input)
     if (syncPayload) {
       try {
@@ -511,7 +509,7 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
         try {
           await generateAndUploadDeviceKeyBundle(currentDeviceId)
         } catch {
-          // Non-fatal.
+          // Non-fatal
         }
 
         setSynced(credentials)
@@ -527,7 +525,7 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
       return
     }
 
-    // ── Plain QR ─────────────────────────────────────────────────────────────
+    // QR: plain text
     setMessage(input)
     setPhase('message')
   }

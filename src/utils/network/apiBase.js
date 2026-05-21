@@ -21,13 +21,21 @@ export function resolveApiBase(rawBase = import.meta.env.VITE_SOCKET_URL || DEFA
     const apiUrl = new URL(base)
     const appHost = typeof window !== 'undefined' ? window.location.hostname : ''
 
-    // When accessed from a non-loopback host (phone on LAN), route through the
-    // Vite dev-server proxy instead of directly to the backend port.  The proxy
-    // is already open on the same host:port the phone used to load the page.
-    if (isLoopbackHost(apiUrl.hostname) && appHost && !isLoopbackHost(appHost)) {
+    // In development:
+    // - If the API base is loopback but the app is being accessed from a LAN IP
+    //   (phone), route via the Vite dev server origin so the proxy forwards.
+    // - If the app itself is loaded on localhost but we have a detected LAN
+    //   origin (__DEV_LAN_ORIGIN__), prefer that so QR payloads and API calls
+    //   are reachable from phones on the same Wi‑Fi.
+    if (isLoopbackHost(apiUrl.hostname)) {
       const appPort = typeof window !== 'undefined' ? window.location.port : ''
       const appProtocol = typeof window !== 'undefined' ? window.location.protocol : 'http:'
-      return `${appProtocol}//${appHost}${appPort ? `:${appPort}` : ''}`
+      if (appHost && !isLoopbackHost(appHost)) {
+        return `${appProtocol}//${appHost}${appPort ? `:${appPort}` : ''}`
+      }
+      if (typeof __DEV_LAN_ORIGIN__ === 'string' && __DEV_LAN_ORIGIN__) {
+        return __DEV_LAN_ORIGIN__.replace(/\/$/, '')
+      }
     }
 
     return apiUrl.toString().replace(/\/$/, '')

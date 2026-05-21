@@ -562,7 +562,7 @@ const VideoCall = () => {
     if (hasCustomImage) {
       // If the path starts with /, prepend the backend URL
       imageUrl = profile.profileImage.startsWith('/')
-        ? `http://localhost:3001${profile.profileImage}`
+        ? `${resolveApiBase()}${profile.profileImage}`
         : profile.profileImage
     } else {
       // Fallback to UI Avatars
@@ -710,3 +710,4 @@ const VideoCall = () => {
 }
 
 export default VideoCall
+import { resolveApiBase } from '@/utils/network/apiBase'

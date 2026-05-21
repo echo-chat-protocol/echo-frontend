@@ -12,7 +12,7 @@ const QR_VERSION = 'echo-qr-v1'
 const QR_INFO = new TextEncoder().encode(QR_VERSION)
 const LS_IK_KEY = 'echo_device_ik'
 
-// ── Base64 helpers ──────────────────────────────────────────────────────────
+// Base64 helpers
 
 function b64enc(u8) {
   let bin = ''
@@ -31,15 +31,9 @@ function b64dec(str) {
   return out
 }
 
-// ── IK resolution ───────────────────────────────────────────────────────────
-// Each device holds its own X25519 identity key in localStorage and NEVER
-// imports a sibling's IK private. The primary writes its IK to localStorage at
-// registration; secondaries generate fresh on first open.
-//
-// One-time bootstrap path: existing primary installations registered before
-// per-device IKs were enforced kept their IK only in ELD. If localStorage is
-// empty and ELD already has identity keys, we copy ELD → localStorage exactly
-// once; from then on localStorage is authoritative and ELD is never read here.
+// IK resolution
+// Resolve or create this device's X25519 identity key (IK).
+// Prefer localStorage; legacy fallback reads once from ELD; otherwise generate.
 
 export async function getOrCreateDeviceIK() {
   await init()
@@ -52,9 +46,7 @@ export async function getOrCreateDeviceIK() {
     } catch {}
   }
 
-  // Migration for pre-split primary installs: adopt the in-ELD account IK as
-  // this device's permanent IK, then persist it to localStorage so subsequent
-  // calls never need to consult ELD again.
+  // Legacy migration: copy IK from ELD to localStorage once.
   if (eld.isUnlocked?.()) {
     try {
       const keys = await eld.getIdentityKeys()
@@ -72,7 +64,7 @@ export async function getOrCreateDeviceIK() {
     } catch {}
   }
 
-  // Fresh device — generate and persist a brand-new IK pair.
+  // New device: generate and persist a new IK pair.
   const rand = crypto.getRandomValues(new Uint8Array(32))
   const priv = await generate_private_ephemeral_key(rand)
   const pub = await generate_public_ephemeral_key(priv)
@@ -82,14 +74,9 @@ export async function getOrCreateDeviceIK() {
   return { priv, pub, source: 'local' }
 }
 
-// ── Encryption ──────────────────────────────────────────────────────────────
-// Returns a JSON-serialisable object safe to embed in the QR code.
-//
-// Protocol:
-//   1. Generate ephemeral X25519 pair  (ek_priv, ek_pub)
-//   2. DH: shared = X25519(ek_priv, IK_pub)         ← ek_priv × IK_priv × G
-//   3. HKDF(shared, salt, info="echo-qr-v1") → 32-byte sym_key
-//   4. AES-256-GCM(sym_key, nonce, message)  → ciphertext
+// Encryption
+// Generates an ephemeral key, derives a symmetric key via DH+HKDF, and
+// returns an AES-GCM ciphertext plus params for a QR payload.
 
 export async function encryptQRPayload(message, ik, recipientPub = ik.pub) {
   await init()
@@ -104,24 +91,21 @@ export async function encryptQRPayload(message, ik, recipientPub = ik.pub) {
   const symKey = await hkdf_derive(dhOut, salt, QR_INFO, 32)
 
   const nonce = crypto.getRandomValues(new Uint8Array(12))
-  const ct = await wasmEncrypt(message, symKey, nonce) // returns hex string
+  const ct = await wasmEncrypt(message, symKey, nonce) // hex string
 
   return {
     v: QR_VERSION,
     senderIkPub: b64enc(ik.pub),
     recipientIkPub: b64enc(recipientPub),
     epk: b64enc(ekPub),
-    ct, // hex ciphertext from WASM
+    ct, // hex ciphertext
     s: b64enc(salt),
     n: b64enc(nonce),
   }
 }
 
-// ── Decryption ──────────────────────────────────────────────────────────────
-// Protocol (mirror of encryption):
-//   DH: shared = X25519(IK_priv, ek_pub)   ← same scalar as above
-//   HKDF(shared, salt, info) → sym_key
-//   AES-256-GCM decrypt → plaintext
+// Decryption
+// Derives the same symmetric key via DH+HKDF and decrypts with AES-GCM.
 
 export async function decryptQRPayload(payload, ik) {
   await init()
@@ -135,10 +119,10 @@ export async function decryptQRPayload(payload, ik) {
   const dhOut = await diffie_hellman(ik.priv, ekPub)
   const symKey = await hkdf_derive(dhOut, salt, QR_INFO, 32)
 
-  return await wasmDecrypt(payload.ct, symKey, nonce) // returns plaintext string
+  return await wasmDecrypt(payload.ct, symKey, nonce)
 }
 
-// ── Payload detection ────────────────────────────────────────────────────────
+// Payload detection
 
 export function parseQRPayload(raw) {
   try {
@@ -148,16 +132,8 @@ export function parseQRPayload(raw) {
   return null
 }
 
-// ── Device sync protocol ─────────────────────────────────────────────────────
-// Desktop shows QR → Mobile scans → Mobile logs in.
-//
-// Because this is a one-way channel (desktop→mobile), we cannot do X25519 DH:
-// DH requires each party to know the other's public key in advance, which
-// would need a prior key exchange in the opposite direction.  Instead, we
-// generate a fresh 256-bit random key, encrypt the credentials with
-// AES-256-GCM, and embed the key alongside the ciphertext in the QR.
-// Security: the QR code itself is the secret channel — only the person who
-// physically scans it can obtain the key and ciphertext.
+// Device sync
+// QR embeds a random AES key and ciphertext for a one-way transfer.
 
 const SYNC_VERSION = 'echo-sync-v1'
 const HISTORY_PACKAGE_VERSION = 'echo-history-package-v1'
@@ -295,8 +271,8 @@ export async function decryptHistoryPackageChunks(chunks, dhShared, sessionId, p
   return { historyPackage: JSON.parse(json), key }
 }
 
-// ── Debug helpers ────────────────────────────────────────────────────────────
-// Formats a Uint8Array as space-separated hex, truncated after `limit` bytes.
+// Debug helpers
+// Format a Uint8Array as space-separated hex, truncated to limit bytes.
 
 export function hexBytes(u8, limit = 16) {
   if (!u8) return '(null)'
@@ -342,9 +318,8 @@ export async function derivePairingDhDebug(privateKey, publicKey, dhOp) {
   return { dhOp, dhShared }
 }
 
-// ── encryptQRPayloadDebug ────────────────────────────────────────────────────
-// Identical to encryptQRPayload but also returns every intermediate crypto value
-// so the UI can display the full computation for debugging / course demonstration.
+// encryptQRPayloadDebug
+// Same as encryptQRPayload, also returns intermediate values.
 
 export async function encryptQRPayloadDebug(
   message,
@@ -391,9 +366,8 @@ export async function encryptQRPayloadDebug(
   }
 }
 
-// ── decryptQRPayloadDebug ────────────────────────────────────────────────────
-// Identical to decryptQRPayload but returns every intermediate value.
-// On decryption failure the error is thrown with a .debug property attached.
+// decryptQRPayloadDebug
+// Same as decryptQRPayload and returns intermediate values.
 
 export async function decryptQRPayloadDebug(payload, ik) {
   await init()

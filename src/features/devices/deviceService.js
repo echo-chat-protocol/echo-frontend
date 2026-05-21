@@ -1,7 +1,7 @@
 import { resolveApiBase } from '@/utils/network/apiBase'
 
 const BASE = resolveApiBase()
-const REQUEST_TIMEOUT_MS = 8000
+const REQUEST_TIMEOUT_MS = 20000
 
 function isLoopbackHost(hostname) {
   return (
@@ -13,7 +13,13 @@ function isLoopbackHost(hostname) {
 }
 
 function localBackendBase(base = BASE) {
-  if (typeof window === 'undefined' || !isLoopbackHost(window.location.hostname)) return null
+  // Loopback fallback only on desktop http(s); avoid on mobile or tauri://.
+  if (typeof window === 'undefined') return null
+  const proto = window.location?.protocol || ''
+  const isHttp = proto === 'http:' || proto === 'https:'
+  const ua = (navigator?.userAgent || '').toLowerCase()
+  const isMobile = /android|iphone|ipad|ipod/.test(ua)
+  if (!isHttp || isMobile || !isLoopbackHost(window.location.hostname)) return null
 
   try {
     const url = new URL(base)
@@ -116,6 +122,13 @@ export const deviceService = {
       targetAccessToken,
       chunk,
     }),
+  transferDhChunkToServer: (serverUrl, { sessionId, targetAccessToken, chunk }) =>
+    request(
+      'POST',
+      '/sync/dh-transfer-chunk',
+      { sessionId, targetAccessToken, chunk },
+      resolveApiBase(serverUrl)
+    ),
   listDhChunksFromServer: (serverUrl, { sessionId, targetAccessToken }) =>
     request(
       'GET',

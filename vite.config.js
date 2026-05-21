@@ -64,6 +64,7 @@ export default defineConfig({
       '/messages': devProxy,
       '/users': devProxy,
       '/keys': devProxy,
+      '/uploads': devProxy,
       '/socket.io': {
         target: devProxyTarget,
         changeOrigin: true,

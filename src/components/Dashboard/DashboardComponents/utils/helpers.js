@@ -51,7 +51,7 @@ export const formatProfileImage = (profilePicture, username) => {
   }
 
   if (profilePicture.startsWith('/uploads/')) {
-    return `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}${profilePicture}`
+    return `${resolveApiBase()}${profilePicture}`
   }
 
   return profilePicture
@@ -84,3 +84,4 @@ export const fetchUserProfileFromSocket = (socket, userId) => {
     })
   })
 }
+import { resolveApiBase } from '@/utils/network/apiBase'

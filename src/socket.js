@@ -1,4 +1,5 @@
 import { io } from 'socket.io-client'
+import { resolveApiBase } from '@/utils/network/apiBase'
 
 const TOKEN_KEY = 'echo_access_token'
 
@@ -8,10 +9,13 @@ let currentToken = null
 export function getSocket() {
   const token = localStorage.getItem(TOKEN_KEY) || localStorage.getItem('token')
   if (!socket) {
-    socket = io(import.meta.env.VITE_SOCKET_URL || 'http://127.0.0.1:3001', {
+    const raw = import.meta.env.VITE_SOCKET_URL
+    const url = raw ? resolveApiBase(raw) : resolveApiBase() // prefer LAN origin even if app is on localhost
+    socket = io(url, {
       withCredentials: true,
       auth: token ? { token } : {},
       transports: ['websocket'],
+      path: '/socket.io',
     })
     currentToken = token
   } else if (token !== currentToken) {
@@ -28,10 +32,13 @@ export function getSocket() {
 
 export function connectWithoutAuth() {
   if (!socket) {
-    socket = io(import.meta.env.VITE_SOCKET_URL || 'http://127.0.0.1:3001', {
+    const raw = import.meta.env.VITE_SOCKET_URL
+    const url = raw ? resolveApiBase(raw) : resolveApiBase()
+    socket = io(url, {
       withCredentials: true,
       auth: {},
       transports: ['websocket'],
+      path: '/socket.io',
     })
   } else {
     socket.auth = {}

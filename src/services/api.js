@@ -15,8 +15,15 @@
  *   await api.post('/auth/login', { username, password });
  */
 
-// e.g. "https://your-app.onrender.com/api/v1"  (no trailing slash)
-const BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1').replace(/\/$/, '')
+import { resolveApiBase } from '@/utils/network/apiBase'
+
+// If VITE_API_URL is provided, trust it as the full base (may already include /api/v1).
+// Otherwise use the app origin (Vite dev server on LAN) and proxy to backend at /api/v1.
+const BASE_URL = (() => {
+  const explicit = import.meta.env.VITE_API_URL && String(import.meta.env.VITE_API_URL).trim()
+  if (explicit) return explicit.replace(/\/$/, '')
+  return `${resolveApiBase()}/api/v1`
+})()
 
 // ─── Custom error ─────────────────────────────────────────────────────────────
 

@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://localhost:3001 ws://localhost:3001 https: wss:; ..."
+      "csp": "default-src 'self'; connect-src 'self' http: https: ws: wss:;"
     }
   },
   "bundle": {
