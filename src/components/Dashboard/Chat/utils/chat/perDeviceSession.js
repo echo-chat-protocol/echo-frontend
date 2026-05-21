@@ -103,6 +103,7 @@ async function getLinkedDeviceUsers(peerUserId) {
 export async function buildDmFanoutTargets(peerUserId) {
   const targets = await getLinkedDeviceUsers(peerUserId)
   return targets.map((target) => ({
+    ownerUserId: String(peerUserId),
     sessionTargetId: target.deliveryUserId,
     peerDeviceId: target.peerDeviceId,
     peerDeviceUserId: target.peerDeviceUserId,
@@ -149,6 +150,7 @@ export async function buildDmFanoutTargetsIncludingSiblings(ownUserId, peerUserI
       : String(device.deviceUserId || '')
     if (!deliveryUserId) continue
     out.push({
+      ownerUserId: String(ownUserId),
       sessionTargetId: deliveryUserId,
       peerDeviceId: device.deviceId,
       peerDeviceUserId: isPrimaryUserDevice ? null : deliveryUserId,
@@ -158,6 +160,45 @@ export async function buildDmFanoutTargetsIncludingSiblings(ownUserId, peerUserI
     })
   }
   return out
+}
+
+/**
+ * Attach OPK-consuming bundles to targets that need a fresh X3DH init.
+ * Call this only for targets missing a local DR root key; /devices/bundles
+ * consumes one OPK per device in the requested account.
+ *
+ * @param {Array} targets
+ * @returns {Promise<Array>}
+ */
+export async function attachBundlesToFanoutTargets(targets) {
+  if (!Array.isArray(targets) || targets.length === 0) return []
+
+  const owners = [...new Set(targets.map((target) => target.ownerUserId).filter(Boolean))]
+  const bundlesByOwnerAndDelivery = new Map()
+
+  for (const ownerUserId of owners) {
+    const bundles = await getTrustedPeerDeviceBundles(ownerUserId)
+    const byDelivery = new Map()
+    for (const bundle of bundles) {
+      const isPrimaryUserDevice =
+        bundle.isPrimary || String(bundle.deviceUserId) === String(ownerUserId)
+      const deliveryUserId = isPrimaryUserDevice
+        ? String(ownerUserId)
+        : String(bundle.deviceUserId || '')
+      if (deliveryUserId) byDelivery.set(deliveryUserId, bundle)
+    }
+    bundlesByOwnerAndDelivery.set(String(ownerUserId), byDelivery)
+  }
+
+  return targets.map((target) => ({
+    ...target,
+    bundle:
+      target.bundle ??
+      bundlesByOwnerAndDelivery
+        .get(String(target.ownerUserId || ''))
+        ?.get(String(target.deliveryUserId || target.sessionTargetId || '')) ??
+      null,
+  }))
 }
 
 /**

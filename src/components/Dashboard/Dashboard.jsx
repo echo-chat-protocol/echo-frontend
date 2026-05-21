@@ -723,6 +723,17 @@ const Dashboard = () => {
                   : null
               const cryptoPeerUserId = senderDeviceUserId || senderId
               const sessionTargetId = senderDeviceUserId || null
+              const decryptOptions = {
+                ...(sessionTargetId
+                  ? {
+                      sessionTargetId,
+                      peerUserId: cryptoPeerUserId,
+                    }
+                  : {}),
+                conversationKeyOverride: isSiblingFanout
+                  ? String(message.conversationUserId || message.targetUserId)
+                  : senderId,
+              }
               await decryptIncomingMessage(
                 message,
                 nonce,
@@ -731,15 +742,7 @@ const Dashboard = () => {
                 privateKeyArray,
                 sharedSocket,
                 null,
-                sessionTargetId
-                  ? {
-                      sessionTargetId,
-                      peerUserId: cryptoPeerUserId,
-                      conversationKeyOverride: isSiblingFanout
-                        ? String(message.conversationUserId || message.targetUserId)
-                        : senderId,
-                    }
-                  : {}
+                decryptOptions
               )
             }
           } catch (error) {

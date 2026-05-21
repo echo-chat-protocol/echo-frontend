@@ -17,12 +17,16 @@ import {
   updateMessageSeenStatus,
   storePeerIdentityKeys,
   getPeerIdentityKeys,
+  getRootKey,
 } from './utils/chat/keyManagement'
 
 import { encryptOutgoingMessage } from './utils/chat/messageEncryption'
 import { decryptIncomingMessage } from './utils/chat/messageDecryption'
 import { forwardMessageToDevices, requestSessionSync } from '../../../utils/deviceForward'
-import { buildDmFanoutTargetsIncludingSiblings } from './utils/chat/perDeviceSession'
+import {
+  attachBundlesToFanoutTargets,
+  buildDmFanoutTargetsIncludingSiblings,
+} from './utils/chat/perDeviceSession'
 
 function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
   const socket = getSocket()
@@ -207,6 +211,17 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
                   : null
               const cryptoPeerUserId = senderDeviceUserId || senderUserId
               const sessionTargetId = senderDeviceUserId || null
+              const decryptOptions = {
+                ...(sessionTargetId
+                  ? {
+                      sessionTargetId,
+                      peerUserId: cryptoPeerUserId,
+                    }
+                  : {}),
+                conversationKeyOverride: isSiblingFanout
+                  ? String(message.conversationUserId || targetUserId)
+                  : senderUserId,
+              }
 
               const decrypted = await decryptIncomingMessage(
                 message,
@@ -216,17 +231,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
                 resolvedPrivateKey,
                 socket,
                 setMessages,
-                sessionTargetId
-                  ? {
-                      sessionTargetId,
-                      peerUserId: cryptoPeerUserId,
-                      // For sibling-fanout the visual conversation belongs to
-                      // the peer conversation, not the sender (us).
-                      conversationKeyOverride: isSiblingFanout
-                        ? String(message.conversationUserId || targetUserId)
-                        : senderUserId,
-                    }
-                  : {}
+                decryptOptions
               )
               if (decrypted && !isSiblingFanout) {
                 forwardMessageToDevices({
@@ -322,11 +327,31 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
     // If the peer has not yet published any per-device bundle (legacy peer),
     // fall back to a single user-level send so existing conversations still
     // work end-to-end.
-    const fanoutTargets = await buildDmFanoutTargetsIncludingSiblings(
+    let fanoutTargets = await buildDmFanoutTargetsIncludingSiblings(
       userId,
       targetUserId,
       ownDeviceId
     ).catch(() => [])
+
+    const targetsNeedingBundle = []
+    for (const target of fanoutTargets) {
+      if (target.bundle) continue
+      const existingRoot = await getRootKey(userId, target.sessionTargetId)
+      if (!existingRoot) targetsNeedingBundle.push(target)
+    }
+    if (targetsNeedingBundle.length > 0) {
+      const hydratedTargets = await attachBundlesToFanoutTargets(targetsNeedingBundle)
+      const hydratedByDelivery = new Map(
+        hydratedTargets.map((target) => [
+          `${target.ownerUserId || ''}:${target.deliveryUserId || target.sessionTargetId || ''}`,
+          target,
+        ])
+      )
+      fanoutTargets = fanoutTargets.map((target) => {
+        const key = `${target.ownerUserId || ''}:${target.deliveryUserId || target.sessionTargetId || ''}`
+        return hydratedByDelivery.get(key) ?? target
+      })
+    }
 
     const messageId = crypto.randomUUID()
     const createdAt = new Date().toISOString()
