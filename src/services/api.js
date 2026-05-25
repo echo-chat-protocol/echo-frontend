@@ -15,8 +15,15 @@
  *   await api.post('/auth/login', { username, password });
  */
 
-// e.g. "https://your-app.onrender.com/api/v1"  (no trailing slash)
-const BASE_URL = (import.meta.env.VITE_API_URL || '/api/v1').replace(/\/$/, '')
+import { resolveApiBase } from '@/utils/network/apiBase'
+
+// If VITE_API_URL is provided, trust it as the full base (may already include /api/v1).
+// Otherwise use the app origin (Vite dev server on LAN) and proxy to backend at /api/v1.
+const BASE_URL = (() => {
+  const explicit = import.meta.env.VITE_API_URL && String(import.meta.env.VITE_API_URL).trim()
+  if (explicit) return explicit.replace(/\/$/, '')
+  return `${resolveApiBase()}/api/v1`
+})()
 
 // ─── Custom error ─────────────────────────────────────────────────────────────
 
@@ -71,7 +78,8 @@ async function doRefresh() {
   const res = await fetch(`${BASE_URL}/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token: refreshToken }),
+    // Backend expects camelCase `refreshToken`. Accepts only that.
+    body: JSON.stringify({ refreshToken }),
   })
 
   if (!res.ok) {
@@ -79,9 +87,13 @@ async function doRefresh() {
     throw new ApiError('Session expired', 401)
   }
 
-  const { access_token, refresh_token } = await res.json()
-  tokenStorage.setTokenPair(access_token, refresh_token ?? refreshToken)
-  return access_token
+  // Accept both legacy snake_case and current camelCase field names.
+  const body = await res.json()
+  const access = body.access_token || body.token
+  const refresh = body.refresh_token || body.refreshToken
+  if (!access) throw new ApiError('Malformed refresh response', 500, body)
+  tokenStorage.setTokenPair(access, refresh ?? refreshToken)
+  return access
 }
 
 /**
