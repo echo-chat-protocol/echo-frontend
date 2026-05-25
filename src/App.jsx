@@ -6,6 +6,7 @@ import {
   useParams,
   Navigate,
   useLocation,
+  useNavigate,
 } from 'react-router-dom'
 import { useTauri } from '@/hooks/useTauri'
 import './App.css'
@@ -17,7 +18,7 @@ import PrivateRoute from './components/auth/PrivateRoute' // NOT lazy — used a
 // ─── App / protected pages (lazy) ──────────────────────────────────────────────
 const Dashboard = lazy(() => import('./components/Dashboard/Dashboard'))
 const Chat = lazy(() => import('./components/Dashboard/Chat/Chat'))
-const UserProfile = lazy(() => import('./components/Dashboard/UserProfile'))
+const UserProfile = lazy(() => import('./components/Dashboard/UserProfileModal'))
 const Pricing = lazy(() => import('./features/landing/Pricing'))
 const VideoCall = lazy(() => import('./components/VideoCall/VideoCall'))
 
@@ -55,11 +56,12 @@ function TauriGate() {
 function UserProfileRoute() {
   const { userId } = useParams()
   const location = useLocation()
+  const navigate = useNavigate()
   const user = location.state?.user || { id: userId }
 
   if (!user) return <Navigate to='/login' replace />
 
-  return <UserProfile user={user} onChangePassword={() => alert('Change password clicked!')} />
+  return <UserProfile user={user} open onClose={() => navigate(-1)} />
 }
 
 function App() {

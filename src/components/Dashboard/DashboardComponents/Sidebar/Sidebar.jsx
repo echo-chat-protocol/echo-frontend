@@ -49,6 +49,7 @@ export default function Sidebar({
   onOpenDeviceSync,
   onLogout,
   unreadMessages = {},
+  onNewChat,
 }) {
   const totalUnread = Object.values(unreadMessages).reduce((a, b) => a + b, 0)
 
@@ -78,6 +79,7 @@ export default function Sidebar({
       <div className='px-3.5'>
         <button
           data-testid='sidebar-compose-btn'
+          onClick={onNewChat}
           className='echo-cta group inline-flex w-full items-center justify-center gap-2 rounded-full px-3.5 py-2.5 text-[12.5px] font-medium'
         >
           <Plus size={15} strokeWidth={2.4} />
@@ -233,4 +235,5 @@ Sidebar.propTypes = {
   onOpenDeviceSync: PropTypes.func.isRequired,
   onLogout: PropTypes.func.isRequired,
   unreadMessages: PropTypes.object,
+  onNewChat: PropTypes.func,
 }

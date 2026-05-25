@@ -835,3 +835,18 @@ code,
   letter-spacing: -0.035em;
   line-height: 1.02;
 }
+
+/* Monospace shorthand */
+.mono {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+}
+
+/* Chat wallpaper layer */
+.echo-wallpaper {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(168, 85, 247, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+  z-index: 0;
+}
