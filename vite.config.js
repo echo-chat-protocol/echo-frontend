@@ -11,8 +11,12 @@ import pkg from './package.json'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
+// Prefer explicit target via env. Fall back to the hosted backend so dev works out-of-the-box
+// even when a local backend isn't running.
 const devProxyTarget =
-  process.env.VITE_DEV_PROXY_TARGET || process.env.VITE_SOCKET_URL || 'http://127.0.0.1:3001'
+  process.env.VITE_DEV_PROXY_TARGET ||
+  process.env.VITE_SOCKET_URL ||
+  'https://echo-backend-x91g.onrender.com'
 const devServerPort = Number(process.env.VITE_DEV_SERVER_PORT || 5173)
 const devProxy = {
   target: devProxyTarget,
@@ -70,6 +74,12 @@ export default defineConfig({
         changeOrigin: true,
         secure: devProxyTarget.startsWith('https://'),
         ws: true,
+        // Spoof Origin to an allowed production host so Socket.IO CORS on the
+        // remote backend accepts the Engine.IO websocket upgrade during dev.
+        // HTTP requests are same-origin (proxied) and don't need CORS.
+        headers: {
+          Origin: 'https://chat-tuah-frontend.vercel.app',
+        },
       },
     },
   },

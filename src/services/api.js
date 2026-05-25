@@ -78,7 +78,8 @@ async function doRefresh() {
   const res = await fetch(`${BASE_URL}/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token: refreshToken }),
+    // Backend expects camelCase `refreshToken`. Accepts only that.
+    body: JSON.stringify({ refreshToken }),
   })
 
   if (!res.ok) {
@@ -86,9 +87,13 @@ async function doRefresh() {
     throw new ApiError('Session expired', 401)
   }
 
-  const { access_token, refresh_token } = await res.json()
-  tokenStorage.setTokenPair(access_token, refresh_token ?? refreshToken)
-  return access_token
+  // Accept both legacy snake_case and current camelCase field names.
+  const body = await res.json()
+  const access = body.access_token || body.token
+  const refresh = body.refresh_token || body.refreshToken
+  if (!access) throw new ApiError('Malformed refresh response', 500, body)
+  tokenStorage.setTokenPair(access, refresh ?? refreshToken)
+  return access
 }
 
 /**

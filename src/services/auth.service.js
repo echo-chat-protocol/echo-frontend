@@ -41,11 +41,14 @@ const AuthService = {
    * @returns {Promise<{ access_token: string, refresh_token: string }>}
    */
   async refresh(refreshToken) {
-    const res = await api.post('/auth/refresh', { refresh_token: refreshToken })
-    if (res?.access_token) {
-      tokenStorage.setTokenPair(res.access_token, res.refresh_token ?? refreshToken)
+    const res = await api.post('/auth/refresh', { refreshToken })
+    // Support both response shapes
+    const access = res?.access_token || res?.token
+    const refresh = res?.refresh_token || res?.refreshToken
+    if (access) {
+      tokenStorage.setTokenPair(access, refresh ?? refreshToken)
     }
-    return res
+    return { access_token: access, refresh_token: refresh }
   },
 
   /**
@@ -57,7 +60,7 @@ const AuthService = {
   async logout() {
     const refreshToken = tokenStorage.getRefresh()
     try {
-      await api.post('/auth/logout', { refresh_token: refreshToken })
+      await api.post('/auth/logout', { refreshToken })
     } finally {
       tokenStorage.clear()
     }
