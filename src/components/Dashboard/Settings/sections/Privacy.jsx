@@ -1,7 +1,8 @@
 export default function Privacy() {
   return (
-    <div data-testid='settings-section-privacy' className='text-white/60 text-sm'>
-      Privacy settings will go here.
+    <div>
+      <h2 className='text-lg font-semibold'>Privacy</h2>
+      <p className='text-sm text-white/60'>Control your privacy settings.</p>
     </div>
   )
 }

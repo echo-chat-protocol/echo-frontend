@@ -1,7 +1,8 @@
 export default function Language() {
   return (
-    <div data-testid='settings-section-language' className='text-white/60 text-sm'>
-      Language settings will go here.
+    <div>
+      <h2 className='text-lg font-semibold'>Language</h2>
+      <p className='text-sm text-white/60'>Choose your preferred language.</p>
     </div>
   )
 }

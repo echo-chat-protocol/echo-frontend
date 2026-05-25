@@ -1,7 +1,8 @@
 export default function Appearance() {
   return (
-    <div data-testid='settings-section-appearance' className='text-white/60 text-sm'>
-      Appearance settings will go here.
+    <div>
+      <h2 className='text-lg font-semibold'>Appearance</h2>
+      <p className='text-sm text-white/60'>Theme, density and accent settings.</p>
     </div>
   )
 }

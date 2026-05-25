@@ -1,7 +1,8 @@
 export default function Notifications() {
   return (
-    <div data-testid='settings-section-notifications' className='text-white/60 text-sm'>
-      Notification settings will go here.
+    <div>
+      <h2 className='text-lg font-semibold'>Notifications</h2>
+      <p className='text-sm text-white/60'>Manage notification preferences.</p>
     </div>
   )
 }

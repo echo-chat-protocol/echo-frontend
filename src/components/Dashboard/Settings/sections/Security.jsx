@@ -1,7 +1,8 @@
 export default function Security() {
   return (
-    <div data-testid='settings-section-security' className='text-white/60 text-sm'>
-      Security settings will go here.
+    <div>
+      <h2 className='text-lg font-semibold'>Security</h2>
+      <p className='text-sm text-white/60'>Security and encryption options.</p>
     </div>
   )
 }

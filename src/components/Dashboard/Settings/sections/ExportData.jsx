@@ -1,7 +1,8 @@
 export default function ExportData() {
   return (
-    <div data-testid='settings-section-export' className='text-white/60 text-sm'>
-      Export data settings will go here.
+    <div>
+      <h2 className='text-lg font-semibold'>Export Data</h2>
+      <p className='text-sm text-white/60'>Download your ECHO data.</p>
     </div>
   )
 }
