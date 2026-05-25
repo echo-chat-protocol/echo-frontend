@@ -10,7 +10,7 @@ function State({ s }) {
   if (s === 'sending') return <Loader2 size={11} className='animate-spin-slow text-white/45' />
   if (s === 'sent') return <Check size={12} className='text-white/45' />
   if (s === 'delivered') return <CheckCheck size={12} className='text-white/45' />
-  if (s === 'read') return <CheckCheck size={12} className='text-violet-300' />
+  if (s === 'read') return <CheckCheck size={13} strokeWidth={2.4} className='text-sky-400' />
   return null
 }
 

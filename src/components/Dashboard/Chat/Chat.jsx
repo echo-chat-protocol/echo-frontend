@@ -198,8 +198,14 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
     socket.on('stopTyping', handleStopTyping)
 
     const initChat = async () => {
+      // Inform server of our last accepted message number for this peer
       await fetchLatestMessageNumber(socket, targetUserId)
+      // Join/mark this conversation as active on the server
       socket.emit('ready', { targetUserId })
+      // Proactively send a read receipt when opening the chat so existing
+      // unread messages are marked as read without waiting for a new inbound
+      // message. The server will broadcast a corresponding update to the peer.
+      socket.emit('messageSeen', { targetUserId })
     }
     initChat()
 

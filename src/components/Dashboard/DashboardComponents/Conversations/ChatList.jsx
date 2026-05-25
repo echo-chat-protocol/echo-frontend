@@ -8,8 +8,7 @@ const TABS = [
 ]
 
 function DeliveryIcon({ state }) {
-  if (state === 'read')
-    return <CheckCheck size={13} className='text-violet-300' strokeWidth={2.2} />
+  if (state === 'read') return <CheckCheck size={13} className='text-sky-400' strokeWidth={2.4} />
   if (state === 'delivered')
     return <CheckCheck size={13} className='text-white/35' strokeWidth={2.2} />
   if (state === 'sent') return <Check size={13} className='text-white/35' strokeWidth={2.2} />

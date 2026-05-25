@@ -641,18 +641,30 @@ const Dashboard = () => {
   useEffect(() => {
     const handleStorageUpdate = (event) => {
       const targetId = String(event?.detail?.targetUserId ?? '')
-      if (!targetId.startsWith(GROUP_CACHE_PREFIX)) return
+      const latestText = event?.detail?.latestMessage ?? ''
+      const ts = event?.detail?.timestamp || new Date().toISOString()
 
-      const gid = targetId.slice(GROUP_CACHE_PREFIX.length)
-      if (!gid) return
+      // Group conversation preview update
+      if (targetId.startsWith(GROUP_CACHE_PREFIX)) {
+        const gid = targetId.slice(GROUP_CACHE_PREFIX.length)
+        if (!gid) return
+        upsertGroupRef.current?.(
+          { groupId: gid },
+          {
+            text: latestText,
+            timestamp: ts,
+          }
+        )
+        return
+      }
 
-      upsertGroupRef.current?.(
-        { groupId: gid },
-        {
-          text: event?.detail?.latestMessage ?? '',
-          timestamp: event?.detail?.timestamp || new Date().toISOString(),
-        }
-      )
+      // Direct conversation preview update
+      const existing = recentConversationsRef.current.find((c) => String(c.id) === String(targetId))
+      const friend = existing || {
+        id: targetId,
+        username: existing?.username || `User ${targetId}`,
+      }
+      updateRecentConversationsRef.current?.(friend, { text: latestText, timestamp: ts })
     }
 
     window.addEventListener('localStorageUpdated', handleStorageUpdate)
