@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   X,
   Camera,
@@ -12,9 +12,15 @@ import {
   Globe,
 } from 'lucide-react'
 
-export default function UserProfileModal({ user, open, onClose }) {
-  const [name, setName] = useState(user.name)
-  const [about, setAbout] = useState(user.about)
+export default function UserProfileModal({ user = {}, open, onClose = () => {} }) {
+  const [name, setName] = useState(user.name || user.username || '')
+  const [about, setAbout] = useState(user.about || '')
+
+  useEffect(() => {
+    if (!open) return
+    setName(user.name || user.username || '')
+    setAbout(user.about || '')
+  }, [open, user.name, user.username, user.about])
 
   if (!open) return null
   return (
@@ -45,8 +51,8 @@ export default function UserProfileModal({ user, open, onClose }) {
           <div className='-mt-12 flex items-end gap-4'>
             <div className='relative'>
               <img
-                src={user.avatar}
-                alt={user.name}
+                src={user.avatar || user.profileImage}
+                alt={user.name || user.username || 'Profile'}
                 className='h-24 w-24 rounded-2xl object-cover ring-2 ring-[#0a0a0e]'
               />
               <button className='absolute -bottom-1 -right-1 grid h-7 w-7 place-items-center rounded-lg echo-violet-gradient echo-violet-glow'>
@@ -55,7 +61,9 @@ export default function UserProfileModal({ user, open, onClose }) {
             </div>
             <div className='pb-2'>
               <h2 className='text-[18px] font-semibold tracking-[-0.02em]'>My profile</h2>
-              <p className='text-[11.5px] text-white/40 mono'>{user.fingerprint?.slice(0, 19)}…</p>
+              <p className='text-[11.5px] text-white/40 mono'>
+                {user.fingerprint?.slice(0, 19) || 'No fingerprint'}…
+              </p>
             </div>
           </div>
 
@@ -96,7 +104,7 @@ export default function UserProfileModal({ user, open, onClose }) {
               </span>
             </div>
             <div className='grid grid-cols-4 gap-1.5'>
-              {user.fingerprint.split(' ').map((g, i) => (
+              {(user.fingerprint?.split(' ') || Array(8).fill('????')).map((g, i) => (
                 <div
                   key={i}
                   className='rounded-md border border-white/[0.06] bg-black/40 py-1.5 text-center text-[11px] mono text-violet-200/90 tracking-widest'

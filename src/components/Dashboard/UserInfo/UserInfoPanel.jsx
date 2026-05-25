@@ -30,19 +30,27 @@ export default function UserInfoPanel({ contact, onClose }) {
   // Fetch full profile from server
   useEffect(() => {
     if (!contact?.id) return
+    let cancelled = false
+    setProfile(null)
     const socket = getSocket()
     socket.emit('getUserInfo', { userId: contact.id }, (res) => {
-      if (res?.success && res?.user) {
+      if (!cancelled && res?.success && res?.user) {
         setProfile(res.user)
       }
     })
+    return () => {
+      cancelled = true
+    }
   }, [contact?.id])
 
   // Load peer identity keys for fingerprint display
   useEffect(() => {
     if (!contact?.id) return
+    let cancelled = false
+    setFingerprint(null)
     getPeerIdentityKeys(String(contact.id))
       .then((keys) => {
+        if (cancelled) return
         if (keys?.publicKeyX25519) {
           // Build a readable hex fingerprint from the base64 key
           try {
@@ -54,11 +62,15 @@ export default function UserInfoPanel({ contact, onClose }) {
             const chunks = hex.match(/.{1,4}/g) || []
             setFingerprint(chunks.join(' '))
           } catch {
+            if (cancelled) return
             setFingerprint(keys.publicKeyX25519.slice(0, 40) + '…')
           }
         }
       })
       .catch(() => {})
+    return () => {
+      cancelled = true
+    }
   }, [contact?.id])
 
   if (!contact) return null

@@ -16,7 +16,7 @@ const TABS = [
  * FriendsView (Friends.jsx) — premium contact list.
  * Keeps real socket-based search, adds tabbed contacts grid.
  */
-const Friends = ({ token, onActiveChatChange, searchTerm, onAddContact }) => {
+const Friends = ({ token, onActiveChatChange, onAddContact }) => {
   const [tab, setTab] = useState('all')
   const [q, setQ] = useState('')
   const [chatList, setSearchList] = useState([])
@@ -29,11 +29,15 @@ const Friends = ({ token, onActiveChatChange, searchTerm, onAddContact }) => {
 
     // Track online status
     socket.emit('getOnlineUsers', ({ onlineUsers: list }) => {
-      setOnlineUsers(list || [])
+      setOnlineUsers((list || []).map((id) => String(id)))
     })
     const onOnline = ({ userId }) =>
-      setOnlineUsers((prev) => (prev.includes(userId) ? prev : [...prev, userId]))
-    const onOffline = ({ userId }) => setOnlineUsers((prev) => prev.filter((id) => id !== userId))
+      setOnlineUsers((prev) => {
+        const normalizedId = String(userId)
+        return prev.includes(normalizedId) ? prev : [...prev, normalizedId]
+      })
+    const onOffline = ({ userId }) =>
+      setOnlineUsers((prev) => prev.filter((id) => id !== String(userId)))
 
     socket.on('userOnline', onOnline)
     socket.on('userOffline', onOffline)
@@ -44,55 +48,57 @@ const Friends = ({ token, onActiveChatChange, searchTerm, onAddContact }) => {
     }
   }, [token])
 
-  const handleSearch = useCallback(() => {
-    const user = token ? jwtDecode(token) : ''
-    if (!searchTerm || searchTerm === user.username) return
-
-    const socket = getSocket()
-    if (!socket?.connected) return
-
-    socket.emit('searchUser', { searchTerm }, (response) => {
-      if (response?.user) {
-        const basicUser = response.user
-        socket.emit('getUserInfo', { userId: basicUser.id }, (profileResponse) => {
-          let profilePicture = basicUser.profileImage
-          if (profileResponse?.success && profileResponse?.user) {
-            profilePicture = profileResponse.user.profilePicture
-          }
-          const formattedProfileImage = formatProfileImage(profilePicture, basicUser.username)
-          const targetUser = { ...basicUser, profileImage: formattedProfileImage }
-          setSearchList((prev) => {
-            const exists = prev.some((u) => u.id === targetUser.id)
-            return exists ? prev : [...prev, targetUser]
-          })
-        })
+  const handleSearch = useCallback(
+    (term) => {
+      const searchQuery = (term ?? q).trim()
+      const user = token ? jwtDecode(token) : ''
+      if (!searchQuery || searchQuery === user.username) {
+        setSearchList([])
+        return
       }
-    })
-  }, [searchTerm, token])
+
+      const socket = getSocket()
+      if (!socket?.connected) return
+
+      socket.emit('searchUser', { searchTerm: searchQuery }, (response) => {
+        if (response?.user) {
+          const basicUser = response.user
+          socket.emit('getUserInfo', { userId: basicUser.id }, (profileResponse) => {
+            let profilePicture = basicUser.profileImage
+            if (profileResponse?.success && profileResponse?.user) {
+              profilePicture = profileResponse.user.profilePicture
+            }
+            const formattedProfileImage = formatProfileImage(profilePicture, basicUser.username)
+            const targetUser = { ...basicUser, profileImage: formattedProfileImage }
+            setSearchList([targetUser])
+          })
+        } else {
+          setSearchList([])
+        }
+      })
+    },
+    [q, token]
+  )
 
   useEffect(() => {
-    if (searchTerm?.trim()) {
-      handleSearch()
+    if (q?.trim()) {
+      handleSearch(q)
     } else {
       setSearchList([])
     }
-  }, [searchTerm, handleSearch])
+  }, [q, handleSearch])
 
   // Filter by tab
   const displayList = useMemo(() => {
     let list = chatList.map((u) => ({
       ...u,
-      status: onlineUsers.includes(u.id) ? 'online' : 'offline',
+      status: onlineUsers.includes(String(u.id)) ? 'online' : 'offline',
     }))
     if (tab === 'online') list = list.filter((u) => u.status === 'online')
-    if (q.trim()) {
-      const s = q.toLowerCase()
-      list = list.filter((u) => u.username?.toLowerCase().includes(s))
-    }
     return list
-  }, [chatList, tab, q, onlineUsers])
+  }, [chatList, tab, onlineUsers])
 
-  const onlineCount = chatList.filter((u) => onlineUsers.includes(u.id)).length
+  const onlineCount = chatList.filter((u) => onlineUsers.includes(String(u.id))).length
 
   return (
     <div className='relative flex h-full flex-1 flex-col overflow-hidden'>
@@ -172,10 +178,10 @@ const Friends = ({ token, onActiveChatChange, searchTerm, onAddContact }) => {
           <EmptyState title='Nothing blocked' sub="You haven't blocked anyone." />
         ) : displayList.length === 0 ? (
           <EmptyState
-            title={searchTerm ? 'No results' : 'Search for someone'}
+            title={q ? 'No results' : 'Search for someone'}
             sub={
-              searchTerm
-                ? `No contacts match "${searchTerm}"`
+              q
+                ? `No contacts match "${q}"`
                 : 'Use the search bar above to find contacts and start chatting.'
             }
           />
@@ -270,7 +276,6 @@ function SmallIcon({ children, onClick }) {
 Friends.propTypes = {
   token: PropTypes.string.isRequired,
   onActiveChatChange: PropTypes.func.isRequired,
-  searchTerm: PropTypes.string,
   onAddContact: PropTypes.func,
 }
 

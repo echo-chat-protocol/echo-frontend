@@ -36,12 +36,16 @@ const ChatHeader = ({ userId, activeChat, token, onOpenInfo, onCompareNumbers })
     const socket = getSocket()
 
     socket.emit('getOnlineUsers', ({ onlineUsers }) => {
-      setOnlineUsers(onlineUsers || [])
+      setOnlineUsers((onlineUsers || []).map((id) => String(id)))
     })
 
     const onOnline = ({ userId: uid }) =>
-      setOnlineUsers((prev) => (prev.includes(uid) ? prev : [...prev, uid]))
-    const onOffline = ({ userId: uid }) => setOnlineUsers((prev) => prev.filter((id) => id !== uid))
+      setOnlineUsers((prev) => {
+        const normalizedId = String(uid)
+        return prev.includes(normalizedId) ? prev : [...prev, normalizedId]
+      })
+    const onOffline = ({ userId: uid }) =>
+      setOnlineUsers((prev) => prev.filter((id) => id !== String(uid)))
 
     socket.on('userOnline', onOnline)
     socket.on('userOffline', onOffline)
@@ -85,7 +89,7 @@ const ChatHeader = ({ userId, activeChat, token, onOpenInfo, onCompareNumbers })
 
   if (!activeChat) return null
 
-  const isOnline = onlineUsers.includes(activeChat.id)
+  const isOnline = onlineUsers.includes(String(activeChat.id))
 
   // Normalise field names — existing code uses .username/.profileImage
   const chat = {

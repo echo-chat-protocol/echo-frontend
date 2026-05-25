@@ -53,8 +53,6 @@ const Dashboard = () => {
 
   // Estados
   const [activeChat, setActiveChat] = useState(null)
-  // eslint-disable-next-line no-unused-vars
-  const [searchTerm, setSearchTerm] = useState('')
   const [activeView, setActiveView] = useState(() => {
     return localStorage.getItem('dashboardView') || 'chats'
   })
@@ -1016,7 +1014,6 @@ const Dashboard = () => {
               <Friends
                 token={token}
                 onActiveChatChange={handleActiveChatChange}
-                searchTerm={searchTerm}
                 onAddContact={() => setNewChatOpen(true)}
               />
             </div>

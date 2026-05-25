@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PropTypes from 'prop-types'
 import { X, Camera, Search, UsersRound, Check, Lock } from 'lucide-react'
 import { getSocket } from '../../../socket'
@@ -32,6 +32,20 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
     return socketRef.current
   }, [])
 
+  useEffect(() => {
+    if (open && debounceRef.current) {
+      clearTimeout(debounceRef.current)
+      debounceRef.current = null
+    }
+
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current)
+        debounceRef.current = null
+      }
+    }
+  }, [open])
+
   const isSelected = (id) => selected.has(String(id))
 
   const toggle = (user) => {
@@ -50,6 +64,7 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
 
   const handleSearch = useCallback(
     (term) => {
+      if (!open) return
       const t = (term ?? searchTerm).trim()
       if (!t) {
         setResults([])
@@ -76,7 +91,7 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
         })
       })
     },
-    [searchTerm, socket]
+    [searchTerm, socket, open]
   )
 
   const handleSearchTermChange = (val) => {
@@ -97,6 +112,7 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
     const memberIds = selectedUsers.map((u) => u.id).filter(Boolean)
     const mlsEnabled = true
     const cipherSuite = 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256'
+    const description = desc.trim()
 
     const emitWithAck = (event, payload) =>
       new Promise((resolve, reject) => {
@@ -139,7 +155,7 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
 
     socket.emit(
       'createGroup',
-      { name: groupName, memberIds, mlsEnabled, cipherSuite },
+      { name: groupName, desc: description || undefined, memberIds, mlsEnabled, cipherSuite },
       async (ack) => {
         setLoading(false)
         if (!ack?.success) return

@@ -6,6 +6,7 @@ import {
   useParams,
   Navigate,
   useLocation,
+  useNavigate,
 } from 'react-router-dom'
 import './App.css'
 import ErrorBoundary from './components/common/ErrorBoundary'
@@ -46,11 +47,12 @@ const LicensesPage = lazy(() => import('@/pages/public/LicensesPage'))
 function UserProfileRoute() {
   const { userId } = useParams()
   const location = useLocation()
+  const navigate = useNavigate()
   const user = location.state?.user || { id: userId }
 
   if (!user) return <Navigate to='/login' replace />
 
-  return <UserProfile user={user} onChangePassword={() => alert('Change password clicked!')} />
+  return <UserProfile user={user} open onClose={() => navigate(-1)} />
 }
 
 function App() {
