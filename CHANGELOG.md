@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.0.10](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.9...v0.0.10) (2026-05-25)
+
+
+### Bug Fixes
+
+* change database version ([4bd2489](https://github.com/echo-chat-protocol/echo-frontend/commit/4bd24899ea21844e4a0b7d2e08d68dcbb5b17e55))
+
 ## [0.0.9](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.8...v0.0.9) (2026-05-20)
 
 
