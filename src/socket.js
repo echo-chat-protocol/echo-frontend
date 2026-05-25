@@ -1,62 +1,35 @@
-import { io } from 'socket.io-client'
-import { resolveApiBase } from '@/utils/network/apiBase'
+// Single-source socket service wrapper that reuses the implementation in
+// services/socket.js, so the entire app shares ONE Socket.IO instance.
+// This eliminates subtle bugs where different modules created separate sockets
+// with different auth states.
 
-const TOKEN_KEY = 'echo_access_token'
-
-let socket = null
-let currentToken = null
+import {
+  getSocket as coreGetSocket,
+  connectSocket as coreConnectSocket,
+  disconnectSocket as coreDisconnectSocket,
+} from './services/socket'
 
 export function getSocket() {
-  const token = localStorage.getItem(TOKEN_KEY) || localStorage.getItem('token')
-  if (!socket) {
-    const raw = import.meta.env.VITE_SOCKET_URL
-    const url = raw ? resolveApiBase(raw) : resolveApiBase() // prefer LAN origin even if app is on localhost
-    socket = io(url, {
-      withCredentials: true,
-      auth: token ? { token } : {},
-      transports: ['websocket'],
-      path: '/socket.io',
-    })
-    currentToken = token
-  } else if (token !== currentToken) {
-    socket.auth = token ? { token } : {}
-    currentToken = token
-    socket.disconnect()
-    socket.connect()
-  }
-  if (!socket.connected) {
-    socket.connect()
-  }
-  return socket
+  // Delegates to the core service (single instance)
+  return coreGetSocket()
 }
 
-export function connectWithoutAuth() {
-  if (!socket) {
-    const raw = import.meta.env.VITE_SOCKET_URL
-    const url = raw ? resolveApiBase(raw) : resolveApiBase()
-    socket = io(url, {
-      withCredentials: true,
-      auth: {},
-      transports: ['websocket'],
-      path: '/socket.io',
-    })
-  } else {
-    socket.auth = {}
-    // Disconnect unconditionally — catches both connected and mid-connect states
-    // so the next connect() starts from a clean socket state.
-    socket.disconnect()
-  }
-  currentToken = null
-  socket.connect()
-  return socket
+export function connectSocket() {
+  return coreConnectSocket()
 }
 
 export function disconnectSocket() {
-  if (socket) {
-    socket.disconnect()
-    socket = null
-    currentToken = null
-  }
+  return coreDisconnectSocket()
+}
+
+// Used by the debug user flow to open a temporary unauthenticated socket
+// against the same underlying instance.
+export function connectWithoutAuth() {
+  const s = coreGetSocket()
+  s.auth = {}
+  s.disconnect()
+  s.connect()
+  return s
 }
 
 export default getSocket

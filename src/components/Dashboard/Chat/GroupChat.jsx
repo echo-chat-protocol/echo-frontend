@@ -771,9 +771,12 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
   const sendDisabled = groupMeta.mlsEnabled && !groupCryptoState?.groupKeyB64
 
   return (
-    <div className='app-container h-full flex flex-col'>
-      <div className='chat-container flex-1 flex flex-col relative overflow-y-auto'>
-        <div className='messages-container flex-1 relative' data-wallpaper={currentWallpaper}>
+    <div className='app-container h-full min-w-0 flex flex-col'>
+      <div className='chat-container flex-1 min-w-0 flex flex-col relative overflow-y-auto'>
+        <div
+          className='messages-container flex-1 relative overflow-x-hidden'
+          data-wallpaper={currentWallpaper}
+        >
           <div className='relative z-10 h-full flex flex-col'>
             <DisplayText messages={messages} currentUserId={String(userId)} />
             <div ref={messagesEndRef} />

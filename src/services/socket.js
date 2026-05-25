@@ -52,8 +52,25 @@ export function getSocket() {
 export function connectSocket() {
   const token = localStorage.getItem('echo_access_token')
   const s = getSocket()
+  const prevToken = s?.auth?.token || null
+  // Always set latest auth payload
   s.auth = token ? { token } : {}
+
+  // If not connected, connect now
   if (!s.connected) {
+    s.connect()
+    return
+  }
+
+  // If already connected but auth token changed (or was missing), re-auth by reconnecting
+  const changed = String(prevToken || '') !== String(token || '')
+  const hadNoAuth = !prevToken && !!token
+  if (changed || hadNoAuth) {
+    try {
+      s.disconnect()
+    } catch {
+      /* ignore */
+    }
     s.connect()
   }
 }

@@ -530,6 +530,9 @@ code,
     0 12px 36px -14px rgba(168, 85, 247, 0.55),
     0 0 0 1px rgba(168, 85, 247, 0.08);
   color: #fff;
+  /* Allow very long words/URLs to wrap on small screens */
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* Bubble: received */
@@ -538,6 +541,9 @@ code,
   border: 1px solid rgba(255, 255, 255, 0.06);
   color: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(8px);
+  /* Allow very long words/URLs to wrap on small screens */
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* Pill nav like landing */

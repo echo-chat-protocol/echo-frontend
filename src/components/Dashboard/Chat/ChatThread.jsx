@@ -26,7 +26,9 @@ function Bubble({ msg, isSelf, contact }) {
   )
 
   return (
-    <div className={`flex gap-2.5 ${isSelf ? 'justify-end' : 'justify-start'} animate-fade-up`}>
+    <div
+      className={`flex min-w-0 gap-2.5 ${isSelf ? 'justify-end' : 'justify-start'} animate-fade-up`}
+    >
       {!isSelf && (
         <div className='mt-auto shrink-0'>
           {contact?.avatar ? (
@@ -42,18 +44,20 @@ function Bubble({ msg, isSelf, contact }) {
           )}
         </div>
       )}
-      <div className={`max-w-[70%] ${isSelf ? 'items-end' : 'items-start'} flex flex-col gap-1`}>
+      <div
+        className={`max-w-[70%] min-w-0 ${isSelf ? 'items-end' : 'items-start'} flex flex-col gap-1`}
+      >
         {/* Image attachment */}
         {msg.image ? (
           <div
             className={`group relative overflow-hidden rounded-2xl border ${
               isSelf ? 'border-violet-500/30' : 'border-white/[0.07]'
-            } bg-black/40`}
+            } bg-black/40 w-full`}
           >
             <img
               src={msg.image}
               alt='Shared image'
-              className='block max-h-52 max-w-xs object-cover cursor-pointer'
+              className='block max-h-52 w-full h-auto object-cover cursor-pointer'
               onClick={() => window.open(msg.image, '_blank')}
             />
             <button className='absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/60 backdrop-blur opacity-0 transition group-hover:opacity-100 hover:bg-violet-500/40'>
@@ -72,9 +76,10 @@ function Bubble({ msg, isSelf, contact }) {
         ) : (
           /* Text bubble */
           <div
-            className={`relative whitespace-pre-line rounded-2xl px-3.5 py-2.5 text-[13.5px] leading-snug ${
+            className={`relative whitespace-pre-line break-words rounded-2xl px-3.5 py-2.5 text-[13.5px] leading-snug ${
               isSelf ? 'bubble-sent rounded-br-md' : 'bubble-received rounded-bl-md'
             }`}
+            style={{ overflowWrap: 'anywhere' }}
           >
             {msg.text}
             <div className='-mb-1 mt-1 flex justify-end'>{time}</div>

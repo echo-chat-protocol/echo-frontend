@@ -154,7 +154,11 @@ const ChatHeader = ({ userId, activeChat, token, onOpenInfo, onCompareNumbers })
 
       {/* Action icons */}
       <div className='flex items-center gap-1'>
-        <IconBtn label='Voice call' testid='chat-header-voice'>
+        <IconBtn
+          label='Voice call'
+          testid='chat-header-voice'
+          onClick={() => navigate(`/video-call/${activeChat.id}?type=audio`)}
+        >
           <Phone size={15} />
         </IconBtn>
         <IconBtn

@@ -25,7 +25,7 @@ import {
   formatProfileImage,
 } from './DashboardComponents/utils/helpers'
 import { WALLPAPER_PREVIEWS } from './DashboardComponents/utils/wallpaper'
-import { getSocket } from '../../socket'
+import { getSocket, connectSocket } from '../../socket'
 import IncomingCallNotification from '../VideoCall/IncomingCallNotification'
 import {
   getIdentityKeys,
@@ -100,6 +100,8 @@ const Dashboard = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     return localStorage.getItem('sidebarCollapsed') === 'true'
   })
+  // When navigating to Settings, this lets us open a specific section (e.g., 'devices') once
+  const [settingsInitialSection, setSettingsInitialSection] = useState(null)
   const GROUP_CACHE_PREFIX = 'group:'
 
   // Hooks personalizados - must be before useEffects that use them
@@ -190,6 +192,10 @@ const Dashboard = () => {
 
     const sharedSocket = getSocket()
     setSocket(sharedSocket)
+
+    // Always (re)attach auth and connect. If already connected with a stale/empty auth,
+    // connectSocket() will reconnect with the latest token.
+    connectSocket()
 
     const handleOpkReplenishRequested = createOpkReplenishHandler({
       socket: sharedSocket,
@@ -918,7 +924,7 @@ const Dashboard = () => {
       {currentWallpaper === 'constellation' && <ConstellationBg density={70} />}
 
       {/* Floating shell */}
-      <div className='relative flex h-full w-full gap-3 p-3'>
+      <div className='relative flex h-full w-full gap-2 md:gap-3 p-2 md:p-3'>
         {/* Incoming Call Notification */}
         {incomingCall && (
           <IncomingCallNotification callData={incomingCall} onClose={() => setIncomingCall(null)} />
@@ -955,6 +961,8 @@ const Dashboard = () => {
             onChange={(view) => {
               const mappedView = view === 'contacts' ? 'friends' : view
               handleViewChange(mappedView)
+              // If opening settings via nav, show the top-level grid
+              if (mappedView === 'settings') setSettingsInitialSection(null)
               setIsMobileMenuOpen(false)
             }}
             user={{
@@ -969,6 +977,12 @@ const Dashboard = () => {
             }}
             onOpenProfile={() => {
               handleProfileClick()
+              setIsMobileMenuOpen(false)
+            }}
+            onOpenDeviceSync={() => {
+              // Open Settings > Devices
+              setSettingsInitialSection('devices')
+              handleViewChange('settings')
               setIsMobileMenuOpen(false)
             }}
             onLogout={handleLogout}
@@ -1020,7 +1034,10 @@ const Dashboard = () => {
         `}
         >
           {activeView === 'settings' ? (
-            <SettingsView />
+            <SettingsView
+              key={settingsInitialSection || 'root'}
+              initialSection={settingsInitialSection}
+            />
           ) : activeView === 'friends' ? (
             <div className='echo-floating relative flex h-full flex-1 flex-col overflow-hidden'>
               <Friends

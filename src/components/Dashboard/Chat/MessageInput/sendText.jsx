@@ -112,7 +112,7 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className='border-t border-white/[0.05] px-6 py-4'>
+    <div className='border-t border-white/[0.05] px-4 md:px-6 py-3 md:py-4'>
       {/* Image preview modal */}
       {showImageModal && (
         <div className='fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm'>
@@ -157,7 +157,7 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
 
       {/* Pill input bar */}
       <div
-        className={`flex items-center gap-2 rounded-full border px-2.5 py-1.5 backdrop-blur transition-all ${
+        className={`flex items-center gap-2 rounded-full border px-2.5 py-1.5 backdrop-blur transition-all min-w-0 ${
           focused
             ? 'border-violet-400/45 bg-white/[0.025] shadow-[0_0_0_4px_rgba(168,85,247,0.10),inset_0_0_28px_rgba(168,85,247,0.06)]'
             : 'border-white/[0.06] bg-white/[0.015]'
@@ -187,10 +187,10 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
               : 'Type a message or choose an option…'
           }
           disabled={disabled}
-          className='flex-1 bg-transparent px-1.5 py-2 text-[13.5px] text-white placeholder:text-white/30 focus:outline-none'
+          className='flex-1 min-w-0 bg-transparent px-1.5 py-2 text-[13.5px] text-white placeholder:text-white/30 focus:outline-none'
         />
 
-        <div className='flex items-center gap-0.5 pr-1'>
+        <div className='flex items-center gap-0.5 pr-1 min-w-0'>
           <IconBtn title='Emoji' testid='msg-emoji'>
             <Smile size={16} />
           </IconBtn>
@@ -220,7 +220,7 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
         </button>
       </div>
 
-      <div className='mt-2 flex items-center justify-between px-2 text-[10px] text-white/30 mono'>
+      <div className='mt-2 flex items-center justify-between px-1 md:px-2 text-[10px] text-white/30 mono'>
         <span>Argon2id · X25519 · ChaCha20-Poly1305</span>
         <span>Press ⏎ to send · ⇧⏎ new line</span>
       </div>

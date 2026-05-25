@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import firebase from 'firebase/compat/app'
 import 'firebase/compat/firestore'
 import { getSocket } from '../../socket'
+import { resolveApiBase } from '@/utils/network/apiBase'
 
 // Firebase config
 const firebaseConfig = {
@@ -53,6 +54,8 @@ const VideoCall = () => {
 
   // Check if we're answering a call (came from notification)
   const isAnswering = location.state?.callId
+  const search = new URLSearchParams(location.search)
+  const isAudioOnlyMode = search.get('type') === 'audio' || search.get('audioOnly') === '1'
 
   // Fetch user profiles
   useEffect(() => {
@@ -201,58 +204,66 @@ const VideoCall = () => {
       hasStartedCallRef.current = true
 
       try {
-        // Try to get both video and audio
+        // Determine capture constraints based on mode; in audio-only mode we
+        // explicitly skip camera setup and present avatar UIs instead.
         let mediaStream
-        try {
-          mediaStream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: true,
-          })
-          setHasVideoPermission(true)
-        } catch {
-          // Try video only
-          let videoStream = null
+        if (isAudioOnlyMode) {
           try {
-            videoStream = await navigator.mediaDevices.getUserMedia({ video: true })
-            setHasVideoPermission(true)
-          } catch {
+            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
             setHasVideoPermission(false)
             setIsCameraOff(true)
-          }
-
-          // Try audio only
-          let audioStream = null
-          try {
-            audioStream = await navigator.mediaDevices.getUserMedia({ audio: true })
           } catch {
+            // No mic permission — proceed without tracks
             setIsMuted(true)
           }
+        } else {
+          // Try to get both video and audio
+          try {
+            mediaStream = await navigator.mediaDevices.getUserMedia({
+              video: true,
+              audio: true,
+            })
+            setHasVideoPermission(true)
+          } catch {
+            // Try video only
+            let videoStream = null
+            try {
+              videoStream = await navigator.mediaDevices.getUserMedia({ video: true })
+              setHasVideoPermission(true)
+            } catch {
+              setHasVideoPermission(false)
+              setIsCameraOff(true)
+            }
 
-          // Combine streams
-          mediaStream = new MediaStream()
-          if (videoStream) {
-            videoStream.getTracks().forEach((track) => mediaStream.addTrack(track))
-          }
-          if (audioStream) {
-            audioStream.getTracks().forEach((track) => mediaStream.addTrack(track))
-          }
+            // Try audio only
+            let audioStream = null
+            try {
+              audioStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+            } catch {
+              setIsMuted(true)
+            }
 
-          // If neither permission granted, throw error
-          if (!videoStream && !audioStream) {
-            throw new Error('No media permissions granted')
+            // Combine streams
+            if (videoStream || audioStream) {
+              mediaStream = new MediaStream()
+              if (videoStream) videoStream.getTracks().forEach((t) => mediaStream.addTrack(t))
+              if (audioStream) audioStream.getTracks().forEach((t) => mediaStream.addTrack(t))
+            }
           }
         }
 
-        localStreamRef.current = mediaStream
+        localStreamRef.current = mediaStream || null
 
         if (localVideoRef.current) {
-          localVideoRef.current.srcObject = mediaStream
+          localVideoRef.current.srcObject = mediaStream || null
         }
 
         // Push tracks from local stream to peer connection
-        mediaStream.getTracks().forEach((track) => {
-          pcRef.current.addTrack(track, mediaStream)
-        })
+        if (mediaStream) {
+          mediaStream.getTracks().forEach((track) => {
+            pcRef.current.addTrack(track, mediaStream)
+          })
+        }
 
         // Pull tracks from remote stream, add to video stream
         pcRef.current.ontrack = (event) => {
@@ -373,7 +384,9 @@ const VideoCall = () => {
 
   // Create a call (caller)
   const handleCreateCall = async () => {
-    if (!pcRef.current || !localStreamRef.current) return
+    // Allow creating and connecting a call even without local media tracks —
+    // the SDP will simply be recvonly until media is enabled.
+    if (!pcRef.current) return
 
     const socket = getSocket()
     const callDoc = firestore.collection('calls').doc()
@@ -710,4 +723,3 @@ const VideoCall = () => {
 }
 
 export default VideoCall
-import { resolveApiBase } from '@/utils/network/apiBase'

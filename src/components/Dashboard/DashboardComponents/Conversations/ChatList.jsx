@@ -84,15 +84,16 @@ export default function ChatList({
   const recent = filtered.filter((c) => !c.pinned)
 
   return (
-    <div className='echo-floating relative flex h-full w-[340px] shrink-0 flex-col overflow-hidden'>
+    <div className='echo-floating relative flex h-full w-full md:w-[300px] lg:w-[340px] xl:w-[380px] shrink-0 flex-col overflow-hidden'>
       {/* Title */}
-      <div className='px-5 pt-5'>
+      {/* On very small screens the global hamburger is fixed at top-left. Add extra left padding to avoid overlap. */}
+      <div className='pt-5 pr-5 pl-14 md:px-5'>
         <h2 className='echo-display text-[22px]'>Conversations.</h2>
         <p className='mt-1 text-[12px] text-white/40'>End-to-end encrypted — zero metadata.</p>
       </div>
 
       {/* Search row */}
-      <div className='px-5 pt-4 flex items-center gap-2'>
+      <div className='pt-4 pr-5 pl-14 md:px-5 flex items-center gap-2'>
         <div className='relative flex-1'>
           <Search
             size={14}
@@ -118,7 +119,7 @@ export default function ChatList({
       </div>
 
       {/* Tabs */}
-      <div className='px-5 pt-4'>
+      <div className='pt-4 pr-5 pl-14 md:px-5'>
         <div className='relative flex items-center gap-6 border-b border-white/[0.05]'>
           {TABS.map((t) => {
             const active = tab === t.id

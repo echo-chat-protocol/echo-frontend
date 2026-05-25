@@ -327,12 +327,12 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
   }
 
   return (
-    <div className='app-container h-full flex flex-col'>
-      <div className='chat-container flex-1 flex flex-col relative overflow-hidden'>
+    <div className='app-container h-full min-w-0 flex flex-col'>
+      <div className='chat-container flex-1 min-w-0 flex flex-col relative overflow-hidden'>
         {/* Premium thread with typing */}
         <div
           ref={messagesContainerRef}
-          className={`flex-1 relative overflow-y-auto ${getWallpaperClasses(currentWallpaper)}`}
+          className={`flex-1 relative overflow-y-auto overflow-x-hidden ${getWallpaperClasses(currentWallpaper)}`}
           onScroll={handleScroll}
         >
           {currentWallpaper !== 'default' && getWallpaperComponent(currentWallpaper)}
