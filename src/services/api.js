@@ -16,7 +16,7 @@
  */
 
 // e.g. "https://your-app.onrender.com/api/v1"  (no trailing slash)
-const BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1').replace(/\/$/, '')
+const BASE_URL = (import.meta.env.VITE_API_URL || '/api/v1').replace(/\/$/, '')
 
 // ─── Custom error ─────────────────────────────────────────────────────────────
 

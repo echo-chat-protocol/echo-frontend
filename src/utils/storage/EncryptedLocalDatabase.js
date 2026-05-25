@@ -4,7 +4,7 @@ import { argon2id } from '@noble/hashes/argon2.js'
 
 // Constants
 const DB_NAME = 'EchoEncryptedDB'
-const DB_VERSION = 9
+const DB_VERSION = 11
 
 const STORES = {
   META: 'meta',

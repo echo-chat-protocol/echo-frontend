@@ -30,12 +30,12 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'https://echo-backend-preproduction.onrender.com',
+        target: 'https://echo-backend-x91g.onrender.com',
         changeOrigin: true,
         secure: true,
       },
       '/socket.io': {
-        target: 'https://echo-backend-preproduction.onrender.com',
+        target: 'https://echo-backend-x91g.onrender.com',
         changeOrigin: true,
         secure: true,
         ws: true, // proxy WebSocket connections too
