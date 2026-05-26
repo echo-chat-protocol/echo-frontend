@@ -53,6 +53,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
   const groupCryptoStateRef = useRef(null)
   const groupMetaRef = useRef(groupMeta)
   const liveMessageQueueRef = useRef(Promise.resolve())
+  const sendQueueRef = useRef(Promise.resolve())
   const pendingEncryptedGroupMessagesRef = useRef(new Map()) // groupId -> array of messages
 
   useEffect(() => {
@@ -400,6 +401,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
     groupCryptoStateRef.current = null
     isInitialLoadRef.current = true
     liveMessageQueueRef.current = Promise.resolve()
+    sendQueueRef.current = Promise.resolve()
 
     // Defined here so the initial load can be enqueued before any live-message
     // handler tasks, ensuring groupCryptoStateRef is fully up-to-date before
@@ -794,7 +796,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
     }
   }, [groupMeta?.mlsEnabled, groupCryptoState, userId])
 
-  const sendMessage = async (text) => {
+  const sendMessageNow = async (text) => {
     const currentMeta = groupMetaRef.current
 
     if (currentMeta?.mlsEnabled) {
@@ -871,6 +873,13 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
         }
       )
     })
+  }
+
+  const sendMessage = (text) => {
+    const queuedSend = sendQueueRef.current.catch(() => {}).then(() => sendMessageNow(text))
+
+    sendQueueRef.current = queuedSend.catch(() => {})
+    return queuedSend
   }
 
   const sendDisabled = groupMeta.mlsEnabled && !hasGroupKeyMaterial(groupCryptoState)

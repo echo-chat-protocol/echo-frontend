@@ -28,7 +28,7 @@ import {
   buildDmFanoutTargetsIncludingSiblings,
 } from './utils/chat/perDeviceSession'
 
-function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
+function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', contact = null }) {
   const socket = getSocket()
 
   const token =
@@ -48,6 +48,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
   const [autoScroll, setAutoScroll] = useState(true)
   const previousMessageCountRef = useRef(0)
   const isInitialLoadRef = useRef(true)
+  const sendQueueRef = useRef(Promise.resolve())
 
   const [identityChangeDetail, setIdentityChangeDetail] = useState(null)
   const [ourPublicKeyB64, setOurPublicKeyB64] = useState(null)
@@ -149,7 +150,6 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
       const messages = Array.isArray(payload) ? payload : [payload]
 
       for (const message of messages) {
-        const nonce = base64ToArrayBuffer(message.nonce)
         if (message.messageType === 'call_event') {
           const isInvolvedInCall =
             message.callData?.callerId === userId || message.callData?.receiverId === userId
@@ -162,6 +162,17 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
           if (isInvolvedInCall && isRelevantToActiveChat) {
             updateSavedMessages(userId, activeChat, message, setMessages)
           }
+          continue
+        }
+
+        let nonce
+        try {
+          nonce = base64ToArrayBuffer(message?.nonce)
+        } catch (error) {
+          console.warn('[Chat] Ignoring message with invalid nonce encoding', {
+            messageId: message?._id,
+            error: error?.message,
+          })
           continue
         }
 
@@ -302,9 +313,9 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
       socket.off('messageSeenUpdate', handleSeenUpdate)
       window.removeEventListener('localStorageUpdated', handleEldUpdate)
     }
-  }, [userId, targetUserId])
+  }, [activeChat, privateKeyArray, socket, targetUserId, userId])
 
-  const sendMessage = async (text, imageData = null) => {
+  const sendMessageNow = async (text, imageData = null) => {
     if (sendBlocked) {
       throw new Error(sendBlockedReason || 'Sending is blocked')
     }
@@ -529,12 +540,21 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
     return
   }
 
+  const sendMessage = (text, imageData = null) => {
+    const queuedSend = sendQueueRef.current
+      .catch(() => {})
+      .then(() => sendMessageNow(text, imageData))
+
+    sendQueueRef.current = queuedSend.catch(() => {})
+    return queuedSend
+  }
+
   useEffect(() => {
     const messageCountIncreased = messages.length > previousMessageCountRef.current
 
     if (autoScroll && messageCountIncreased && messagesEndRef.current) {
       const behavior = isInitialLoadRef.current ? 'instant' : 'smooth'
-      messagesEndRef.current.scrollIntoView({ behavior })
+      messagesEndRef.current.scrollIntoView({ behavior, block: 'nearest' })
       isInitialLoadRef.current = false
     }
 
@@ -550,21 +570,27 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
     }
   }
 
+  const contactInfo = {
+    name: contact?.username || contact?.name || 'Unknown',
+    avatar: contact?.profileImage || contact?.avatar || null,
+  }
+
   return (
-    <div className='app-container h-full flex flex-col'>
-      <div className='chat-container flex-1 flex flex-col relative overflow-y-auto'>
+    <div className='app-container flex h-full min-h-0 min-w-0 flex-col overflow-hidden'>
+      <div className='chat-container relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden'>
         <div
           ref={messagesContainerRef}
-          className={`messages-container flex-1 relative ${getWallpaperClasses(currentWallpaper)}`}
+          className={`messages-container relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain ${getWallpaperClasses(currentWallpaper)}`}
           onScroll={handleScroll}
         >
           {getWallpaperComponent(currentWallpaper)}
 
-          <div className='relative z-10 h-full flex flex-col'>
+          <div className='relative z-10 flex min-h-full flex-col'>
             <DisplayText
               messages={messages}
               currentUserId={userId}
               wallpaperType={currentWallpaper}
+              contact={contactInfo}
             />
             <div ref={messagesEndRef} />
           </div>
@@ -598,11 +624,13 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
           setShowVerifyModal(false)
         }}
       />
-      <SendText
-        sendMessage={sendMessage}
-        disabled={sendBlocked}
-        disabledReason={sendBlockedReason}
-      />
+      <div className='shrink-0'>
+        <SendText
+          sendMessage={sendMessage}
+          disabled={sendBlocked}
+          disabledReason={sendBlockedReason}
+        />
+      </div>
     </div>
   )
 }
@@ -610,6 +638,12 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default' }) {
 Chat.propTypes = {
   token: PropTypes.string,
   activeChat: PropTypes.string.isRequired,
+  contact: PropTypes.shape({
+    username: PropTypes.string,
+    name: PropTypes.string,
+    profileImage: PropTypes.string,
+    avatar: PropTypes.string,
+  }),
 }
 
 export default Chat

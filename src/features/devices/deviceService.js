@@ -32,22 +32,22 @@ function localBackendBase(base = BASE) {
   }
 }
 
-async function requestWithLoopbackFallback(method, path, body, base = BASE) {
+async function requestWithLoopbackFallback(method, path, body, base = BASE, authToken = null) {
   const fallbackBase = localBackendBase(base)
   if (fallbackBase && fallbackBase !== base) {
-    return request(method, path, body, fallbackBase)
+    return request(method, path, body, fallbackBase, true, authToken)
   }
 
   try {
-    return await request(method, path, body, base)
+    return await request(method, path, body, base, true, authToken)
   } catch (error) {
     if (!fallbackBase || fallbackBase === base) throw error
-    return request(method, path, body, fallbackBase)
+    return request(method, path, body, fallbackBase, true, authToken)
   }
 }
 
-function authHeaders() {
-  const token = tokenStorage.getAccess() || localStorage.getItem('token')
+function authHeaders(authToken = null) {
+  const token = authToken || tokenStorage.getAccess() || localStorage.getItem('token')
   return {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -58,8 +58,8 @@ function makeAuthError(message = 'Not authenticated') {
   return Object.assign(new Error(message), { status: 401, code: 'unauthorized' })
 }
 
-async function request(method, path, body, base = BASE, retry = true) {
-  if (!tokenStorage.getAccess() && !localStorage.getItem('token')) {
+async function request(method, path, body, base = BASE, retry = true, authToken = null) {
+  if (!authToken && !tokenStorage.getAccess() && !localStorage.getItem('token')) {
     throw makeAuthError()
   }
 
@@ -69,12 +69,12 @@ async function request(method, path, body, base = BASE, retry = true) {
   try {
     const res = await fetch(`${base}${path}`, {
       method,
-      headers: authHeaders(),
+      headers: authHeaders(authToken),
       signal: controller.signal,
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     })
     const data = await res.json().catch(() => ({}))
-    if (res.status === 401 && retry) {
+    if (res.status === 401 && retry && !authToken) {
       try {
         await refreshAccessToken()
         return request(method, path, body, base, false)
@@ -126,7 +126,14 @@ export const deviceService = {
   registerDeviceKeys: (deviceId, keyBundle) =>
     request('POST', `/devices/${deviceId}/keys`, keyBundle),
   completeSyncTarget: ({ sessionId, targetAccessToken, targetDevice = {} }) =>
-    request('POST', '/sync/complete-target', { sessionId, targetAccessToken, targetDevice }),
+    request(
+      'POST',
+      '/sync/complete-target',
+      { sessionId, targetAccessToken, targetDevice },
+      BASE,
+      true,
+      targetAccessToken
+    ),
 
   storeEnvelopes: (body) => request('POST', '/messages/envelopes', body),
   fetchEnvelopes: (deviceId) => request('GET', `/messages/envelopes/${deviceId}`),
@@ -134,30 +141,51 @@ export const deviceService = {
 
   createDhSession: (body) => requestWithLoopbackFallback('POST', '/sync/create-session', body),
   submitDhIdentityToServer: (serverUrl, body) =>
-    request('POST', '/sync/dh-submit', body, resolveApiBase(serverUrl)),
+    request(
+      'POST',
+      '/sync/dh-submit',
+      body,
+      resolveApiBase(serverUrl),
+      true,
+      body?.targetAccessToken
+    ),
   getDhSession: ({ sessionId, targetAccessToken }) =>
     request(
       'GET',
-      `/sync/dh-session/${sessionId}?targetAccessToken=${encodeURIComponent(targetAccessToken)}`
+      `/sync/dh-session/${sessionId}?targetAccessToken=${encodeURIComponent(targetAccessToken)}`,
+      undefined,
+      BASE,
+      true,
+      targetAccessToken
     ),
   transferDhChunk: ({ sessionId, targetAccessToken, chunk }) =>
-    requestWithLoopbackFallback('POST', '/sync/dh-transfer-chunk', {
-      sessionId,
-      targetAccessToken,
-      chunk,
-    }),
+    requestWithLoopbackFallback(
+      'POST',
+      '/sync/dh-transfer-chunk',
+      {
+        sessionId,
+        targetAccessToken,
+        chunk,
+      },
+      BASE,
+      targetAccessToken
+    ),
   transferDhChunkToServer: (serverUrl, { sessionId, targetAccessToken, chunk }) =>
     request(
       'POST',
       '/sync/dh-transfer-chunk',
       { sessionId, targetAccessToken, chunk },
-      resolveApiBase(serverUrl)
+      resolveApiBase(serverUrl),
+      true,
+      targetAccessToken
     ),
   listDhChunksFromServer: (serverUrl, { sessionId, targetAccessToken }) =>
     request(
       'GET',
       `/sync/sessions/${sessionId}/chunks?targetAccessToken=${encodeURIComponent(targetAccessToken)}`,
       undefined,
-      resolveApiBase(serverUrl)
+      resolveApiBase(serverUrl),
+      true,
+      targetAccessToken
     ),
 }

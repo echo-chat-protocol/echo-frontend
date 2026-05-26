@@ -4,6 +4,7 @@ import { jwtDecode } from 'jwt-decode'
 import PropTypes from 'prop-types'
 import eld from '../../utils/storage/EncryptedLocalDatabase'
 import { revokeCurrentDeviceForLogout } from '../../features/devices/logoutDevice'
+import { tokenStorage } from '@services/api'
 
 const passKeyForUser = (userId) => `eld-pass-${userId}`
 
@@ -99,7 +100,11 @@ const EldUnlockGate = ({ token, children }) => {
   }
 
   const handleLogout = async () => {
-    await revokeCurrentDeviceForLogout()
+    try {
+      await revokeCurrentDeviceForLogout()
+    } catch (err) {
+      console.warn('[EldUnlockGate] Failed to revoke current device during logout:', err)
+    }
 
     try {
       eld.lock()
@@ -107,6 +112,7 @@ const EldUnlockGate = ({ token, children }) => {
       // ignore
     }
     sessionStorage.removeItem(passKeyForUser(userId))
+    tokenStorage.clear()
     localStorage.removeItem('token')
     localStorage.removeItem('userId')
     localStorage.removeItem('username')

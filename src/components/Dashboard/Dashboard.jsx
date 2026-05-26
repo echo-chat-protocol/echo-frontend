@@ -126,6 +126,8 @@ const Dashboard = () => {
   const { groups, setAllGroups, upsertGroup, removeGroup } = useGroups(userId)
   const messagesEndRef = useRef(null)
   // const conversationsListRef = useRef(null)
+  const showMobileChatRef = useRef(showMobileChat)
+  const mobileChatHistoryPushedRef = useRef(false)
   const hasRefreshedProfiles = useRef(false)
   const activeChatRef = useRef(activeChat)
   const recentConversationsRef = useRef(recentConversations)
@@ -158,6 +160,31 @@ const Dashboard = () => {
   useEffect(() => {
     activeChatRef.current = activeChat
   }, [activeChat])
+
+  useEffect(() => {
+    showMobileChatRef.current = showMobileChat
+  }, [showMobileChat])
+
+  useEffect(() => {
+    const isMobileViewport = () =>
+      typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
+
+    if (showMobileChat && isMobileViewport() && !mobileChatHistoryPushedRef.current) {
+      window.history.pushState({ echoMobileChat: true }, '', window.location.href)
+      mobileChatHistoryPushedRef.current = true
+    }
+  }, [showMobileChat])
+
+  useEffect(() => {
+    const handlePopState = () => {
+      if (!mobileChatHistoryPushedRef.current || !showMobileChatRef.current) return
+      mobileChatHistoryPushedRef.current = false
+      setShowMobileChat(false)
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
 
   useEffect(() => {
     recentConversationsRef.current = recentConversations
@@ -942,6 +969,10 @@ const Dashboard = () => {
   }
 
   const handleMobileBack = () => {
+    if (mobileChatHistoryPushedRef.current) {
+      window.history.back()
+      return
+    }
     setShowMobileChat(false)
   }
 
@@ -1113,7 +1144,7 @@ const Dashboard = () => {
   return (
     <div
       data-testid='echo-dashboard'
-      className='relative min-h-screen w-full overflow-hidden bg-black text-white md:h-screen'
+      className='relative h-[100dvh] min-h-[100dvh] w-full overflow-hidden bg-black text-white'
     >
       {/* Landing-style ambient bg — only when wallpaper is constellation */}
       {currentWallpaper === 'constellation' && <ConstellationBg density={70} />}
@@ -1126,7 +1157,7 @@ const Dashboard = () => {
       )}
 
       {/* Floating shell */}
-      <div className='relative flex h-full w-full gap-2 md:gap-3 p-2 md:p-3'>
+      <div className='relative flex h-full min-h-0 w-full gap-0 p-0 md:gap-3 md:p-3'>
         {/* Incoming Call Notification */}
         {incomingCall && (
           <IncomingCallNotification callData={incomingCall} onClose={() => setIncomingCall(null)} />
@@ -1230,7 +1261,7 @@ const Dashboard = () => {
         <div
           className={`
           ${showMobileChat || activeView === 'settings' || activeView === 'friends' || activeView === 'groups' ? 'flex' : 'hidden'} md:flex
-          flex-1 flex-col bg-transparent
+          flex-1 min-h-0 min-w-0 flex-col bg-transparent
         `}
         >
           {activeView === 'settings' ? (
@@ -1249,10 +1280,10 @@ const Dashboard = () => {
           ) : activeView === 'groups' ? (
             <GroupsView onCreate={() => setCreateGroupOpen(true)} groups={filteredGroups} />
           ) : activeChat ? (
-            <div className='echo-floating relative flex h-full flex-1 overflow-hidden'>
-              <div className='flex flex-col flex-1 min-w-0'>
+            <div className='echo-floating relative flex h-full min-h-0 flex-1 overflow-hidden rounded-none md:rounded-[20px]'>
+              <div className='flex min-h-0 min-w-0 flex-1 flex-col'>
                 {/* Mobile back button */}
-                <div className='flex items-center md:block'>
+                <div className='flex shrink-0 items-center md:block'>
                   <button
                     className='md:hidden p-3 text-gray-400 hover:text-white'
                     onClick={handleMobileBack}
@@ -1285,7 +1316,7 @@ const Dashboard = () => {
                     )}
                   </div>
                 </div>
-                <div className='flex-1 overflow-hidden'>
+                <div className='min-h-0 flex-1 overflow-hidden'>
                   {activeChat?.type === 'group' ? (
                     <GroupChat
                       token={token}

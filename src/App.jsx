@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, useEffect, useRef } from 'react'
 import {
   BrowserRouter as Router,
   Route,
@@ -8,7 +8,9 @@ import {
   useLocation,
   useNavigate,
 } from 'react-router-dom'
+import PropTypes from 'prop-types'
 import { useTauri } from '@/hooks/useTauri'
+import { tokenStorage } from '@services/api'
 import './App.css'
 import ErrorBoundary from './components/common/ErrorBoundary'
 import ScrollToTop from './components/common/ScrollToTop'
@@ -48,8 +50,85 @@ const DeviceSyncPage = lazy(() => import('@/pages/DeviceSyncPage'))
 // ─── Tauri gate: redirect to /device-sync when running inside Tauri ──────────
 function TauriGate() {
   const { isTauri } = useTauri()
+  if (tokenStorage.getAccess()) return <Navigate to='/dashboard' replace />
   if (isTauri) return <Navigate to='/device-sync' replace />
   return <LandingPage />
+}
+
+function GuestOnlyRoute({ children }) {
+  if (tokenStorage.getAccess()) return <Navigate to='/dashboard' replace />
+  return children
+}
+
+GuestOnlyRoute.propTypes = {
+  children: PropTypes.node.isRequired,
+}
+
+const GUEST_ENTRY_PATHS = new Set(['/', '/login', '/register', '/device-sync'])
+
+function AuthenticatedBackGuard() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const armedDashboardGuardRef = useRef(false)
+
+  useEffect(() => {
+    const token = tokenStorage.getAccess()
+    if (!token) return
+
+    if (GUEST_ENTRY_PATHS.has(location.pathname)) {
+      navigate('/dashboard', { replace: true })
+    }
+  }, [location.pathname, navigate])
+
+  useEffect(() => {
+    const token = tokenStorage.getAccess()
+    if (!token || location.pathname !== '/dashboard') {
+      armedDashboardGuardRef.current = false
+      return
+    }
+
+    const isTauriMobile =
+      typeof window !== 'undefined' &&
+      Boolean(window.__TAURI_INTERNALS__) &&
+      /android|iphone|ipad|ipod/i.test(navigator.userAgent)
+
+    if (!isTauriMobile || armedDashboardGuardRef.current) return
+
+    const href = `${location.pathname}${location.search}${location.hash}`
+    window.history.replaceState(
+      { ...(window.history.state || {}), echoDashboardBase: true },
+      '',
+      href
+    )
+    window.history.pushState({ echoDashboardGuard: true }, '', href)
+    armedDashboardGuardRef.current = true
+  }, [location.hash, location.pathname, location.search])
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const token = tokenStorage.getAccess()
+      if (!token) return
+
+      window.setTimeout(() => {
+        const path = window.location.pathname
+
+        if (GUEST_ENTRY_PATHS.has(path)) {
+          navigate('/dashboard', { replace: true })
+          return
+        }
+
+        if (path === '/dashboard' && armedDashboardGuardRef.current) {
+          const href = `${window.location.pathname}${window.location.search}${window.location.hash}`
+          window.history.pushState({ echoDashboardGuard: true }, '', href)
+        }
+      }, 0)
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [navigate])
+
+  return null
 }
 
 // ─── Profile route wrapper ───────────────────────────────────────────────────
@@ -68,14 +147,36 @@ function App() {
   return (
     <ErrorBoundary>
       <Router>
+        <AuthenticatedBackGuard />
         <ScrollToTop />
         <Suspense fallback={<Spinner />}>
           <Routes>
             {/* ── New landing / public (feature-based) ─────────────────── */}
             <Route path='/' element={<TauriGate />} />
-            <Route path='/device-sync' element={<DeviceSyncPage />} />
-            <Route path='/login' element={<LoginPage />} />
-            <Route path='/register' element={<RegisterPage />} />
+            <Route
+              path='/device-sync'
+              element={
+                <GuestOnlyRoute>
+                  <DeviceSyncPage />
+                </GuestOnlyRoute>
+              }
+            />
+            <Route
+              path='/login'
+              element={
+                <GuestOnlyRoute>
+                  <LoginPage />
+                </GuestOnlyRoute>
+              }
+            />
+            <Route
+              path='/register'
+              element={
+                <GuestOnlyRoute>
+                  <RegisterPage />
+                </GuestOnlyRoute>
+              }
+            />
 
             {/* Auth aliases → new pages */}
             <Route path='/auth/login' element={<Navigate to='/login' replace />} />

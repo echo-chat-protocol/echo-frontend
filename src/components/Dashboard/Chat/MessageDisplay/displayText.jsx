@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import PropTypes from 'prop-types'
+import { CheckCheck, Check, Download, FileImage } from 'lucide-react'
 import { format, isSameDay } from 'date-fns'
 import { es } from 'date-fns/locale'
 import CallEventMessage from './CallEventMessage'
@@ -58,7 +59,105 @@ const renderMessageContent = (text) => {
 
   return <p>{text}</p>
 }
-const DisplayText = ({ messages = [], currentUserId }) => {
+
+function State({ seen }) {
+  if (seen) return <CheckCheck size={13} strokeWidth={2.4} className='text-violet-200' />
+  return <Check size={12} className='text-white/45' />
+}
+
+function AvatarFallback({ name }) {
+  return (
+    <div className='grid h-7 w-7 place-items-center rounded-full bg-gradient-to-br from-violet-500/40 to-violet-700/70 text-[10px] font-semibold text-white/90'>
+      {(name || '?')?.[0]}
+    </div>
+  )
+}
+
+function MessageBubble({ message, currentUserId, contact }) {
+  const isSelf = String(message.userId) === String(currentUserId)
+  const senderName = message.username || contact?.name || 'Member'
+  const avatar = !isSelf ? contact?.avatar || message.profileImage || null : null
+  const time = message.createdAt ? format(new Date(message.createdAt), 'HH:mm') : ''
+
+  return (
+    <div
+      className={`flex min-w-0 gap-2.5 ${isSelf ? 'justify-end' : 'justify-start'} animate-fade-up`}
+    >
+      {!isSelf && (
+        <div className='mt-auto shrink-0'>
+          {avatar ? (
+            <img
+              src={avatar}
+              alt=''
+              className='h-7 w-7 rounded-full object-cover ring-1 ring-white/10'
+            />
+          ) : (
+            <AvatarFallback name={senderName} />
+          )}
+        </div>
+      )}
+
+      <div
+        className={`flex min-w-0 max-w-[82%] flex-col gap-1 sm:max-w-[70%] ${
+          isSelf ? 'items-end' : 'items-start'
+        }`}
+      >
+        {!isSelf && message.username ? (
+          <span className='px-1 text-[10.5px] font-medium text-violet-200/75'>{senderName}</span>
+        ) : null}
+
+        {message.image ? (
+          <div
+            className={`group relative w-full overflow-hidden rounded-2xl border ${
+              isSelf ? 'border-violet-500/30' : 'border-white/[0.07]'
+            } bg-black/40`}
+          >
+            <img
+              src={message.image}
+              alt='Shared image'
+              className='block max-h-52 w-full cursor-pointer object-cover'
+              onClick={() => window.open(message.image, '_blank')}
+            />
+            <button className='absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/60 opacity-0 backdrop-blur transition hover:bg-violet-500/40 group-hover:opacity-100'>
+              <Download size={14} className='text-white' />
+            </button>
+            <div className='flex items-center justify-end gap-1 border-t border-white/[0.06] bg-black/50 px-3 py-2'>
+              {message.text ? (
+                <>
+                  <FileImage size={13} className='shrink-0 text-violet-300' />
+                  <div className='min-w-0 flex-1 text-[12px] text-white/80'>
+                    {renderMessageContent(message.text)}
+                  </div>
+                </>
+              ) : null}
+              <span className='ml-2 inline-flex shrink-0 items-center gap-1 text-[10px] text-white/35 mono'>
+                {time}
+                {isSelf && <State seen={message.seenStatus} />}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div
+            className={`relative whitespace-pre-line break-words rounded-2xl px-3.5 py-2.5 text-[13.5px] leading-snug ${
+              isSelf ? 'bubble-sent rounded-br-md' : 'bubble-received rounded-bl-md'
+            }`}
+            style={{ overflowWrap: 'anywhere' }}
+          >
+            {message.text && renderMessageContent(message.text)}
+            <div className='-mb-1 mt-1 flex justify-end'>
+              <span className='ml-2 inline-flex items-center gap-1 text-[10px] text-white/35 mono'>
+                {time}
+                {isSelf && <State seen={message.seenStatus} />}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+const DisplayText = ({ messages = [], currentUserId, contact = null }) => {
   const shouldShowDate = (index) => {
     if (index === 0) return true
     const currentDate = new Date(messages[index].createdAt)
@@ -67,12 +166,12 @@ const DisplayText = ({ messages = [], currentUserId }) => {
   }
 
   return (
-    <div className='flex-1 overflow-y-auto p-4 space-y-4'>
+    <div className='min-h-full space-y-3 p-3 md:space-y-4 md:p-4'>
       {messages.map((message, index) => (
         <div key={message._id} className='space-y-2'>
           {shouldShowDate(index) && (
-            <div className='flex justify-center my-4'>
-              <span className='bg-gray-700 text-gray-300 text-sm px-3 py-1 rounded-full'>
+            <div className='my-4 flex justify-center'>
+              <span className='rounded-full border border-white/[0.06] bg-white/[0.02] px-3 py-1 text-[10.5px] uppercase tracking-[0.18em] text-white/40 mono'>
                 {format(new Date(message.createdAt), 'PPPP', { locale: es })}
               </span>
             </div>
@@ -83,65 +182,12 @@ const DisplayText = ({ messages = [], currentUserId }) => {
             <CallEventMessage callData={message.callData} currentUserId={currentUserId} />
           ) : message.messageType === 'system' ? (
             <div className='flex justify-center'>
-              <div className='rounded-full bg-gray-800 px-4 py-2 text-sm text-gray-300'>
+              <div className='rounded-full border border-white/[0.06] bg-white/[0.02] px-3 py-1 text-[10.5px] text-white/40 mono'>
                 {message.text}
               </div>
             </div>
           ) : (
-            /* Render regular messages */
-            <div
-              className={`flex ${
-                message.userId === currentUserId ? 'justify-end' : 'justify-start'
-              }`}
-            >
-              <div
-                className={`max-w-xs md:max-w-md lg:max-w-lg xl:max-w-xl rounded-lg p-3 ${
-                  message.userId === currentUserId
-                    ? 'bg-indigo-600 text-white rounded-br-none'
-                    : 'bg-gray-700 text-white rounded-bl-none'
-                }`}
-                style={{ wordWrap: 'break-word', whiteSpace: 'pre-wrap' }}
-              >
-                <div className='flex items-baseline justify-between space-x-2'>
-                  {message.userId !== currentUserId && message.username && (
-                    <strong className='text-sm font-semibold text-indigo-300'>
-                      {message.username}
-                    </strong>
-                  )}
-                  <div className='flex items-center'>
-                    <span className='text-sm text-gray-300'>
-                      {format(new Date(message.createdAt), 'HH:mm')}
-                    </span>
-                    {message.userId === currentUserId && (
-                      <svg
-                        className={`ml-2 h-4 w-4 ${
-                          message.seenStatus ? 'text-sky-400' : 'text-gray-400'
-                        }`}
-                        viewBox='0 0 122.88 74.46'
-                        fill='currentColor'
-                        xmlns='http://www.w3.org/2000/svg'
-                      >
-                        <path
-                          fillRule='evenodd'
-                          d='M1.87,47.2a6.33,6.33,0,1,1,8.92-9c8.88,8.85,17.53,17.66,26.53,26.45l-3.76,4.45-.35.37a6.33,6.33,0,0,1-8.95,0L1.87,47.2ZM30,43.55a6.33,6.33,0,1,1,8.82-9.07l25,24.38L111.64,2.29c5.37-6.35,15,1.84,9.66,8.18L69.07,72.22l-.3.33a6.33,6.33,0,0,1-8.95.12L30,43.55Zm28.76-4.21-.31.33-9.07-8.85L71.67,4.42c5.37-6.35,15,1.83,9.67,8.18L58.74,39.34Z'
-                        />
-                      </svg>
-                    )}
-                  </div>
-                </div>
-                <div className='mt-1 text-sm'>
-                  {message.image && (
-                    <img
-                      src={message.image}
-                      alt='Shared image'
-                      className='max-w-full rounded-lg mb-2 cursor-pointer'
-                      onClick={() => window.open(message.image, '_blank')}
-                    />
-                  )}
-                  {message.text && renderMessageContent(message.text)}
-                </div>
-              </div>
-            </div>
+            <MessageBubble message={message} currentUserId={currentUserId} contact={contact} />
           )}
         </div>
       ))}
@@ -152,6 +198,10 @@ const DisplayText = ({ messages = [], currentUserId }) => {
 DisplayText.propTypes = {
   messages: PropTypes.array.isRequired,
   currentUserId: PropTypes.string.isRequired,
+  contact: PropTypes.shape({
+    name: PropTypes.string,
+    avatar: PropTypes.string,
+  }),
 }
 
 export default DisplayText

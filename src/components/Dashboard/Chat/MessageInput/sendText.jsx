@@ -112,11 +112,11 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className='border-t border-white/[0.05] px-4 md:px-6 py-3 md:py-4'>
+    <div className='shrink-0 border-t border-white/[0.05] bg-black/70 px-2 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur md:bg-transparent md:px-6 md:py-4 md:pb-4'>
       {/* Image preview modal */}
       {showImageModal && (
         <div className='fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm'>
-          <div className='relative w-full max-w-md overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0a0a0e] p-5'>
+          <div className='relative mx-3 w-full max-w-md overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0a0a0e] p-5'>
             <button
               onClick={handleCloseModal}
               className='absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-lg text-white/55 hover:bg-white/[0.04] hover:text-white'
@@ -157,7 +157,7 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
 
       {/* Pill input bar */}
       <div
-        className={`flex items-center gap-2 rounded-full border px-2.5 py-1.5 backdrop-blur transition-all min-w-0 ${
+        className={`flex min-w-0 items-center gap-1.5 rounded-full border px-1.5 py-1.5 backdrop-blur transition-all md:gap-2 md:px-2.5 ${
           focused
             ? 'border-violet-400/45 bg-white/[0.025] shadow-[0_0_0_4px_rgba(168,85,247,0.10),inset_0_0_28px_rgba(168,85,247,0.06)]'
             : 'border-white/[0.06] bg-white/[0.015]'
@@ -169,7 +169,7 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
           title='Attach image'
           onClick={handleImageClick}
           disabled={disabled}
-          className='grid h-9 w-9 place-items-center rounded-full text-white/55 hover:bg-white/[0.04] hover:text-white transition disabled:opacity-40'
+          className='grid h-11 w-11 shrink-0 place-items-center rounded-full text-white/55 transition hover:bg-white/[0.04] hover:text-white disabled:opacity-40 md:h-9 md:w-9'
         >
           <Plus size={17} />
         </button>
@@ -181,16 +181,12 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), submit())}
-          placeholder={
-            disabled
-              ? disabledReason || 'Sending is disabled…'
-              : 'Type a message or choose an option…'
-          }
+          placeholder={disabled ? disabledReason || 'Sending is disabled...' : 'Message...'}
           disabled={disabled}
-          className='flex-1 min-w-0 bg-transparent px-1.5 py-2 text-[13.5px] text-white placeholder:text-white/30 focus:outline-none'
+          className='min-w-0 flex-1 bg-transparent px-1 py-2.5 text-[16px] text-white placeholder:text-white/30 focus:outline-none md:px-1.5 md:py-2 md:text-[13.5px]'
         />
 
-        <div className='flex items-center gap-0.5 pr-1 min-w-0'>
+        <div className='hidden min-w-0 items-center gap-0.5 pr-1 sm:flex'>
           <IconBtn title='Emoji' testid='msg-emoji'>
             <Smile size={16} />
           </IconBtn>
@@ -214,13 +210,13 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
           onClick={submit}
           disabled={!value.trim() || disabled}
           title={disabled ? disabledReason || 'Sending is disabled' : 'Send'}
-          className='echo-cta ml-1 grid h-10 w-10 place-items-center rounded-full disabled:opacity-40 disabled:saturate-50'
+          className='echo-cta ml-0 grid h-11 w-11 shrink-0 place-items-center rounded-full disabled:opacity-40 disabled:saturate-50 md:ml-1 md:h-10 md:w-10'
         >
           <Send size={15} className='text-white' />
         </button>
       </div>
 
-      <div className='mt-2 flex items-center justify-between px-1 md:px-2 text-[10px] text-white/30 mono'>
+      <div className='mt-2 hidden items-center justify-between px-1 text-[10px] text-white/30 mono md:flex md:px-2'>
         <span>Argon2id · X25519 · ChaCha20-Poly1305</span>
         <span>Press ⏎ to send · ⇧⏎ new line</span>
       </div>

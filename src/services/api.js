@@ -82,6 +82,7 @@ export const tokenStorage = {
 
 let _isRefreshing = false
 let _refreshQueue = [] // pending requests while refreshing
+let _refreshPromise = null
 
 function flushQueue(newToken, error) {
   _refreshQueue.forEach(({ resolve, reject }) => (error ? reject(error) : resolve(newToken)))
@@ -89,7 +90,11 @@ function flushQueue(newToken, error) {
 }
 
 export async function refreshAccessToken() {
-  return doRefresh()
+  if (_refreshPromise) return _refreshPromise
+  _refreshPromise = doRefresh().finally(() => {
+    _refreshPromise = null
+  })
+  return _refreshPromise
 }
 
 async function doRefresh() {
