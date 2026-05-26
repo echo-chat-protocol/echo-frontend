@@ -35,7 +35,17 @@ const DEFAULT_MLS_CIPHER_SUITE = 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256'
 const GROUP_CACHE_PREFIX = 'group:'
 const hasGroupKeyMaterial = (state) => Boolean(state?.applicationSecretB64 || state?.groupKeyB64)
 
-const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
+const buildRemovedMessage = (activeGroupId, removedInfo = {}) => ({
+  _id: `group-removed:${activeGroupId}:${removedInfo.at || 'now'}`,
+  userId: '',
+  username: '',
+  text: removedInfo.text || 'You were removed from the group',
+  createdAt: removedInfo.at || new Date().toISOString(),
+  seenStatus: true,
+  messageType: 'system',
+})
+
+const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedInfo = null }) => {
   const socket = useMemo(() => getSocket(), [])
   const [messages, setMessages] = useState([])
   const [, setMembers] = useState([])
@@ -55,6 +65,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
   const liveMessageQueueRef = useRef(Promise.resolve())
   const sendQueueRef = useRef(Promise.resolve())
   const pendingEncryptedGroupMessagesRef = useRef(new Map()) // groupId -> array of messages
+  const removedInfoRef = useRef(removedInfo)
 
   useEffect(() => {
     groupCryptoStateRef.current = groupCryptoState
@@ -63,6 +74,19 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
   useEffect(() => {
     groupMetaRef.current = groupMeta
   }, [groupMeta])
+
+  useEffect(() => {
+    removedInfoRef.current = removedInfo
+    if (!removedInfo) return
+
+    // Don't wipe the message history on removal — that's handled by the main
+    // load effect below, which preserves cached plaintext and appends the
+    // "you were removed" placeholder. Here we only need to drop crypto state
+    // and any in-flight encrypted messages whose keys we'll never see.
+    setGroupCryptoState(null)
+    groupCryptoStateRef.current = null
+    pendingEncryptedGroupMessagesRef.current.set(String(activeGroupId), [])
+  }, [activeGroupId, removedInfo])
 
   const buildRoster = useCallback(
     (serverMembers) =>
@@ -370,6 +394,11 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
 
         const formatted = await formatMessage(message, replayState, replayMeta)
         replayState = formatted.nextState ?? replayState
+        // Drop messages we can't decrypt during replay. These are typically
+        // messages from epochs the current device was not a member for (e.g.
+        // sent while the user was removed and before being re-added). Showing
+        // them as "[Unable to decrypt message]" is noisy and misleading.
+        if (formatted.formattedMessage?.text === MLS_UNAVAILABLE_TEXT) continue
         formattedMessages.push(formatted.formattedMessage)
       }
 
@@ -380,6 +409,25 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
 
   useEffect(() => {
     if (!activeGroupId) return
+    if (removedInfo) {
+      let cancelledRemoved = false
+      ;(async () => {
+        const cached = await getSavedMessages(userId, getGroupCacheId(activeGroupId)).catch(
+          () => []
+        )
+        if (cancelledRemoved) return
+        const placeholder = buildRemovedMessage(activeGroupId, removedInfo)
+        // Strip any cached decryption-failure rows so the history view stays
+        // clean. Plaintext rows from before the removal are preserved.
+        const history = Array.isArray(cached)
+          ? cached.filter((m) => m?._id !== placeholder._id && m?.text !== MLS_UNAVAILABLE_TEXT)
+          : []
+        setMessages([...history, placeholder])
+      })()
+      return () => {
+        cancelledRemoved = true
+      }
+    }
     let cancelled = false
 
     setMessages([])
@@ -444,7 +492,13 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
 
       setGroupCryptoState(localState)
       groupCryptoStateRef.current = localState
-      setMessages(Array.isArray(cachedMessages) ? cachedMessages : [])
+      // Defensively strip any cached decryption-failure rows persisted by
+      // older versions before the replay completes.
+      setMessages(
+        Array.isArray(cachedMessages)
+          ? cachedMessages.filter((m) => m?.text !== MLS_UNAVAILABLE_TEXT)
+          : []
+      )
 
       const msgRes = await new Promise((resolve) =>
         socket.emit('fetchGroupMessages', { groupId: activeGroupId, limit: 50 }, resolve)
@@ -461,16 +515,19 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
         ? await saveGroupState(activeGroupId, replayed.replayState)
         : replayed.replayState
       const mergedMessages = mergeCachedMessages(cachedMessages, replayed.formattedMessages)
+      // Drop any decryption-failure rows (e.g. cached UNAVAILABLE text from
+      // older versions) so they neither render nor get re-persisted.
+      const visibleMessages = mergedMessages.filter((m) => m?.text !== MLS_UNAVAILABLE_TEXT)
 
       // Save using mergedMessages so cached plaintext is never overwritten by a
       // decryption failure text from the replay pass.
-      for (const message of mergedMessages) {
+      for (const message of visibleMessages) {
         if (!message?._id) continue
         await updateSavedMessages(userId, getGroupCacheId(activeGroupId), message)
       }
 
       if (!cancelled) {
-        setMessages(mergedMessages)
+        setMessages(visibleMessages)
         setGroupCryptoState(persistedReplayState)
         groupCryptoStateRef.current = persistedReplayState
         setGroupMeta(replayed.replayMeta)
@@ -526,6 +583,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
 
     const handleNewGroupMessage = ({ groupId, ...message }) => {
       if (String(groupId ?? '') !== String(activeGroupId)) return
+      if (removedInfoRef.current) return
 
       return enqueueLiveGroupMessageTask(async () => {
         const currentMeta = groupMetaRef.current
@@ -624,6 +682,33 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
         if (cancelled) return
         setGroupCryptoState(persistedState)
         groupCryptoStateRef.current = persistedState
+        // Clear local removed flag so live messages resume immediately
+        removedInfoRef.current = null
+
+        // Emit an event to let Dashboard clear any stale removed flag for this group
+        try {
+          window.dispatchEvent(new CustomEvent('groupStateSynced', { detail: { groupId } }))
+        } catch {
+          /* ignore */
+        }
+
+        // Add a local system message so the re-joined user sees a visual notification
+        const joinedAt = new Date().toISOString()
+        const joinedMessage = {
+          _id: `group-joined:${String(groupId)}:${joinedAt}`,
+          userId: '',
+          username: '',
+          text: 'You joined the group',
+          createdAt: joinedAt,
+          seenStatus: true,
+          messageType: 'system',
+        }
+        await updateSavedMessages(
+          userId,
+          getGroupCacheId(activeGroupId),
+          joinedMessage,
+          setMessages
+        )
 
         // Retry any buffered messages now that state is available
         const key = String(groupId)
@@ -652,6 +737,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
 
     const handleGroupCommit = async ({ groupId, commit }) => {
       if (String(groupId ?? '') !== String(activeGroupId)) return
+      if (removedInfoRef.current) return
 
       try {
         // Use this device's MLS init private key when available to keep epoch
@@ -771,6 +857,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
     formatMessage,
     getGroupCacheId,
     replayFetchedMessages,
+    removedInfo,
     socket,
     syncLocalStateFromServer,
     userId,
@@ -797,6 +884,10 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
   }, [groupMeta?.mlsEnabled, groupCryptoState, userId])
 
   const sendMessageNow = async (text) => {
+    if (removedInfoRef.current) {
+      throw new Error('You are no longer a member of this group')
+    }
+
     const currentMeta = groupMetaRef.current
 
     if (currentMeta?.mlsEnabled) {
@@ -882,7 +973,11 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
     return queuedSend
   }
 
-  const sendDisabled = groupMeta.mlsEnabled && !hasGroupKeyMaterial(groupCryptoState)
+  const sendDisabled =
+    Boolean(removedInfo) || (groupMeta.mlsEnabled && !hasGroupKeyMaterial(groupCryptoState))
+  const sendDisabledReason = removedInfo
+    ? 'You are no longer a member of this group'
+    : MLS_KEY_MISSING_REASON
 
   return (
     <div className='app-container h-full min-h-0 min-w-0 flex flex-col'>
@@ -902,7 +997,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
         <GroupSendText
           sendMessage={sendMessage}
           disabled={sendDisabled}
-          disabledReason={MLS_KEY_MISSING_REASON}
+          disabledReason={sendDisabledReason}
         />
       </div>
     </div>
@@ -915,6 +1010,15 @@ GroupChat.propTypes = {
   userId: PropTypes.string.isRequired,
   username: PropTypes.string,
   currentWallpaper: PropTypes.string,
+  removedInfo: PropTypes.shape({
+    groupId: PropTypes.string,
+    memberId: PropTypes.string,
+    removedByUserId: PropTypes.string,
+    removedByUsername: PropTypes.string,
+    groupName: PropTypes.string,
+    at: PropTypes.string,
+    text: PropTypes.string,
+  }),
 }
 
 export default GroupChat

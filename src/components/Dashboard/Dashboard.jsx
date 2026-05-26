@@ -118,6 +118,7 @@ const Dashboard = () => {
     return localStorage.getItem('sidebarCollapsed') === 'true'
   })
   const [showDeviceSync, setShowDeviceSync] = useState(false)
+  const [removedGroups, setRemovedGroups] = useState({})
   // When navigating to Settings, this lets us open a specific section (e.g., 'devices') once
   const [settingsInitialSection, setSettingsInitialSection] = useState(null)
   const GROUP_CACHE_PREFIX = 'group:'
@@ -136,6 +137,7 @@ const Dashboard = () => {
   const mlsKeyPackageRetryTimeoutRef = useRef(null)
   const pendingGroupMessageTasksRef = useRef(new Map())
   const pendingEncryptedGroupMessagesRef = useRef(new Map())
+  const removedGroupsRef = useRef(removedGroups)
 
   const updateRecentConversationsRef = useRef(updateRecentConversations)
   const setAllGroupsRef = useRef(setAllGroups)
@@ -193,6 +195,10 @@ const Dashboard = () => {
   useEffect(() => {
     userIdRef.current = userId
   }, [userId])
+
+  useEffect(() => {
+    removedGroupsRef.current = removedGroups
+  }, [removedGroups])
 
   useEffect(() => {
     updateRecentConversationsRef.current = updateRecentConversations
@@ -446,12 +452,19 @@ const Dashboard = () => {
       if (!g) return
       const groupId = String(g.groupId ?? g.id ?? '')
       if (!groupId) return
+      // Clearing the removed flag is essential when this is a re-add after a
+      // prior removal: the merged group entry would otherwise inherit
+      // `removedFromGroup: true` from the previous handleGroupRemoved call,
+      // which gates message notifications at handleNewGroupMessageNotification.
       upsertGroupRef.current?.({
         ...g,
         groupId,
         name: g.name || g.groupName || 'Group',
         joinedAt: g.joinedAt || g.at,
+        removedFromGroup: false,
+        removedInfo: null,
       })
+      clearRemovalForGroup(groupId)
     }
 
     const handleGroupUpdated = (payload) => {
@@ -482,10 +495,48 @@ const Dashboard = () => {
       })
     }
 
-    const handleGroupRemoved = ({ groupId }) => {
+    const buildRemovedGroupInfo = (payload = {}) => {
+      const gid = String(payload?.groupId ?? '')
+      const removerName =
+        payload?.removedByUsername ||
+        (String(payload?.removedByUserId ?? '') === String(userIdRef.current ?? '')
+          ? 'You'
+          : 'Someone')
+      const at = payload?.at || new Date().toISOString()
+
+      return {
+        groupId: gid,
+        memberId: String(payload?.memberId ?? userIdRef.current ?? ''),
+        removedByUserId: payload?.removedByUserId ? String(payload.removedByUserId) : null,
+        removedByUsername: removerName,
+        groupName: payload?.groupName || 'Group',
+        at,
+        text:
+          String(payload?.removedByUserId ?? '') === String(userIdRef.current ?? '')
+            ? 'You left the group'
+            : `${removerName} removed you from the group`,
+      }
+    }
+
+    const handleGroupRemoved = (payload = {}) => {
+      const { groupId } = payload
       const gid = String(groupId ?? '')
       if (!gid) return
-      removeGroupRef.current?.(gid)
+      const removedInfo = buildRemovedGroupInfo(payload)
+      removedGroupsRef.current = {
+        ...removedGroupsRef.current,
+        [gid]: removedInfo,
+      }
+      setRemovedGroups(removedGroupsRef.current)
+      upsertGroupRef.current?.(
+        {
+          groupId: gid,
+          name: payload?.groupName || activeChatRef.current?.name || 'Group',
+          removedFromGroup: true,
+          removedInfo,
+        },
+        { timestamp: removedInfo.at, text: removedInfo.text }
+      )
       setUnreadGroupMessages((prev) => {
         const next = { ...prev }
         delete next[gid]
@@ -494,13 +545,51 @@ const Dashboard = () => {
       })
       const currentActive = activeChatRef.current
       if (currentActive?.type === 'group' && String(currentActive.groupId) === gid) {
-        setActiveChat(null)
+        setActiveChat({
+          ...currentActive,
+          removedFromGroup: true,
+          removedInfo,
+        })
       }
+    }
+
+    const handleGroupMemberRemoved = (payload = {}) => {
+      if (String(payload?.memberId ?? '') !== String(userIdRef.current ?? '')) return
+      handleGroupRemoved(payload)
+    }
+
+    const clearRemovalForGroup = (gidRaw) => {
+      const gid = String(gidRaw ?? '')
+      if (!gid) return
+      if (!removedGroupsRef.current[gid]) return
+      const next = { ...removedGroupsRef.current }
+      delete next[gid]
+      removedGroupsRef.current = next
+      setRemovedGroups(next)
+      // If the active chat is this group, clear its removed flags
+      setActiveChat((prev) => {
+        if (prev?.type !== 'group' || String(prev.groupId) !== gid) return prev
+        return {
+          ...prev,
+          type: 'group',
+          groupId: prev.groupId,
+          removedFromGroup: false,
+          removedInfo: null,
+        }
+      })
+      upsertGroupRef.current?.({ groupId: gid, removedFromGroup: false, removedInfo: null })
+    }
+
+    const handleGroupMemberAdded = (payload = {}) => {
+      // If the current user was re-added, clear any stale removed flag
+      if (String(payload?.memberId ?? '') !== String(userIdRef.current ?? '')) return
+      clearRemovalForGroup(payload?.groupId)
     }
 
     const handleNewGroupMessageNotification = async (message) => {
       if (!message?.groupId) return
       const gid = String(message.groupId)
+      if (removedGroupsRef.current[gid]) return
       return enqueueGroupMessageTask(gid, async () => {
         const currentActive = activeChatRef.current
         const isActiveGroup =
@@ -681,6 +770,8 @@ const Dashboard = () => {
     sharedSocket.on('groupAdded', handleGroupAdded)
     sharedSocket.on('groupUpdated', handleGroupUpdated)
     sharedSocket.on('groupRemoved', handleGroupRemoved)
+    sharedSocket.on('groupMemberRemoved', handleGroupMemberRemoved)
+    sharedSocket.on('groupMemberAdded', handleGroupMemberAdded)
     sharedSocket.on('newGroupMessage', handleNewGroupMessageNotification)
     window.addEventListener('groupStateSynced', handleGroupStateSynced)
 
@@ -697,7 +788,14 @@ const Dashboard = () => {
 
       try {
         const existing = await loadGroupState(gid).catch(() => null)
-        if (existing?.applicationSecretB64) return // already have key material
+        // Only skip when the stored state is at least as fresh as the incoming
+        // welcome. A leftover state from a prior membership (before a removal)
+        // will still have applicationSecretB64 set but a lower epoch — that
+        // case must process the welcome, otherwise the re-added user keeps
+        // stale keys and the removed flag never clears.
+        const incomingEpoch = Number.isInteger(welcome?.epoch) ? welcome.epoch : 0
+        const existingEpoch = Number.isInteger(existing?.epoch) ? existing.epoch : -1
+        if (existing?.applicationSecretB64 && existingEpoch >= incomingEpoch) return
 
         const identityKeys = await getIdentityKeys()
         const myInitPrivKeyB64 =
@@ -714,6 +812,9 @@ const Dashboard = () => {
 
         // Nudge any listeners (e.g., GroupChat) to refresh state
         window.dispatchEvent(new CustomEvent('groupStateSynced', { detail: { groupId: gid } }))
+
+        // Clear any stale removed flag for this group (user has been welcomed back)
+        clearRemovalForGroup(gid)
       } catch (err) {
         console.warn('[Dashboard] Background Welcome processing failed:', err)
       }
@@ -843,6 +944,8 @@ const Dashboard = () => {
       sharedSocket.off('groupAdded', handleGroupAdded)
       sharedSocket.off('groupUpdated', handleGroupUpdated)
       sharedSocket.off('groupRemoved', handleGroupRemoved)
+      sharedSocket.off('groupMemberRemoved', handleGroupMemberRemoved)
+      sharedSocket.off('groupMemberAdded', handleGroupMemberAdded)
       sharedSocket.off('groupWelcome', handleGroupWelcomeBackground)
       sharedSocket.off('newGroupMessage', handleNewGroupMessageNotification)
       window.removeEventListener('groupStateSynced', handleGroupStateSynced)
@@ -1325,6 +1428,9 @@ const Dashboard = () => {
                       userId={userId}
                       username={username}
                       currentWallpaper={currentWallpaper}
+                      removedInfo={
+                        activeChat.removedInfo || removedGroups[String(activeChat.groupId)]
+                      }
                     />
                   ) : (
                     <Chat

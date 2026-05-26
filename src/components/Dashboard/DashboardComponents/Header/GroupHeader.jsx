@@ -55,6 +55,8 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
     epoch: 0,
     cipherSuite: null,
   })
+  // Optimistic removal state to prevent flicker while server confirms
+  const [pendingRemovals, setPendingRemovals] = useState(new Set())
 
   useEffect(() => {
     setGroupMeta((prev) => ({
@@ -69,7 +71,11 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
     if (!groupId) return
     socket.emit('openGroup', { groupId }, (res) => {
       if (!res?.success) return
-      setMembers(Array.isArray(res.members) ? res.members : [])
+      setMembers(
+        Array.isArray(res.members)
+          ? res.members.filter((member) => member?.status !== 'removed')
+          : []
+      )
       setRole(res?.membership?.role ?? null)
 
       setGroupMeta({
@@ -118,6 +124,7 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
 
   const toRoster = (groupMembers) =>
     (Array.isArray(groupMembers) ? groupMembers : [])
+      .filter((member) => member?.status !== 'removed')
       .map((m) => ({
         userId: String(m.userId),
         username: m.username ?? '',
@@ -131,25 +138,57 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
     setMenuOpen(false)
     setMembersOpen(false)
     setProfileOpen(false)
+    setPendingRemovals(new Set())
   }, [groupId, refresh])
 
   useEffect(() => {
-    const handleChanged = (evt) => {
+    const handleRefreshableChanged = (evt) => {
       const changedGroupId = String(evt?.groupId ?? evt?.group?.groupId ?? '')
       if (changedGroupId !== String(groupId)) return
       refresh()
     }
-    socket.on('groupMemberAdded', handleChanged)
-    socket.on('groupMemberRemoved', handleChanged)
-    socket.on('groupUpdated', handleChanged)
-    return () => {
-      socket.off('groupMemberAdded', handleChanged)
-      socket.off('groupMemberRemoved', handleChanged)
-      socket.off('groupUpdated', handleChanged)
-    }
-  }, [groupId, refresh, socket])
 
-  const memberCount = members.length
+    const handleMemberRemoved = (evt) => {
+      const changedGroupId = String(evt?.groupId ?? '')
+      if (changedGroupId !== String(groupId)) return
+      const removedMemberId = String(evt?.memberId ?? '')
+      if (!removedMemberId) return
+
+      setMembers((prev) => prev.filter((member) => String(member.userId) !== removedMemberId))
+      setPendingRemovals((prev) => {
+        if (!prev.has(removedMemberId)) return prev
+        const next = new Set(prev)
+        next.delete(removedMemberId)
+        return next
+      })
+      if (removedMemberId === String(userId)) {
+        setRole(null)
+        setMembersOpen(false)
+      }
+    }
+
+    socket.on('groupMemberAdded', handleRefreshableChanged)
+    socket.on('groupMemberRemoved', handleMemberRemoved)
+    socket.on('groupUpdated', handleRefreshableChanged)
+    socket.on('groupCommit', handleRefreshableChanged)
+    return () => {
+      socket.off('groupMemberAdded', handleRefreshableChanged)
+      socket.off('groupMemberRemoved', handleMemberRemoved)
+      socket.off('groupUpdated', handleRefreshableChanged)
+      socket.off('groupCommit', handleRefreshableChanged)
+    }
+  }, [groupId, refresh, socket, userId])
+
+  // Ensure latest membership is shown whenever the Members modal opens
+  useEffect(() => {
+    if (!membersOpen) return
+    refresh()
+  }, [membersOpen, refresh])
+
+  const visibleMembers = members
+    .filter((member) => member?.status !== 'removed')
+    .filter((member) => !pendingRemovals.has(String(member.userId)))
+  const memberCount = visibleMembers.length
   const subtitle = role === 'admin' ? `Admin · ${memberCount} members` : `${memberCount} members`
   const displayName = groupMeta.name || groupName || 'Group'
   const displayDescription = groupMeta.description?.trim() || ''
@@ -234,6 +273,12 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
     setLoading(true)
     setSearchResult(null)
 
+    // If socket is not connected, bail fast to avoid hanging the loader
+    if (!socket?.connected) {
+      setLoading(false)
+      return
+    }
+
     socket.emit('searchUser', { searchTerm: term }, (res) => {
       if (!res?.success || !res?.user) {
         setLoading(false)
@@ -259,6 +304,7 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
       setSearchResult(null)
 
       if (!groupMeta.mlsEnabled) {
+        setMembersOpen(false)
         refresh()
         return
       }
@@ -335,6 +381,7 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
       }
       await saveGroupState(groupId, nextState)
       refresh()
+      setMembersOpen(false)
     } catch (err) {
       console.error('[GroupHeader] Failed to add member:', err)
     } finally {
@@ -345,33 +392,72 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
   const handleRemove = async (memberId) => {
     if (!memberId) return
     setLoading(true)
+    const memberIdStr = String(memberId)
+    // Optimistically mark as removed to avoid flicker until server confirms
+    setPendingRemovals((prev) => {
+      const next = new Set(prev)
+      next.add(memberIdStr)
+      return next
+    })
 
     try {
       if (!groupMeta.mlsEnabled) {
         await emitWithAck(
           'removeGroupMember',
-          { groupId, memberId },
+          { groupId, memberId: memberIdStr },
           'Failed to remove group member'
         )
+        // Verify quickly and clear optimistic flag if server has applied it
+        try {
+          const res = await openGroupDetails()
+          const roster = toRoster(res.members)
+          const stillPresent = roster.some((m) => String(m.userId) === memberIdStr)
+          if (!stillPresent) {
+            setPendingRemovals((prev) => {
+              const next = new Set(prev)
+              next.delete(memberIdStr)
+              return next
+            })
+          }
+        } catch {
+          /* ignore — event will clear */
+        }
         refresh()
         return
       }
 
-      const localState = await loadGroupState(groupId)
+      let localState = await loadGroupState(groupId)
       if (!localState) {
         throw new Error('Missing local MLS state for remove commit generation')
       }
 
+      // Refresh roster from server to align local MLS state and avoid stale membership
+      const groupRes = await openGroupDetails()
+      const roster = toRoster(groupRes.members)
+
+      // If target is not present in refreshed roster, nothing to remove
+      const targetPresent = roster.some((m) => String(m.userId) === memberIdStr)
+      if (!targetPresent) {
+        refresh()
+        return
+      }
+
+      // Persist refreshed roster into MLS state if it differs
+      const rosterChanged = JSON.stringify(localState.roster ?? []) !== JSON.stringify(roster)
+      if (rosterChanged) {
+        localState = await saveGroupState(groupId, { ...localState, roster })
+      }
+
       // Remaining members (excluding the one being removed) need the new epoch key
-      const remainingMembers = members.filter((m) => String(m.userId) !== String(memberId))
-      const isSelfRemoval = String(memberId) === String(userId)
+      const remainingMembers = roster.filter((m) => String(m.userId) !== memberIdStr)
+      const isSelfRemoval = memberIdStr === String(userId)
 
       // If this is the last member leaving the group, there is no next epoch to
       // distribute. Remove the membership directly instead of forcing an MLS commit.
       if (remainingMembers.length === 0 && isSelfRemoval) {
         await emitWithAck(
           'removeGroupMember',
-          { groupId, memberId },
+          { groupId, memberId: memberIdStr },
           'Failed to remove group member'
         )
         return
@@ -395,7 +481,7 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
 
       const { commit, nextState } = await buildRemoveCommit({
         state: localState,
-        targetUserId: memberId,
+        targetUserId: memberIdStr,
         memberInitKeys,
       })
 
@@ -403,7 +489,11 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
         await emitWithAck('sendGroupCommit', { groupId, commit }, 'Failed to send group commit')
       }
 
-      await emitWithAck('removeGroupMember', { groupId, memberId }, 'Failed to remove group member')
+      await emitWithAck(
+        'removeGroupMember',
+        { groupId, memberId: memberIdStr },
+        'Failed to remove group member'
+      )
 
       if (!isSelfRemoval) {
         await emitWithAck('sendGroupCommit', { groupId, commit }, 'Failed to send group commit')
@@ -413,6 +503,12 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
       refresh()
     } catch (err) {
       console.error('[GroupHeader] Failed to remove member:', err)
+      // Revert optimistic removal on failure
+      setPendingRemovals((prev) => {
+        const next = new Set(prev)
+        next.delete(memberIdStr)
+        return next
+      })
     } finally {
       setLoading(false)
     }
@@ -628,21 +724,37 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
                       />
                       <div className='truncate text-white'>{searchResult.username}</div>
                     </div>
-                    <button
-                      className='px-3 py-2 rounded-lg text-sm flex items-center gap-2 bg-indigo-700 text-white hover:bg-[#8e79f2]'
-                      disabled={loading}
-                      onClick={() => handleAdd(searchResult.id)}
-                    >
-                      <Plus className='w-4 h-4' />
-                      Add
-                    </button>
+                    {(() => {
+                      const userIdStr = String(searchResult.id)
+                      const isAlreadyMember = members.some((m) => String(m.userId) === userIdStr)
+                      const isRemoving = pendingRemovals.has(userIdStr)
+                      const disabled = loading || isAlreadyMember || isRemoving
+                      const classes = disabled
+                        ? 'bg-gray-700 text-gray-300 cursor-not-allowed'
+                        : 'bg-indigo-700 text-white hover:bg-[#8e79f2]'
+                      const label = isRemoving
+                        ? 'Removing…'
+                        : isAlreadyMember
+                          ? 'Already in group'
+                          : 'Add'
+                      return (
+                        <button
+                          className={`px-3 py-2 rounded-lg text-sm flex items-center gap-2 ${classes}`}
+                          disabled={disabled}
+                          onClick={() => handleAdd(searchResult.id)}
+                        >
+                          <Plus className='w-4 h-4' />
+                          {label}
+                        </button>
+                      )
+                    })()}
                   </div>
                 )}
               </div>
             )}
 
             <div className='space-y-2 max-h-80 overflow-y-auto'>
-              {members.map((m) => {
+              {visibleMembers.map((m) => {
                 const isSelf = String(m.userId) === String(userId)
                 const canKick = role === 'admin' && !isSelf && m.role !== 'admin'
                 const canLeave = isSelf
@@ -673,11 +785,19 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
                     </div>
                     {(canKick || canLeave) && (
                       <button
-                        className='px-3 py-2 rounded-lg text-sm bg-red-700 text-white hover:bg-red-600'
-                        disabled={loading}
+                        className={`px-3 py-2 rounded-lg text-sm ${
+                          pendingRemovals.has(String(m.userId))
+                            ? 'bg-red-900 text-white cursor-not-allowed'
+                            : 'bg-red-700 text-white hover:bg-red-600'
+                        }`}
+                        disabled={loading || pendingRemovals.has(String(m.userId))}
                         onClick={() => handleRemove(m.userId)}
                       >
-                        {isSelf ? 'Leave' : 'Remove'}
+                        {pendingRemovals.has(String(m.userId))
+                          ? 'Removing…'
+                          : isSelf
+                            ? 'Leave'
+                            : 'Remove'}
                       </button>
                     )}
                   </div>

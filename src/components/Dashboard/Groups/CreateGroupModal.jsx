@@ -25,6 +25,7 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
   const [error, setError] = useState('')
   const [searching, setSearching] = useState(false)
   const debounceRef = useRef(null)
+  const creatingRef = useRef(false)
 
   const socketRef = useRef(null)
   const socket = useMemo(() => {
@@ -105,8 +106,10 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
   }
 
   const handleCreate = async () => {
+    if (creatingRef.current) return
     const groupName = name.trim()
     if (!groupName || selectedUsers.length === 0) return
+    creatingRef.current = true
     setError('')
 
     const memberIds = selectedUsers.map((u) => u.id).filter(Boolean)
@@ -173,6 +176,7 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
         `Cannot create group: ${missing.map((u) => u.username).join(', ')} has not set up their encryption keys yet. Ask them to open the app first.`
       )
       setLoading(false)
+      creatingRef.current = false
       return
     }
 
@@ -181,6 +185,7 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
       { name: groupName, desc: description || undefined, memberIds, mlsEnabled, cipherSuite },
       async (ack) => {
         setLoading(false)
+        creatingRef.current = false
         if (!ack?.success) return
 
         const serverMembers = Array.isArray(ack.members) ? ack.members : []
@@ -447,12 +452,14 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
             </span>
             <div className='flex gap-2'>
               <button
+                type='button'
                 onClick={onClose}
                 className='rounded-full border border-white/[0.08] bg-white/[0.02] px-5 py-2.5 text-[12.5px] text-white/65 hover:bg-white/[0.04] hover:text-white'
               >
                 Cancel
               </button>
               <button
+                type='button'
                 disabled={!name.trim() || selected.size === 0 || loading}
                 onClick={handleCreate}
                 data-testid='group-create-btn'

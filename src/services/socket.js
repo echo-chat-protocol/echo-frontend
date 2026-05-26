@@ -30,7 +30,8 @@ export function getSocket() {
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
-      transports: ['websocket'],
+      // Allow polling fallback in dev/proxy or constrained networks
+      transports: ['websocket', 'polling'],
       path: '/socket.io',
     })
 
