@@ -124,23 +124,46 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
 
     setLoading(true)
 
-    // Fetch KeyPackages for all invited members
-    const memberInitKeyResults = await Promise.all(
-      selectedUsers.map(
-        (u) =>
-          new Promise((resolve) => {
-            socket.emit('fetchKeyPackage', { userId: u.id }, (res) => {
-              if (res?.success && res.initKeyB64) {
-                resolve({ userId: String(u.id), initKeyB64: res.initKeyB64 })
-              } else {
-                console.warn(`[CreateGroupModal] No KeyPackage for user ${u.id}`)
-                resolve(null)
-              }
-            })
+    const fetchDeviceKeyPackages = (targetUserId) =>
+      new Promise((resolve) => {
+        socket.emit('fetchAllKeyPackages', { userId: targetUserId }, (allRes) => {
+          if (allRes?.success && Array.isArray(allRes.packages) && allRes.packages.length > 0) {
+            resolve(
+              allRes.packages
+                .filter((pkg) => pkg?.initKeyB64 || pkg?.keyPackage?.initKeyB64)
+                .map((pkg) => ({
+                  userId: String(targetUserId),
+                  clientId: pkg.clientId ?? null,
+                  initKeyB64: pkg.initKeyB64 ?? pkg.keyPackage?.initKeyB64 ?? null,
+                  keyPackage: pkg.keyPackage ?? null,
+                }))
+            )
+            return
+          }
+
+          socket.emit('fetchKeyPackage', { userId: targetUserId }, (res) => {
+            if (res?.success && (res.initKeyB64 || res.keyPackage?.initKeyB64)) {
+              resolve([
+                {
+                  userId: String(targetUserId),
+                  clientId: res.clientId ?? null,
+                  initKeyB64: res.initKeyB64 ?? res.keyPackage?.initKeyB64 ?? null,
+                  keyPackage: res.keyPackage ?? null,
+                },
+              ])
+              return
+            }
+
+            console.warn(`[CreateGroupModal] No KeyPackage for user ${targetUserId}`)
+            resolve([])
           })
-      )
-    )
-    const memberInitKeys = memberInitKeyResults.filter(Boolean)
+        })
+      })
+
+    // Fetch KeyPackages for every invited member device.
+    const memberInitKeys = (
+      await Promise.all(selectedUsers.map((u) => fetchDeviceKeyPackages(u.id)))
+    ).flat()
 
     const missing = selectedUsers.filter(
       (u) => !memberInitKeys.some((mk) => String(mk.userId) === String(u.id))
@@ -181,30 +204,44 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
 
         try {
           const identityKeys = mlsEnabled ? await getIdentityKeys() : null
-          const creatorInitPubKeyB64 = identityKeys?.publicKeyX25519 ?? null
-          const creatorInitPrivKeyB64 = identityKeys?.privateKeyX25519 ?? null
+          const creatorInitPubKeyB64 =
+            localStorage.getItem('echo-device-mls-pub') || identityKeys?.publicKeyX25519 || null
+          const creatorInitPrivKeyB64 =
+            localStorage.getItem('echo-device-mls-priv') || identityKeys?.privateKeyX25519 || null
 
           if (mlsEnabled && (!creatorInitPubKeyB64 || !creatorInitPrivKeyB64)) {
             throw new Error('Missing local MLS identity keys for group creator')
           }
 
+          const currentDeviceId = localStorage.getItem('echo-device-id') || null
+          const creatorDeviceKeys = mlsEnabled ? await fetchDeviceKeyPackages(userId) : []
           const memberInitKeysWithLeaf = mlsEnabled
             ? roster
-                .map((member) => {
+                .flatMap((member) => {
                   if (String(member.userId) === String(userId)) {
-                    return {
+                    const currentDeviceEntry = {
                       userId: String(userId),
                       leafIndex: member.leafIndex,
+                      clientId: currentDeviceId,
                       initKeyB64: creatorInitPubKeyB64,
+                      excludeFromWelcome: true,
                     }
+                    const siblingEntries = creatorDeviceKeys
+                      .filter(
+                        (entry) =>
+                          entry.initKeyB64 &&
+                          entry.initKeyB64 !== creatorInitPubKeyB64 &&
+                          (currentDeviceId === null || entry.clientId !== currentDeviceId)
+                      )
+                      .map((entry) => ({ ...entry, leafIndex: member.leafIndex }))
+                    return [currentDeviceEntry, ...siblingEntries]
                   }
-                  const existing = memberInitKeys.find(
+                  const existing = memberInitKeys.filter(
                     (entry) => String(entry.userId) === String(member.userId)
                   )
-                  if (!existing?.initKeyB64) return null
-                  return { ...existing, leafIndex: member.leafIndex }
+                  return existing.map((entry) => ({ ...entry, leafIndex: member.leafIndex }))
                 })
-                .filter(Boolean)
+                .filter((entry) => entry?.initKeyB64 || entry?.keyPackage?.initKeyB64)
             : []
 
           const creatorState = await createNewGroupState({
@@ -220,9 +257,7 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
             const welcomes = await buildInitialWelcomes({
               creatorState,
               roster,
-              memberInitKeys: memberInitKeysWithLeaf.filter(
-                (entry) => String(entry.userId) !== String(userId)
-              ),
+              memberInitKeys: memberInitKeysWithLeaf,
             })
             for (const welcome of welcomes) {
               await emitWithAck('sendGroupWelcome', {

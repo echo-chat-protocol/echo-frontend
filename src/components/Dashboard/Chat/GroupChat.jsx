@@ -22,7 +22,10 @@ import {
   updateSavedMessages,
 } from './utils/chat/keyManagement'
 import { decryptIncomingGroupMessage } from './utils/chat/groupMessageDecryption'
-import { forwardGroupStateToPairedDevices } from '../../../utils/deviceForward'
+import {
+  forwardGroupStateToPairedDevices,
+  processIncomingEnvelopes,
+} from '../../../utils/deviceForward'
 
 const TEXT_ENCODER = new TextEncoder()
 const TEXT_DECODER = new TextDecoder()
@@ -30,6 +33,7 @@ const MLS_UNAVAILABLE_TEXT = '[Unable to decrypt message]'
 const MLS_KEY_MISSING_REASON = 'MLS state is not ready on this device yet'
 const DEFAULT_MLS_CIPHER_SUITE = 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256'
 const GROUP_CACHE_PREFIX = 'group:'
+const hasGroupKeyMaterial = (state) => Boolean(state?.applicationSecretB64 || state?.groupKeyB64)
 
 const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
   const socket = useMemo(() => getSocket(), [])
@@ -49,6 +53,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
   const groupCryptoStateRef = useRef(null)
   const groupMetaRef = useRef(groupMeta)
   const liveMessageQueueRef = useRef(Promise.resolve())
+  const pendingEncryptedGroupMessagesRef = useRef(new Map()) // groupId -> array of messages
 
   useEffect(() => {
     groupCryptoStateRef.current = groupCryptoState
@@ -296,8 +301,10 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
           .map((m) => [String(m._id), m])
       )
 
+      // Prefer the device-specific MLS init private if present; fall back to ELD identity key.
       const identityKeys = await getIdentityKeys()
-      const myInitPrivKeyB64 = identityKeys?.privateKeyX25519 ?? null
+      const myInitPrivKeyB64 =
+        localStorage.getItem('echo-device-mls-priv') || identityKeys?.privateKeyX25519 || null
 
       for (const message of sortedMessages) {
         if (initialMeta?.mlsEnabled && message?.contentType === 'commit') {
@@ -525,26 +532,48 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
         let formattedMessage = null
 
         if (currentMeta?.mlsEnabled) {
-          const decrypted = await decryptIncomingGroupMessage({
-            message: { groupId, ...message },
-            userId,
-            username,
-            currentState,
-            setMessages,
-          })
-          formattedMessage = decrypted.formattedMessage
-          nextState = decrypted.nextState ?? currentState
+          try {
+            const decrypted = await decryptIncomingGroupMessage({
+              message: { groupId, ...message },
+              userId,
+              username,
+              currentState,
+              setMessages,
+            })
+            formattedMessage = decrypted.formattedMessage
+            nextState = decrypted.nextState ?? currentState
+          } catch {
+            // State may not be ready yet (e.g., Welcome/commit not processed). Buffer and retry
+            // after state updates (groupWelcome, groupCommit, or groupStateSynced).
+            const key = String(groupId)
+            const list = pendingEncryptedGroupMessagesRef.current.get(key) || []
+            list.push({ groupId, ...message })
+            pendingEncryptedGroupMessagesRef.current.set(key, list)
+
+            // Preview placeholder so the user sees activity in the sidebar.
+            window.dispatchEvent(
+              new CustomEvent('groupMessagePreview', {
+                detail: {
+                  groupId,
+                  text: '[Awaiting group state…]',
+                  timestamp: message?.createdAt || message?.timestamp || new Date().toISOString(),
+                },
+              })
+            )
+          }
 
           // Let Dashboard update the sidebar preview without touching crypto state.
-          window.dispatchEvent(
-            new CustomEvent('groupMessagePreview', {
-              detail: {
-                groupId,
-                text: formattedMessage?.text ?? '',
-                timestamp: formattedMessage?.createdAt ?? new Date().toISOString(),
-              },
-            })
-          )
+          if (formattedMessage) {
+            window.dispatchEvent(
+              new CustomEvent('groupMessagePreview', {
+                detail: {
+                  groupId,
+                  text: formattedMessage.text ?? '',
+                  timestamp: formattedMessage.createdAt ?? new Date().toISOString(),
+                },
+              })
+            )
+          }
         } else {
           const formatted = await formatMessage(message, currentState, currentMeta)
           formattedMessage = formatted.formattedMessage
@@ -593,6 +622,27 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
         if (cancelled) return
         setGroupCryptoState(persistedState)
         groupCryptoStateRef.current = persistedState
+
+        // Retry any buffered messages now that state is available
+        const key = String(groupId)
+        const pending = pendingEncryptedGroupMessagesRef.current.get(key) || []
+        if (pending.length > 0) {
+          for (const pendingMsg of pending) {
+            try {
+              await decryptIncomingGroupMessage({
+                message: pendingMsg,
+                userId,
+                username,
+                currentState: persistedState,
+                setMessages,
+              })
+            } catch {
+              // If it still fails, keep it buffered; a subsequent commit may fix it
+            }
+          }
+          // Clear only those that succeeded; simplest: clear all and rely on future arrival to re-buffer if still failing
+          pendingEncryptedGroupMessagesRef.current.set(key, [])
+        }
       } catch (err) {
         console.error('[GroupChat] Failed to process group welcome:', err)
       }
@@ -602,8 +652,11 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
       if (String(groupId ?? '') !== String(activeGroupId)) return
 
       try {
+        // Use this device's MLS init private key when available to keep epoch
+        // secrets consistent with the Welcome processed on this device.
         const identityKeys = await getIdentityKeys()
-        const myInitPrivKeyB64 = identityKeys?.privateKeyX25519 ?? null
+        const myInitPrivKeyB64 =
+          localStorage.getItem('echo-device-mls-priv') || identityKeys?.privateKeyX25519 || null
         const priorState = groupCryptoStateRef.current
         const systemMessage = buildCommitSystemMessage({ commit, priorState })
 
@@ -634,6 +687,26 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
             setMessages
           )
         }
+
+        // Retry any buffered messages after commit updates keys/epochs
+        const key = String(groupId)
+        const pending = pendingEncryptedGroupMessagesRef.current.get(key) || []
+        if (pending.length > 0) {
+          for (const pendingMsg of pending) {
+            try {
+              await decryptIncomingGroupMessage({
+                message: pendingMsg,
+                userId,
+                username,
+                currentState: persistedState,
+                setMessages,
+              })
+            } catch {
+              // keep buffered
+            }
+          }
+          pendingEncryptedGroupMessagesRef.current.set(key, [])
+        }
       } catch (err) {
         console.error('[GroupChat] Failed to apply group commit:', err)
       }
@@ -647,6 +720,26 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
         if (fresh && !cancelled) {
           setGroupCryptoState(fresh)
           groupCryptoStateRef.current = fresh
+
+          // Retry buffered messages when state is externally synced
+          const key = String(activeGroupId)
+          const pending = pendingEncryptedGroupMessagesRef.current.get(key) || []
+          if (pending.length > 0) {
+            for (const pendingMsg of pending) {
+              try {
+                await decryptIncomingGroupMessage({
+                  message: pendingMsg,
+                  userId,
+                  username,
+                  currentState: fresh,
+                  setMessages,
+                })
+              } catch {
+                // keep buffered
+              }
+            }
+            pendingEncryptedGroupMessagesRef.current.set(key, [])
+          }
         }
       } catch {}
     }
@@ -685,16 +778,28 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
   useEffect(() => {
     if (!messagesEndRef.current) return
     const behavior = isInitialLoadRef.current ? 'auto' : 'smooth'
-    messagesEndRef.current.scrollIntoView({ behavior })
+    // block: 'nearest' keeps scrollIntoView confined to the nearest scrollable
+    // ancestor (the messages container). With the default 'start' alignment,
+    // mobile Safari walks up to the window scroller and yanks the whole
+    // dashboard, which pushed the input visually toward the middle.
+    messagesEndRef.current.scrollIntoView({ behavior, block: 'nearest' })
     isInitialLoadRef.current = false
   }, [messages])
+
+  // If MLS is enabled but we don't yet have key material, proactively pull any
+  // pending device envelopes to get forwarded epoch secrets sooner.
+  useEffect(() => {
+    if (groupMeta?.mlsEnabled && !hasGroupKeyMaterial(groupCryptoState)) {
+      processIncomingEnvelopes(userId).catch(() => {})
+    }
+  }, [groupMeta?.mlsEnabled, groupCryptoState, userId])
 
   const sendMessage = async (text) => {
     const currentMeta = groupMetaRef.current
 
     if (currentMeta?.mlsEnabled) {
       const currentState = groupCryptoStateRef.current
-      if (!currentState?.groupKeyB64) {
+      if (!hasGroupKeyMaterial(currentState)) {
         throw new Error(MLS_KEY_MISSING_REASON)
       }
 
@@ -768,27 +873,29 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper }) => {
     })
   }
 
-  const sendDisabled = groupMeta.mlsEnabled && !groupCryptoState?.groupKeyB64
+  const sendDisabled = groupMeta.mlsEnabled && !hasGroupKeyMaterial(groupCryptoState)
 
   return (
-    <div className='app-container h-full min-w-0 flex flex-col'>
-      <div className='chat-container flex-1 min-w-0 flex flex-col relative overflow-y-auto'>
+    <div className='app-container h-full min-h-0 min-w-0 flex flex-col'>
+      <div className='chat-container flex-1 min-h-0 min-w-0 flex flex-col relative'>
         <div
-          className='messages-container flex-1 relative overflow-x-hidden'
+          className='messages-container flex-1 min-h-0 relative overflow-y-auto overflow-x-hidden overscroll-contain'
           data-wallpaper={currentWallpaper}
         >
-          <div className='relative z-10 h-full flex flex-col'>
+          <div className='relative z-10 flex flex-col min-h-full'>
             <DisplayText messages={messages} currentUserId={String(userId)} />
             <div ref={messagesEndRef} />
           </div>
         </div>
       </div>
 
-      <GroupSendText
-        sendMessage={sendMessage}
-        disabled={sendDisabled}
-        disabledReason={MLS_KEY_MISSING_REASON}
-      />
+      <div className='shrink-0'>
+        <GroupSendText
+          sendMessage={sendMessage}
+          disabled={sendDisabled}
+          disabledReason={MLS_KEY_MISSING_REASON}
+        />
+      </div>
     </div>
   )
 }

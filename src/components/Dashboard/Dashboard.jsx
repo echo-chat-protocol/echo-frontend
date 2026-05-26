@@ -1,4 +1,6 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect, useMemo, lazy, Suspense } from 'react'
+
+const DeviceSyncModal = lazy(() => import('../../features/devices/DeviceSyncModal'))
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Lock, MessageCircle, Menu, ArrowLeft } from 'lucide-react'
@@ -34,12 +36,27 @@ import {
 } from './Chat/utils/chat/keyManagement'
 
 import { decryptIncomingGroupMessage } from './Chat/utils/chat/groupMessageDecryption'
+import {
+  loadGroupState,
+  saveGroupState,
+  processWelcome,
+} from './Chat/utils/crypto/groupCryptoProvider'
 import { decryptIncomingMessage } from './Chat/utils/chat/messageDecryption'
 import { base64ToArrayBuffer } from './Chat/utils/helpers'
 import { generateOneTimePreKeys } from './Chat/utils/crypto/opk'
 import { createOpkReplenishHandler, requestOpkStatusAndReplenish } from '../../utils/opk/replenish'
 import { rotateSPKIfNeeded } from '../../utils/spk/rotate'
 import eld from '../../utils/storage/EncryptedLocalDatabase'
+import {
+  processRawDeviceEnvelope,
+  processIncomingEnvelopes,
+  broadcastSessionSync,
+  invalidatePairedDevicesCache,
+  forwardGroupStateToPairedDevices,
+} from '../../utils/deviceForward'
+import wasmInit, { diffie_hellman } from '@mascaro101/echo-protocol'
+import { getDeviceMetadata } from '../../features/devices/deviceMetadata'
+import { revokeCurrentDeviceForLogout } from '../../features/devices/logoutDevice'
 // import GroupList from './DashboardComponents/Groups/GroupList'
 import CreateGroupModal from './Groups/CreateGroupModal'
 import GroupChat from './Chat/GroupChat'
@@ -100,10 +117,10 @@ const Dashboard = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     return localStorage.getItem('sidebarCollapsed') === 'true'
   })
+  const [showDeviceSync, setShowDeviceSync] = useState(false)
   // When navigating to Settings, this lets us open a specific section (e.g., 'devices') once
   const [settingsInitialSection, setSettingsInitialSection] = useState(null)
   const GROUP_CACHE_PREFIX = 'group:'
-
   // Hooks personalizados - must be before useEffects that use them
   const { recentConversations, updateRecentConversations } = useConversations(userId)
   const { groups, setAllGroups, upsertGroup, removeGroup } = useGroups(userId)
@@ -116,13 +133,12 @@ const Dashboard = () => {
   const mlsKeyPackagePublishedRef = useRef(false)
   const mlsKeyPackageRetryTimeoutRef = useRef(null)
   const pendingGroupMessageTasksRef = useRef(new Map())
+  const pendingEncryptedGroupMessagesRef = useRef(new Map())
 
   const updateRecentConversationsRef = useRef(updateRecentConversations)
   const setAllGroupsRef = useRef(setAllGroups)
   const upsertGroupRef = useRef(upsertGroup)
   const removeGroupRef = useRef(removeGroup)
-
-  const getGroupCacheId = (groupId) => `${GROUP_CACHE_PREFIX}${groupId}`
 
   const enqueueGroupMessageTask = (groupId, task) => {
     const queue = pendingGroupMessageTasksRef.current
@@ -233,10 +249,12 @@ const Dashboard = () => {
           return false
         }
 
+        const deviceId = localStorage.getItem('echo-device-id')
+        const mlsPub = localStorage.getItem('echo-device-mls-pub') || identityKeys.publicKeyX25519
         return await new Promise((resolve) => {
           sharedSocket.emit(
             'publishKeyPackage',
-            { initKeyB64: identityKeys.publicKeyX25519 },
+            { initKeyB64: mlsPub, clientId: deviceId || null },
             (res) => {
               if (res?.success) {
                 mlsKeyPackagePublishedRef.current = true
@@ -483,15 +501,10 @@ const Dashboard = () => {
           msgText = result?.formattedMessage?.text ?? msgText
         } catch {
           console.warn('[Dashboard] Failed to decrypt incoming group message')
+          // Do not persist placeholder into storage — background state may not be ready yet
+          // (e.g., Welcome not processed). The GroupChat replay will fetch and decrypt
+          // properly on first open. For the sidebar preview, show a generic placeholder.
           msgText = '[Unable to decrypt message]'
-          await updateSavedMessages(userIdRef.current, getGroupCacheId(gid), {
-            _id: message._id || `${gid}:${String(message?.seq ?? timestamp)}`,
-            userId: String(message?.userId ?? ''),
-            username: message?.username || 'Member',
-            text: msgText,
-            createdAt: timestamp,
-            seenStatus: true,
-          })
         }
 
         upsertGroupRef.current?.(
@@ -620,11 +633,176 @@ const Dashboard = () => {
       }
     }
 
+    // Retry buffered encrypted group messages after group state lands on this device
+    const handleGroupStateSynced = async (event) => {
+      const gid = String(event?.detail?.groupId ?? '')
+      if (!gid) return
+      const pending = pendingEncryptedGroupMessagesRef.current.get(gid) || []
+      if (pending.length === 0) return
+      const stillPending = []
+      for (const m of pending) {
+        try {
+          await decryptIncomingGroupMessage({ message: m, userId: userIdRef.current, username })
+        } catch {
+          stillPending.push(m)
+        }
+      }
+      pendingEncryptedGroupMessagesRef.current.set(gid, stillPending)
+    }
+
     sharedSocket.on('newMessage', handleNewMessageNotification)
     sharedSocket.on('groupAdded', handleGroupAdded)
     sharedSocket.on('groupUpdated', handleGroupUpdated)
     sharedSocket.on('groupRemoved', handleGroupRemoved)
     sharedSocket.on('newGroupMessage', handleNewGroupMessageNotification)
+    window.addEventListener('groupStateSynced', handleGroupStateSynced)
+
+    // Process Welcome messages in the background so sibling devices receive
+    // epoch secrets even if the group view isn't open on this device.
+    const handleGroupWelcomeBackground = async ({ groupId, welcome }) => {
+      if (!groupId || !welcome) return
+      const gid = String(groupId)
+
+      // Process only if addressed to this device (when specified)
+      const thisDeviceId = localStorage.getItem('echo-device-id')
+      const targetClientId = welcome.recipientClientId ?? null
+      if (targetClientId !== null && targetClientId !== thisDeviceId) return
+
+      try {
+        const existing = await loadGroupState(gid).catch(() => null)
+        if (existing?.applicationSecretB64) return // already have key material
+
+        const identityKeys = await getIdentityKeys()
+        const myInitPrivKeyB64 =
+          localStorage.getItem('echo-device-mls-priv') || identityKeys?.privateKeyX25519 || null
+        if (!myInitPrivKeyB64) return
+
+        const nextState = await processWelcome({
+          welcome,
+          selfUserId: userIdRef.current,
+          myInitPrivKeyB64,
+        })
+        const persisted = await saveGroupState(gid, nextState)
+        forwardGroupStateToPairedDevices(userIdRef.current, gid, persisted).catch(() => {})
+
+        // Nudge any listeners (e.g., GroupChat) to refresh state
+        window.dispatchEvent(new CustomEvent('groupStateSynced', { detail: { groupId: gid } }))
+      } catch (err) {
+        console.warn('[Dashboard] Background Welcome processing failed:', err)
+      }
+    }
+    sharedSocket.on('groupWelcome', handleGroupWelcomeBackground)
+
+    // ── Device sync — persists across view/chat changes ──────────────────────
+    let devicePollInterval = null
+    // Bumped to v3: prior v2 runs could complete with an unlocked-ELD bypass
+    // that left ELD.privatePreKey out of sync with Device.signedPreKey.
+    const DEVICE_BUNDLE_FLAG = 'echo-device-bundle-uploaded-v3'
+    localStorage.removeItem('echo-device-bundle-uploaded-v2')
+
+    const initDeviceSync = async () => {
+      const deviceMetadata = getDeviceMetadata()
+      const deviceId = deviceMetadata.deviceId
+
+      if (!localStorage.getItem(DEVICE_BUNDLE_FLAG)) {
+        try {
+          const { generateAndUploadDeviceKeyBundle } =
+            await import('@/features/devices/deviceKeyBundle')
+          await generateAndUploadDeviceKeyBundle(deviceId)
+          localStorage.setItem(DEVICE_BUNDLE_FLAG, '1')
+          invalidatePairedDevicesCache()
+        } catch (err) {
+          console.warn('[Dashboard] Initial device bundle upload failed:', err)
+          // Leave the flag unset so we retry on the next mount.
+        }
+      }
+
+      // Per-device X25519 keypair for MLS group membership (one leaf per device).
+      if (
+        !localStorage.getItem('echo-device-mls-pub') ||
+        !localStorage.getItem('echo-device-mls-priv')
+      ) {
+        try {
+          await wasmInit()
+          const privBytes = crypto.getRandomValues(new Uint8Array(32))
+          const basePoint = new Uint8Array(32)
+          basePoint[0] = 9
+          const pubBytes = diffie_hellman(privBytes, basePoint)
+          const b64 = (b) => btoa(String.fromCharCode(...b))
+          localStorage.setItem('echo-device-mls-priv', b64(privBytes))
+          localStorage.setItem('echo-device-mls-pub', b64(pubBytes))
+          void publishMlsKeyPackage()
+        } catch {
+          // non-fatal — fall back to identity key
+        }
+      }
+
+      const poll = () => {
+        if (!eld.isUnlocked?.()) return
+        processIncomingEnvelopes(userId).catch(() => {})
+      }
+      poll()
+      devicePollInterval = setInterval(poll, 3_000)
+    }
+    initDeviceSync()
+
+    const handleDeviceEnvelope = (rawEnvelope) => {
+      processRawDeviceEnvelope(userId, rawEnvelope).catch(() => {})
+    }
+    sharedSocket.on('deviceEnvelope', handleDeviceEnvelope)
+
+    const handleDeviceSessionRequest = ({ targetUserId: reqTargetUserId }) => {
+      if (reqTargetUserId) broadcastSessionSync(userId, reqTargetUserId).catch(() => {})
+    }
+    sharedSocket.on('deviceSessionRequest', handleDeviceSessionRequest)
+
+    // Primary device revoked this one — tear down and bounce to landing.
+    const evictThisDevice = (reason) => {
+      try {
+        eld.lock?.()
+      } catch {
+        /* eld may already be locked */
+      }
+      const uid = userIdRef.current
+      if (uid) {
+        sessionStorage.removeItem(`eld-pass-${uid}`)
+        localStorage.setItem(`lastDisconnectAt-${uid}`, new Date().toISOString())
+      }
+      tokenStorage.clear()
+      localStorage.removeItem('token')
+      localStorage.removeItem('userId')
+      localStorage.removeItem('username')
+      localStorage.removeItem('echo-device-id')
+      localStorage.removeItem('echo_sync_account')
+      try {
+        sharedSocket.disconnect()
+      } catch {
+        /* ignore */
+      }
+      if (typeof window !== 'undefined') {
+        window.alert(
+          reason === 'device_not_registered'
+            ? 'This device is no longer registered with the account. Re-pair it from your primary device.'
+            : 'This device was removed from your account. Re-pair it from your primary device to continue.'
+        )
+      }
+      navigate('/')
+    }
+
+    const handleDeviceRevoked = () => evictThisDevice('revoked_by_owner')
+    sharedSocket.on('deviceRevoked', handleDeviceRevoked)
+
+    const handleConnectError = (err) => {
+      const reason = err?.message || ''
+      if (
+        reason === 'device_revoked' ||
+        reason === 'device_not_registered' ||
+        reason === 'device_forbidden'
+      ) {
+        evictThisDevice(reason)
+      }
+    }
+    sharedSocket.on('connect_error', handleConnectError)
 
     return () => {
       sharedSocket.off('connect', onConnect)
@@ -638,7 +816,14 @@ const Dashboard = () => {
       sharedSocket.off('groupAdded', handleGroupAdded)
       sharedSocket.off('groupUpdated', handleGroupUpdated)
       sharedSocket.off('groupRemoved', handleGroupRemoved)
+      sharedSocket.off('groupWelcome', handleGroupWelcomeBackground)
       sharedSocket.off('newGroupMessage', handleNewGroupMessageNotification)
+      window.removeEventListener('groupStateSynced', handleGroupStateSynced)
+      sharedSocket.off('deviceEnvelope', handleDeviceEnvelope)
+      sharedSocket.off('deviceSessionRequest', handleDeviceSessionRequest)
+      sharedSocket.off('deviceRevoked', handleDeviceRevoked)
+      sharedSocket.off('connect_error', handleConnectError)
+      if (devicePollInterval) clearInterval(devicePollInterval)
       clearMlsKeyPackageRetry()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -782,13 +967,23 @@ const Dashboard = () => {
     navigate(`/profile/${userId}`, { state: { username, userId } })
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await revokeCurrentDeviceForLogout()
+
     eld.lock()
+
+    // Record disconnect time before clearing keys so the next login can detect
+    // messages that arrived while this device was offline.
+    if (userId) {
+      localStorage.setItem(`lastDisconnectAt-${userId}`, new Date().toISOString())
+    }
 
     sessionStorage.removeItem(`eld-pass-${userId}`)
     tokenStorage.clear()
     localStorage.removeItem('userId')
     localStorage.removeItem('username')
+    localStorage.removeItem('echo-device-id')
+    localStorage.removeItem('echo_sync_account')
 
     if (socket) {
       socket.disconnect()
@@ -918,10 +1113,17 @@ const Dashboard = () => {
   return (
     <div
       data-testid='echo-dashboard'
-      className='relative h-screen w-screen overflow-hidden bg-black text-white'
+      className='relative min-h-screen w-full overflow-hidden bg-black text-white md:h-screen'
     >
       {/* Landing-style ambient bg — only when wallpaper is constellation */}
       {currentWallpaper === 'constellation' && <ConstellationBg density={70} />}
+
+      {/* Device Sync overlay */}
+      {showDeviceSync && (
+        <Suspense fallback={null}>
+          <DeviceSyncModal onClose={() => setShowDeviceSync(false)} />
+        </Suspense>
+      )}
 
       {/* Floating shell */}
       <div className='relative flex h-full w-full gap-2 md:gap-3 p-2 md:p-3'>
@@ -980,9 +1182,7 @@ const Dashboard = () => {
               setIsMobileMenuOpen(false)
             }}
             onOpenDeviceSync={() => {
-              // Open Settings > Devices
-              setSettingsInitialSection('devices')
-              handleViewChange('settings')
+              setShowDeviceSync(true)
               setIsMobileMenuOpen(false)
             }}
             onLogout={handleLogout}

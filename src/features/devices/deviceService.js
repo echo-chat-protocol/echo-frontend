@@ -1,4 +1,5 @@
 import { resolveApiBase } from '@/utils/network/apiBase'
+import { refreshAccessToken, tokenStorage } from '@/services/api'
 
 const BASE = resolveApiBase()
 const REQUEST_TIMEOUT_MS = 20000
@@ -46,14 +47,22 @@ async function requestWithLoopbackFallback(method, path, body, base = BASE) {
 }
 
 function authHeaders() {
-  const token = localStorage.getItem('echo_access_token') || localStorage.getItem('token')
+  const token = tokenStorage.getAccess() || localStorage.getItem('token')
   return {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   }
 }
 
-async function request(method, path, body, base = BASE) {
+function makeAuthError(message = 'Not authenticated') {
+  return Object.assign(new Error(message), { status: 401, code: 'unauthorized' })
+}
+
+async function request(method, path, body, base = BASE, retry = true) {
+  if (!tokenStorage.getAccess() && !localStorage.getItem('token')) {
+    throw makeAuthError()
+  }
+
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
 
@@ -65,8 +74,23 @@ async function request(method, path, body, base = BASE) {
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     })
     const data = await res.json().catch(() => ({}))
+    if (res.status === 401 && retry) {
+      try {
+        await refreshAccessToken()
+        return request(method, path, body, base, false)
+      } catch {
+        throw Object.assign(new Error(data.message || data.error || 'Invalid or expired token'), {
+          ...data,
+          status: 401,
+          code: data.code || 'unauthorized',
+        })
+      }
+    }
     if (!res.ok)
-      throw Object.assign(new Error(data.message || data.error || 'Request failed'), data)
+      throw Object.assign(new Error(data.message || data.error || 'Request failed'), {
+        ...data,
+        status: res.status,
+      })
     return data
   } catch (error) {
     if (error?.name === 'AbortError') {

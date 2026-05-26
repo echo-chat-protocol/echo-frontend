@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { getSocket } from '../../../socket'
 import PropTypes from 'prop-types'
-import { jwtDecode } from 'jwt-decode'
+import { UsersService } from '@services'
 import { formatProfileImage } from '../DashboardComponents/utils/helpers'
 import { Search, MessageSquareText, Phone, Video, UserPlus, UserCheck } from 'lucide-react'
 
@@ -49,35 +49,25 @@ const Friends = ({ token, onActiveChatChange, onAddContact }) => {
   }, [token])
 
   const handleSearch = useCallback(
-    (term) => {
+    async (term) => {
       const searchQuery = (term ?? q).trim()
-      const user = token ? jwtDecode(token) : ''
-      if (!searchQuery || searchQuery === user.username) {
+      if (!searchQuery) {
         setSearchList([])
         return
       }
 
-      const socket = getSocket()
-      if (!socket?.connected) return
-
-      socket.emit('searchUser', { searchTerm: searchQuery }, (response) => {
-        if (response?.user) {
-          const basicUser = response.user
-          socket.emit('getUserInfo', { userId: basicUser.id }, (profileResponse) => {
-            let profilePicture = basicUser.profileImage
-            if (profileResponse?.success && profileResponse?.user) {
-              profilePicture = profileResponse.user.profilePicture
-            }
-            const formattedProfileImage = formatProfileImage(profilePicture, basicUser.username)
-            const targetUser = { ...basicUser, profileImage: formattedProfileImage }
-            setSearchList([targetUser])
-          })
-        } else {
-          setSearchList([])
-        }
-      })
+      try {
+        const res = await UsersService.search({ searchTerm: searchQuery })
+        const users = (res?.users || []).map((u) => ({
+          ...u,
+          profileImage: formatProfileImage(u.profilePicture, u.username),
+        }))
+        setSearchList(users)
+      } catch {
+        setSearchList([])
+      }
     },
-    [q, token]
+    [q]
   )
 
   useEffect(() => {

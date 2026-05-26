@@ -320,9 +320,12 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
   const newTree = resizeNodes(currentState.tree.nodes, width)
   installLeafPublicKeysFromMemberInitKeys(newTree, newRoster, memberInitKeys)
 
-  const newMemberInitKeyB64 = resolveInitKeyB64(
-    memberInitKeys?.find((entry) => String(entry.userId) === newMemberUserId)
+  const newMemberInitEntries = (memberInitKeys ?? []).filter((entry) =>
+    entry.leafIndex != null
+      ? entry.leafIndex === newMember.leafIndex
+      : String(entry.userId) === newMemberUserId
   )
+  const newMemberInitKeyB64 = resolveInitKeyB64(newMemberInitEntries[0])
   if (!newMemberInitKeyB64) {
     throw new Error(
       `Missing initKeyB64 for member ${newMemberUserId} — fetch their KeyPackage first`
@@ -418,11 +421,6 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
   const aadBytes = makeCommitAadBytes(currentState.groupId, nextEpoch)
   const TEXT_ENC = new TextEncoder()
   const groupSecretsPlaintext = JSON.stringify({ joinerSecretB64: bytesToBase64(joinerSecret) })
-  const wrappedGroupSecrets = await wrapGroupKey(
-    bytesToBase64(TEXT_ENC.encode(groupSecretsPlaintext)),
-    newMemberInitKeyB64,
-    aadBytes
-  )
 
   const encryptGroupInfo = async (info) => {
     const ws = await deriveWelcomeSecret(joinerSecret)
@@ -443,18 +441,30 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
     senderSigningPubKeyB64: senderRosterEntry?.leafSigningPubKeyB64 ?? null,
   })
 
-  const welcome = {
-    groupId: currentState.groupId,
-    epoch: nextEpoch,
-    cipherSuite: currentState.cipherSuite,
-    recipientUserId: newMemberUserId,
-    recipientLeafIndex: newMember.leafIndex,
-    senderLeafIndex: currentState.selfLeafIndex,
-    senderSigningPubKeyB64: senderRosterEntry?.leafSigningPubKeyB64 ?? null,
-    encryptedGroupSecrets: wrappedGroupSecrets,
-    encryptedGroupInfo,
+  const welcomes = []
+  const welcomeTargets = newMemberInitEntries.length > 0 ? newMemberInitEntries : [null]
+  for (const initEntry of welcomeTargets) {
+    const targetInitKeyB64 = resolveInitKeyB64(initEntry) ?? newMemberInitKeyB64
+    const targetWrappedGroupSecrets = await wrapGroupKey(
+      bytesToBase64(TEXT_ENC.encode(groupSecretsPlaintext)),
+      targetInitKeyB64,
+      aadBytes
+    )
+    const welcome = {
+      groupId: currentState.groupId,
+      epoch: nextEpoch,
+      cipherSuite: currentState.cipherSuite,
+      recipientUserId: newMemberUserId,
+      recipientClientId: initEntry?.clientId ?? null,
+      recipientLeafIndex: newMember.leafIndex,
+      senderLeafIndex: currentState.selfLeafIndex,
+      senderSigningPubKeyB64: senderRosterEntry?.leafSigningPubKeyB64 ?? null,
+      encryptedGroupSecrets: targetWrappedGroupSecrets,
+      encryptedGroupInfo,
+    }
+    welcome.signature = await signWelcome(welcome, currentState.leafSigningPrivKeyB64)
+    welcomes.push(welcome)
   }
-  welcome.signature = await signWelcome(welcome, currentState.leafSigningPrivKeyB64)
 
   const nextState = normalizeGroupState({
     ...currentState,
@@ -476,7 +486,7 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
     pendingProposals: [],
   })
 
-  return { commit, welcome, nextState }
+  return { commit, welcome: welcomes[0], welcomes, nextState }
 }
 
 // Build a remove commit for one target member.

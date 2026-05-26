@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Search, X, MessageSquareText, Loader2 } from 'lucide-react'
 import PropTypes from 'prop-types'
-import { getSocket } from '../../../../socket'
+import { UsersService } from '@services'
 import { formatProfileImage } from '../utils/helpers'
 
 /**
@@ -26,33 +26,30 @@ export default function NewChatModal({ open, onClose, onStartChat }) {
     }
   }, [open])
 
-  const doSearch = useCallback((term) => {
-    if (!term.trim()) {
+  const doSearch = useCallback(async (term) => {
+    const trimmed = term.trim()
+    if (!trimmed) {
       setResults([])
       setSearched(false)
       return
     }
 
-    const socket = getSocket()
-    if (!socket?.connected) return
-
     setLoading(true)
     setSearched(true)
 
-    socket.emit('searchUser', { searchTerm: term.trim() }, (response) => {
-      if (response?.user) {
-        const basicUser = response.user
-        socket.emit('getUserInfo', { userId: basicUser.id }, (profileRes) => {
-          const pic = profileRes?.success ? profileRes.user?.profilePicture : basicUser.profileImage
-          const formatted = formatProfileImage(pic, basicUser.username)
-          setResults([{ ...basicUser, profileImage: formatted }])
-          setLoading(false)
-        })
-      } else {
-        setResults([])
-        setLoading(false)
-      }
-    })
+    try {
+      const res = await UsersService.search({ searchTerm: trimmed })
+      console.log('[NewChatModal] /users/search response:', res)
+      const users = (res?.users || []).map((u) => ({
+        ...u,
+        profileImage: formatProfileImage(u.profilePicture, u.username),
+      }))
+      setResults(users)
+    } catch {
+      setResults([])
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   const handleChange = (e) => {

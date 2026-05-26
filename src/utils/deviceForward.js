@@ -22,9 +22,12 @@
 import { deviceService } from '@/features/devices/deviceService'
 import { getIdentityKeys } from '@/components/Dashboard/Chat/utils/chat/keyManagement'
 import { getSocket } from '../socket'
+import { diffie_hellman } from '@mascaro101/echo-protocol'
 
 const ENVELOPE_SALT = new TextEncoder().encode('echo-device-envelope-v1')
 const ENVELOPE_INFO = new TextEncoder().encode('device-to-device-envelope-key')
+const DH_ENVELOPE_SALT = new TextEncoder().encode('echo-device-envelope-dh-v1')
+const DH_ENVELOPE_INFO = new TextEncoder().encode('x25519-hkdf-aesgcm')
 
 // ── key derivation ────────────────────────────────────────────────────────────
 
@@ -61,6 +64,34 @@ async function decryptEnvelope(envelopeKey, ciphertext, nonce) {
     b64dec(ciphertext)
   )
   return JSON.parse(new TextDecoder().decode(decrypted))
+}
+
+// Derive a per-recipient envelope key using static X25519 DH between
+// sender's IK private and recipient's IK public. Both sides can derive
+// the same secret; HKDF turns it into an AES-GCM key.
+async function deriveDhEnvelopeKey(senderPrivB64, recipientPubB64) {
+  const b64dec = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
+  const shared = await diffie_hellman(b64dec(senderPrivB64), b64dec(recipientPubB64))
+  const ikm = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey'])
+  return crypto.subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: DH_ENVELOPE_SALT, info: DH_ENVELOPE_INFO },
+    ikm,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  )
+}
+
+async function encryptDhEnvelope({ senderPrivB64, recipientPubB64, payload }) {
+  const key = await deriveDhEnvelopeKey(senderPrivB64, recipientPubB64)
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const enc = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(JSON.stringify(payload))
+  )
+  const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)))
+  return { ciphertext: b64(enc), nonce: b64(iv) }
 }
 
 // ── device discovery ──────────────────────────────────────────────────────────
@@ -180,8 +211,26 @@ export async function processRawDeviceEnvelope(userId, rawEnvelope) {
   const identityKeys = await getIdentityKeys()
   if (!identityKeys?.privateKeyX25519) return
 
-  const envelopeKey = await deriveEnvelopeKey(identityKeys.privateKeyX25519)
-  const payload = await decryptEnvelope(envelopeKey, rawEnvelope.ciphertext, rawEnvelope.nonce)
+  let payload
+  try {
+    const envelopeKey = await deriveEnvelopeKey(identityKeys.privateKeyX25519)
+    payload = await decryptEnvelope(envelopeKey, rawEnvelope.ciphertext, rawEnvelope.nonce)
+  } catch (e) {
+    // Try per-recipient DH envelope fallback when header indicates so
+    const header = rawEnvelope?.header
+    const headerObj = typeof header === 'string' ? JSON.parse(header) : header
+    if (
+      headerObj &&
+      (headerObj.alg === 'x25519-hkdf-aesgcm' || headerObj.alg === 'x25519-hkdf-aes-gcm') &&
+      typeof headerObj.senderPubB64 === 'string' &&
+      headerObj.senderPubB64.length > 0
+    ) {
+      const key = await deriveDhEnvelopeKey(identityKeys.privateKeyX25519, headerObj.senderPubB64)
+      payload = await decryptEnvelope(key, rawEnvelope.ciphertext, rawEnvelope.nonce)
+    } else {
+      throw e
+    }
+  }
 
   // sessionSync envelopes used to carry DR ratchet state; the new model never
   // shares that across siblings, so we drop any legacy envelopes of this type.
@@ -253,35 +302,56 @@ export async function forwardGroupStateToPairedDevices(userId, groupId, groupSta
     const identityKeys = await getIdentityKeys()
     if (!identityKeys?.privateKeyX25519) return
 
-    const envelopeKey = await deriveEnvelopeKey(identityKeys.privateKeyX25519)
-    const { ciphertext, nonce } = await encryptEnvelope(envelopeKey, {
-      type: 'groupStateSync',
-      userId,
-      groupId,
-      groupState,
-    })
-
-    const socket = getSocket()
-    if (socket?.connected) {
-      socket.emit('deviceEnvelope', { ciphertext, nonce })
-    }
-
+    // Build per-recipient envelopes using X25519 DH so sibling devices can decrypt
     const pairedDeviceIds = await getPairedDeviceIds(userId)
     if (pairedDeviceIds.length === 0) return
 
+    // Fetch recipient device identity pubs
+    let identities = []
+    try {
+      const res = await deviceService.getDeviceIdentities(userId)
+      identities = Array.isArray(res?.devices) ? res.devices : Array.isArray(res) ? res : []
+    } catch {
+      identities = []
+    }
+    const byId = new Map(
+      identities
+        .filter((d) => d?.deviceId && d?.publicIdentityKeyX25519)
+        .map((d) => [String(d.deviceId), d])
+    )
+
+    const senderPrivB64 = identityKeys.privateKeyX25519
+    const senderPubB64 = identityKeys.publicKeyX25519 || null
+
     const currentDeviceId = localStorage.getItem('echo-device-id') || null
-    await deviceService.storeEnvelopes({
-      senderDeviceId: currentDeviceId,
-      envelopes: pairedDeviceIds.map((recipientDeviceId) => ({
+    const envelopes = []
+    for (const recipientDeviceId of pairedDeviceIds) {
+      const rec = byId.get(String(recipientDeviceId))
+      if (!rec?.publicIdentityKeyX25519) continue
+      const { ciphertext, nonce } = await encryptDhEnvelope({
+        senderPrivB64,
+        recipientPubB64: rec.publicIdentityKeyX25519,
+        payload: {
+          type: 'groupStateSync',
+          userId,
+          groupId,
+          groupState,
+        },
+      })
+      envelopes.push({
         logicalRecipientId: userId,
         recipientDeviceId,
         ciphertext,
         nonce,
-        header: null,
+        header: { alg: 'x25519-hkdf-aesgcm', senderPubB64: senderPubB64 },
         messageType: 'groupStateSync',
         conversationId: `group:${groupId}`,
-      })),
-    })
+      })
+    }
+
+    if (envelopes.length > 0) {
+      await deviceService.storeEnvelopes({ senderDeviceId: currentDeviceId, envelopes })
+    }
   } catch (err) {
     console.warn('[DeviceForward] Failed to forward group state:', err)
   }
@@ -321,10 +391,28 @@ export async function processIncomingEnvelopes(userId) {
         await processRawDeviceEnvelope(userId, envelope)
         await deviceService.ackEnvelope(envelope.envelopeId, { deviceId, status: 'delivered' })
       } catch (err) {
-        console.warn('[DeviceForward] Failed to process envelope', envelope.envelopeId, err)
+        // Legacy symmetric envelopes (no DH header): ack to prevent re-fetch loops.
+        // DH per-recipient envelopes carry header.alg === 'x25519-hkdf-aesgcm' —
+        // do NOT ack on failure so we can retry after identity/state settles.
+        const headerObj =
+          typeof envelope?.header === 'string' ? JSON.parse(envelope.header) : envelope?.header
+        const alg = headerObj?.alg || null
+        const isDhEnvelope = alg === 'x25519-hkdf-aesgcm' || alg === 'x25519-hkdf-aes-gcm'
+        if (!isDhEnvelope) {
+          try {
+            await deviceService.ackEnvelope(envelope.envelopeId, { deviceId, status: 'delivered' })
+          } catch {
+            /* ignore ack failure — will retry later */
+          }
+        }
+        const isOpError = err?.name === 'OperationError' || /OperationError/i.test(String(err))
+        if (!isOpError) {
+          console.warn('[DeviceForward] Failed to process envelope', envelope.envelopeId, err)
+        }
       }
     }
   } catch (err) {
+    if (err?.status === 401 || err?.code === 'unauthorized') return
     console.warn('[DeviceForward] Failed to fetch envelopes:', err)
   }
 }

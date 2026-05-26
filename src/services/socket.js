@@ -6,6 +6,7 @@
  */
 import { io } from 'socket.io-client'
 import { resolveApiBase } from '@/utils/network/apiBase'
+import { refreshAccessToken, tokenStorage } from './api'
 
 // If VITE_SOCKET_URL is set (e.g., Render public URL), use it.
 // Otherwise, connect to same-origin so Vite dev proxy (host:5173) forwards /socket.io → backend.
@@ -13,6 +14,7 @@ const RAW_SOCKET_URL = import.meta.env.VITE_SOCKET_URL
 const RESOLVED_SOCKET_URL = RAW_SOCKET_URL ? resolveApiBase(RAW_SOCKET_URL) : resolveApiBase()
 
 let socket = null
+let socketRefreshInFlight = false
 
 /**
  * Returns the singleton socket instance (creates it if not yet created).
@@ -32,8 +34,20 @@ export function getSocket() {
       path: '/socket.io',
     })
 
-    socket.on('connect_error', (err) => {
+    socket.on('connect_error', async (err) => {
       console.error('[Socket] Connection error:', err.message)
+      if (socketRefreshInFlight || !/unauthorized|token/i.test(String(err?.message ?? ''))) return
+
+      socketRefreshInFlight = true
+      try {
+        const token = await refreshAccessToken()
+        socket.auth = token ? { token } : {}
+        socket.connect()
+      } catch {
+        // API layer clears invalid refresh state; leave auth flow to the app shell.
+      } finally {
+        socketRefreshInFlight = false
+      }
     })
 
     socket.on('disconnect', (reason) => {
@@ -50,7 +64,7 @@ export function getSocket() {
  * Safe to call multiple times — won't reconnect if already connected.
  */
 export function connectSocket() {
-  const token = localStorage.getItem('echo_access_token')
+  const token = tokenStorage.getAccess() || localStorage.getItem('token')
   const s = getSocket()
   const prevToken = s?.auth?.token || null
   // Always set latest auth payload

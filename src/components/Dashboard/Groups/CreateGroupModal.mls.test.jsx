@@ -90,8 +90,20 @@ describe('CreateGroupModal MLS initialization', () => {
           return
         }
 
+        if (event === 'fetchAllKeyPackages') {
+          if (payload.userId === 'bob') {
+            callback?.({
+              success: true,
+              packages: [{ clientId: 'bob-phone', initKeyB64: 'bob-init-key-b64' }],
+            })
+          } else {
+            callback?.({ success: true, packages: [] })
+          }
+          return
+        }
+
         if (event === 'fetchKeyPackage') {
-          callback?.({ success: true, initKeyB64: 'bob-init-key-b64' })
+          callback?.({ success: false, error: 'KeyPackage not found' })
           return
         }
 
@@ -154,14 +166,16 @@ describe('CreateGroupModal MLS initialization', () => {
     })
 
     const nameInput = container.querySelector('input[placeholder="Group name"]')
-    const searchInput = container.querySelector('input[placeholder="Search username to add..."]')
+    const searchInput = container.querySelector('input[placeholder="Search by username…"]')
     await act(async () => {
       setInputValue(nameInput, 'Project Team')
       setInputValue(searchInput, 'Bob')
       await flush()
     })
 
-    const searchAction = searchInput.parentElement.querySelector('button')
+    const searchAction = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Search')
+    )
 
     await act(async () => {
       searchAction.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -169,7 +183,7 @@ describe('CreateGroupModal MLS initialization', () => {
     })
 
     const addButton = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Add')
+      button.textContent?.includes('Bob')
     )
 
     await act(async () => {
@@ -206,8 +220,20 @@ describe('CreateGroupModal MLS initialization', () => {
       ],
       cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
       memberInitKeys: [
-        { userId: 'alice', leafIndex: 0, initKeyB64: 'alice-init-pub-b64' },
-        { userId: 'bob', leafIndex: 1, initKeyB64: 'bob-init-key-b64' },
+        {
+          userId: 'alice',
+          leafIndex: 0,
+          clientId: null,
+          initKeyB64: 'alice-init-pub-b64',
+          excludeFromWelcome: true,
+        },
+        {
+          userId: 'bob',
+          clientId: 'bob-phone',
+          leafIndex: 1,
+          initKeyB64: 'bob-init-key-b64',
+          keyPackage: null,
+        },
       ],
       selfInitPrivKeyB64: 'alice-init-priv-b64',
     })
@@ -217,7 +243,22 @@ describe('CreateGroupModal MLS initialization', () => {
         { userId: 'alice', username: 'Member', leafIndex: 0 },
         { userId: 'bob', username: 'Bob', leafIndex: 1 },
       ],
-      memberInitKeys: [{ userId: 'bob', initKeyB64: 'bob-init-key-b64', leafIndex: 1 }],
+      memberInitKeys: [
+        {
+          userId: 'alice',
+          leafIndex: 0,
+          clientId: null,
+          initKeyB64: 'alice-init-pub-b64',
+          excludeFromWelcome: true,
+        },
+        {
+          userId: 'bob',
+          clientId: 'bob-phone',
+          leafIndex: 1,
+          initKeyB64: 'bob-init-key-b64',
+          keyPackage: null,
+        },
+      ],
     })
     const welcomeEmitCall = socket.emit.mock.calls.find(
       ([eventName]) => eventName === 'sendGroupWelcome'
@@ -299,8 +340,19 @@ describe('CreateGroupModal MLS initialization', () => {
         })
         return
       }
+      if (event === 'fetchAllKeyPackages') {
+        if (payload.userId === 'bob') {
+          callback?.({
+            success: true,
+            packages: [{ clientId: 'bob-phone', initKeyB64: 'bob-init-key-b64' }],
+          })
+        } else {
+          callback?.({ success: true, packages: [] })
+        }
+        return
+      }
       if (event === 'fetchKeyPackage') {
-        callback?.({ success: true, initKeyB64: 'bob-init-key-b64' })
+        callback?.({ success: false, error: 'KeyPackage not found' })
         return
       }
       if (event === 'sendGroupWelcome') {
@@ -316,21 +368,23 @@ describe('CreateGroupModal MLS initialization', () => {
     })
 
     const nameInput = container.querySelector('input[placeholder="Group name"]')
-    const searchInput = container.querySelector('input[placeholder="Search username to add..."]')
+    const searchInput = container.querySelector('input[placeholder="Search by username…"]')
     await act(async () => {
       setInputValue(nameInput, 'Project Team')
       setInputValue(searchInput, 'Bob')
       await flush()
     })
 
-    const searchAction = searchInput.parentElement.querySelector('button')
+    const searchAction = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Search')
+    )
     await act(async () => {
       searchAction.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await flush()
     })
 
     const addButton = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Add')
+      button.textContent?.includes('Bob')
     )
     await act(async () => {
       addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))

@@ -46,11 +46,28 @@ export class ApiError extends Error {
 const TOKEN_KEY = 'echo_access_token'
 const REFRESH_KEY = 'echo_refresh_token'
 
+// Falsy values (undefined/null/'') would otherwise be coerced to literal
+// "undefined"/"null" strings by localStorage.setItem and then sent as
+// `Authorization: Bearer undefined`, triggering downstream 401s.
+const isUsableToken = (v) =>
+  typeof v === 'string' && v.length > 0 && v !== 'undefined' && v !== 'null'
+
+const readToken = (key) => {
+  const v = localStorage.getItem(key)
+  return isUsableToken(v) ? v : null
+}
+
 export const tokenStorage = {
-  getAccess: () => localStorage.getItem(TOKEN_KEY),
-  getRefresh: () => localStorage.getItem(REFRESH_KEY),
-  setAccess: (t) => localStorage.setItem(TOKEN_KEY, t),
-  setRefresh: (t) => localStorage.setItem(REFRESH_KEY, t),
+  getAccess: () => readToken(TOKEN_KEY),
+  getRefresh: () => readToken(REFRESH_KEY),
+  setAccess: (t) => {
+    if (isUsableToken(t)) localStorage.setItem(TOKEN_KEY, t)
+    else localStorage.removeItem(TOKEN_KEY)
+  },
+  setRefresh: (t) => {
+    if (isUsableToken(t)) localStorage.setItem(REFRESH_KEY, t)
+    else localStorage.removeItem(REFRESH_KEY)
+  },
   setTokenPair: (a, r) => {
     tokenStorage.setAccess(a)
     tokenStorage.setRefresh(r)
@@ -69,6 +86,10 @@ let _refreshQueue = [] // pending requests while refreshing
 function flushQueue(newToken, error) {
   _refreshQueue.forEach(({ resolve, reject }) => (error ? reject(error) : resolve(newToken)))
   _refreshQueue = []
+}
+
+export async function refreshAccessToken() {
+  return doRefresh()
 }
 
 async function doRefresh() {

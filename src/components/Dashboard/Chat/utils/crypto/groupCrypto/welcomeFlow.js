@@ -140,49 +140,55 @@ export async function buildInitialWelcomes({ creatorState, roster, memberInitKey
 
   const welcomes = []
   for (const member of normalizedRoster) {
-    // Skip creator's own leaf only; device leaves (same userId, different leafIndex) do get Welcomes.
-    if (
-      String(member.userId) === String(state.selfUserId) &&
-      member.leafIndex === state.selfLeafIndex
-    )
-      continue
+    const isCreatorLeaf =
+      String(member.userId) === String(state.selfUserId) && member.leafIndex === state.selfLeafIndex
 
     // Look up by leafIndex first (multi-device support), fall back to userId.
-    const initKeyEntry = memberInitKeys?.find((entry) =>
+    const initKeyEntries = (memberInitKeys ?? []).filter((entry) =>
       entry.leafIndex != null
         ? entry.leafIndex === member.leafIndex
         : String(entry.userId) === String(member.userId)
     )
-    const initKeyB64 = resolveInitKeyB64(initKeyEntry)
-    if (!initKeyB64) {
+    const welcomeTargets = initKeyEntries.filter((entry) => !entry.excludeFromWelcome)
+    if (welcomeTargets.length === 0) {
+      if (isCreatorLeaf) continue
       throw new Error(
         `Missing initKeyB64 for member ${member.userId} leaf ${member.leafIndex} — fetch their KeyPackage before building Welcomes`
       )
     }
 
-    const groupSecretsPlaintext = JSON.stringify({ joinerSecretB64: bytesToBase64(joinerSecret) })
-    const wrappedGroupSecrets = await wrapGroupKey(
-      bytesToBase64(TEXT_ENCODER.encode(groupSecretsPlaintext)),
-      initKeyB64,
-      aadBytes
-    )
+    for (const initKeyEntry of welcomeTargets) {
+      const initKeyB64 = resolveInitKeyB64(initKeyEntry)
+      if (!initKeyB64) {
+        throw new Error(
+          `Missing initKeyB64 for member ${member.userId} leaf ${member.leafIndex} — fetch their KeyPackage before building Welcomes`
+        )
+      }
 
-    const encryptedGroupInfo = await encryptGroupInfo(groupInfo, joinerSecret)
+      const groupSecretsPlaintext = JSON.stringify({ joinerSecretB64: bytesToBase64(joinerSecret) })
+      const wrappedGroupSecrets = await wrapGroupKey(
+        bytesToBase64(TEXT_ENCODER.encode(groupSecretsPlaintext)),
+        initKeyB64,
+        aadBytes
+      )
 
-    const welcome = {
-      groupId: state.groupId,
-      epoch: state.epoch,
-      cipherSuite: state.cipherSuite,
-      recipientUserId: member.userId,
-      recipientClientId: initKeyEntry?.clientId ?? null,
-      recipientLeafIndex: member.leafIndex,
-      senderLeafIndex: state.selfLeafIndex,
-      senderSigningPubKeyB64: senderRosterEntry.leafSigningPubKeyB64,
-      encryptedGroupSecrets: wrappedGroupSecrets,
-      encryptedGroupInfo,
+      const encryptedGroupInfo = await encryptGroupInfo(groupInfo, joinerSecret)
+
+      const welcome = {
+        groupId: state.groupId,
+        epoch: state.epoch,
+        cipherSuite: state.cipherSuite,
+        recipientUserId: member.userId,
+        recipientClientId: initKeyEntry?.clientId ?? null,
+        recipientLeafIndex: member.leafIndex,
+        senderLeafIndex: state.selfLeafIndex,
+        senderSigningPubKeyB64: senderRosterEntry.leafSigningPubKeyB64,
+        encryptedGroupSecrets: wrappedGroupSecrets,
+        encryptedGroupInfo,
+      }
+      welcome.signature = await signWelcome(welcome, state.leafSigningPrivKeyB64)
+      welcomes.push(welcome)
     }
-    welcome.signature = await signWelcome(welcome, state.leafSigningPrivKeyB64)
-    welcomes.push(welcome)
   }
 
   return welcomes
