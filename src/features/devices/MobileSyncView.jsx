@@ -325,6 +325,7 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
     const completeResult = await deviceService.completeSyncTarget({
       sessionId: pairingPayload.sessionId,
       targetAccessToken: pairingPayload.targetAccessToken,
+      serverUrl: pairingPayload.serverUrl,
       targetDevice: {
         ...scannerDeviceMetadata,
       },

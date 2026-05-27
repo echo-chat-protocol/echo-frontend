@@ -35,6 +35,46 @@ const DEFAULT_MLS_CIPHER_SUITE = 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256'
 const GROUP_CACHE_PREFIX = 'group:'
 const hasGroupKeyMaterial = (state) => Boolean(state?.applicationSecretB64 || state?.groupKeyB64)
 
+const parseMlsHeader = (message) => {
+  try {
+    if (!message?.headerB64) return null
+    const json = TEXT_DECODER.decode(
+      Uint8Array.from(atob(message.headerB64), (char) => char.charCodeAt(0))
+    )
+    return JSON.parse(json)
+  } catch {
+    return null
+  }
+}
+
+const advanceCachedMessageGeneration = (state, message) => {
+  const header = parseMlsHeader(message)
+  if (
+    !state ||
+    !Number.isInteger(header?.senderLeafIndex) ||
+    !Number.isInteger(header?.generation)
+  ) {
+    return state
+  }
+
+  const key = String(header.senderLeafIndex)
+  const nextGeneration = header.generation + 1
+  const currentGeneration = state.senderGenerations?.[key] ?? 0
+  if (currentGeneration >= nextGeneration) return state
+
+  return {
+    ...state,
+    senderGenerations: {
+      ...(state.senderGenerations ?? {}),
+      [key]: nextGeneration,
+    },
+    applicationMessageCounter:
+      state.selfLeafIndex === header.senderLeafIndex
+        ? nextGeneration
+        : state.applicationMessageCounter,
+  }
+}
+
 const buildRemovedMessage = (activeGroupId, removedInfo = {}) => ({
   _id: `group-removed:${activeGroupId}:${removedInfo.at || 'now'}`,
   userId: '',
@@ -129,6 +169,22 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           )
         : null,
     []
+  )
+
+  const resolveLocalSelfLeafIndex = useCallback(
+    (currentState, serverLeafIndex) => {
+      const localLeafIndex = currentState?.selfLeafIndex
+      const localLeafData = Number.isInteger(localLeafIndex)
+        ? currentState?.tree?.leafData?.[String(localLeafIndex)]
+        : null
+
+      if (localLeafData && String(localLeafData.userId) === String(userId)) {
+        return localLeafIndex
+      }
+
+      return Number.isInteger(serverLeafIndex) ? serverLeafIndex : null
+    },
+    [userId]
   )
 
   const buildCommitSystemMessage = useCallback(
@@ -236,9 +292,10 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         })
       }
 
+      const nextSelfLeafIndex = resolveLocalSelfLeafIndex(currentState, serverLeafIndex)
       const nextState = {
         ...currentState,
-        selfLeafIndex: serverLeafIndex,
+        selfLeafIndex: nextSelfLeafIndex,
         roster,
       }
 
@@ -247,7 +304,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
 
       return needsSave ? saveGroupState(activeGroupId, nextState) : nextState
     },
-    [activeGroupId, userId]
+    [activeGroupId, resolveLocalSelfLeafIndex, userId]
   )
 
   const formatMessage = useCallback(
@@ -268,20 +325,29 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         (message?.encryptedSenderDataB64 || message?.headerB64) &&
         message?.ciphertextB64
       if (hasAppMessage) {
-        try {
-          const decrypted = await decryptApplicationMessage({
-            state: cryptoState,
-            encryptedSenderDataB64: message.encryptedSenderDataB64 ?? null,
-            header: message.headerB64 ?? null,
-            ciphertext: message.ciphertextB64,
-            includeNewState: true,
-          })
-          const plaintextBytes = decrypted?.plaintextBytes ?? decrypted
-          nextState = decrypted?.newState ?? cryptoState
-          text = TEXT_DECODER.decode(plaintextBytes)
-        } catch (err) {
-          console.error('[GroupChat] Failed to decrypt MLS message:', err)
+        // Skip silently when this device has no key material for the relevant
+        // epoch (e.g. message sent while we were removed, before the Welcome
+        // that re-adds us has been processed). The replay caller drops the
+        // resulting UNAVAILABLE row, and cached plaintext from before removal
+        // is preserved via mergeCachedMessages.
+        if (!hasGroupKeyMaterial(cryptoState)) {
           text = MLS_UNAVAILABLE_TEXT
+        } else {
+          try {
+            const decrypted = await decryptApplicationMessage({
+              state: cryptoState,
+              encryptedSenderDataB64: message.encryptedSenderDataB64 ?? null,
+              header: message.headerB64 ?? null,
+              ciphertext: message.ciphertextB64,
+              includeNewState: true,
+            })
+            const plaintextBytes = decrypted?.plaintextBytes ?? decrypted
+            nextState = decrypted?.newState ?? cryptoState
+            text = TEXT_DECODER.decode(plaintextBytes)
+          } catch (err) {
+            console.error('[GroupChat] Failed to decrypt MLS message:', err)
+            text = MLS_UNAVAILABLE_TEXT
+          }
         }
       } else if (typeof message?.payload === 'string') {
         text = message.payload
@@ -341,7 +407,22 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             message,
             actorUsername: message?.username,
           })
+          // Idempotent gate: skip if we already applied this commit or are ahead.
           if (Number.isInteger(replayState?.epoch) && commit.epoch <= replayState.epoch) {
+            if (systemMessage) formattedMessages.push(systemMessage)
+            continue
+          }
+          // Order gate: only attempt the exact next epoch. If we are missing
+          // an earlier commit/welcome, let subsequent replay iterations handle
+          // it after state catches up (e.g., once the corresponding Welcome is
+          // processed). This avoids spurious "Invalid commit epoch" errors.
+          if (
+            Number.isInteger(replayState?.epoch) &&
+            Number.isInteger(commit?.epoch) &&
+            commit.epoch !== replayState.epoch + 1
+          ) {
+            // Defer this commit; a missing intermediate artifact should fill in
+            // first. We still append the system row so UI reflects membership changes.
             if (systemMessage) formattedMessages.push(systemMessage)
             continue
           }
@@ -389,6 +470,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         const msgId = String(message?._id ?? '')
         if (msgId && cachedById.has(msgId)) {
           formattedMessages.push(cachedById.get(msgId))
+          replayState = advanceCachedMessageGeneration(replayState, message)
           continue
         }
 
@@ -538,7 +620,16 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     const handleMembershipChanged = (evt) => {
       if (String(evt?.groupId ?? '') !== String(activeGroupId)) return
 
-      socket.emit('openGroup', { groupId: activeGroupId }, async (res) => {
+      // Serialize with the commit/welcome/message handlers so the openGroup +
+      // syncLocalStateFromServer write doesn't race with an in-flight commit
+      // application and clobber the freshly-advanced epoch keys. Without this,
+      // a `groupMemberAdded` that arrives near `groupCommit` can stomp the new
+      // applicationSecret with the pre-add one and leave the input disabled
+      // with "MLS state is not ready" until the user refreshes.
+      return enqueueLiveGroupMessageTask(async () => {
+        const res = await new Promise((resolve) =>
+          socket.emit('openGroup', { groupId: activeGroupId }, resolve)
+        )
         if (cancelled || !res?.success) return
 
         const roster = buildRoster(res.members)
@@ -552,16 +643,76 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         setMembers(Array.isArray(res.members) ? res.members : [])
         setRole(res?.membership?.role ?? null)
         setGroupMeta(nextMeta)
+        groupMetaRef.current = nextMeta
 
-        const nextState = await syncLocalStateFromServer({
+        const synced = await syncLocalStateFromServer({
           roster,
           responseGroup: res?.group,
           responseMembership: res?.membership,
         })
+        if (cancelled) return
+        setGroupCryptoState(synced)
+        groupCryptoStateRef.current = synced
 
-        if (!cancelled) {
-          setGroupCryptoState(nextState)
-          groupCryptoStateRef.current = nextState
+        if (!nextMeta.mlsEnabled) return
+
+        // The live `groupCommit` broadcast can be lost (handler not yet bound on
+        // mount, queue race, transient disconnect). Use the membership event as
+        // the recovery trigger: fetch persisted artifacts and replay any
+        // commit/welcome that hasn't been applied locally yet. Replay is
+        // idempotent — commits at or below the current epoch are skipped.
+        const msgRes = await new Promise((resolve) =>
+          socket.emit('fetchGroupMessages', { groupId: activeGroupId, limit: 50 }, resolve)
+        )
+        if (cancelled || !msgRes?.success || !Array.isArray(msgRes.messages)) return
+
+        const cachedMessages = await getSavedMessages(userId, getGroupCacheId(activeGroupId)).catch(
+          () => []
+        )
+        const replayed = await replayFetchedMessages({
+          fetchedMessages: msgRes.messages,
+          initialState: synced,
+          initialMeta: nextMeta,
+          cachedMessages,
+        })
+        if (cancelled) return
+
+        const persistedReplayState = replayed.replayState
+          ? await saveGroupState(activeGroupId, replayed.replayState)
+          : replayed.replayState
+        if (persistedReplayState) {
+          setGroupCryptoState(persistedReplayState)
+          groupCryptoStateRef.current = persistedReplayState
+        }
+        setGroupMeta(replayed.replayMeta)
+        groupMetaRef.current = replayed.replayMeta
+
+        // Persist any system rows the replay produced for commits the live
+        // handler never saw, so "X added Y" still appears without a refresh.
+        for (const message of replayed.formattedMessages) {
+          if (!message?._id || message.messageType !== 'system') continue
+          await updateSavedMessages(userId, getGroupCacheId(activeGroupId), message, setMessages)
+        }
+
+        // Drain buffered ciphertext now that the local state may have caught up.
+        const key = String(activeGroupId)
+        const pending = pendingEncryptedGroupMessagesRef.current.get(key) || []
+        if (pending.length > 0) {
+          const stillPending = []
+          for (const pendingMsg of pending) {
+            try {
+              await decryptIncomingGroupMessage({
+                message: pendingMsg,
+                userId,
+                username,
+                currentState: persistedReplayState,
+                setMessages,
+              })
+            } catch {
+              stillPending.push(pendingMsg)
+            }
+          }
+          pendingEncryptedGroupMessagesRef.current.set(key, stillPending)
         }
       })
     }
@@ -655,7 +806,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       })
     }
 
-    const handleGroupWelcome = async ({ groupId, welcome }) => {
+    const handleGroupWelcome = ({ groupId, welcome }) => {
       if (String(groupId ?? '') !== String(activeGroupId)) return
 
       // Each device only processes the Welcome addressed to it.
@@ -663,141 +814,216 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       const targetClientId = welcome.recipientClientId ?? null
       if (targetClientId !== null && targetClientId !== thisDeviceId) return
 
-      try {
-        // Use the device-specific MLS private key if available; fall back to ELD key.
-        const myInitPrivKeyB64 =
-          localStorage.getItem('echo-device-mls-priv') ||
-          (await getIdentityKeys())?.privateKeyX25519 ||
-          null
-
-        const nextState = await processWelcome({
-          welcome,
-          selfUserId: userId,
-          myInitPrivKeyB64,
-        })
-
-        const persistedState = await saveGroupState(activeGroupId, nextState)
-        forwardGroupStateToPairedDevices(userId, activeGroupId, persistedState).catch(() => {})
-
-        if (cancelled) return
-        setGroupCryptoState(persistedState)
-        groupCryptoStateRef.current = persistedState
-        // Clear local removed flag so live messages resume immediately
-        removedInfoRef.current = null
-
-        // Emit an event to let Dashboard clear any stale removed flag for this group
+      // Same queue as commits/membership so a Welcome can't race a parallel
+      // commit application and leave a stale snapshot of crypto state behind.
+      return enqueueLiveGroupMessageTask(async () => {
         try {
-          window.dispatchEvent(new CustomEvent('groupStateSynced', { detail: { groupId } }))
-        } catch {
-          /* ignore */
-        }
+          if (cancelled) return
+          // Use the device-specific MLS private key if available; fall back to ELD key.
+          const myInitPrivKeyB64 =
+            localStorage.getItem('echo-device-mls-priv') ||
+            (await getIdentityKeys())?.privateKeyX25519 ||
+            null
 
-        // Add a local system message so the re-joined user sees a visual notification
-        const joinedAt = new Date().toISOString()
-        const joinedMessage = {
-          _id: `group-joined:${String(groupId)}:${joinedAt}`,
-          userId: '',
-          username: '',
-          text: 'You joined the group',
-          createdAt: joinedAt,
-          seenStatus: true,
-          messageType: 'system',
-        }
-        await updateSavedMessages(
-          userId,
-          getGroupCacheId(activeGroupId),
-          joinedMessage,
-          setMessages
-        )
+          const nextState = await processWelcome({
+            welcome,
+            selfUserId: userId,
+            myInitPrivKeyB64,
+          })
 
-        // Retry any buffered messages now that state is available
-        const key = String(groupId)
-        const pending = pendingEncryptedGroupMessagesRef.current.get(key) || []
-        if (pending.length > 0) {
-          for (const pendingMsg of pending) {
-            try {
-              await decryptIncomingGroupMessage({
-                message: pendingMsg,
-                userId,
-                username,
-                currentState: persistedState,
-                setMessages,
-              })
-            } catch {
-              // If it still fails, keep it buffered; a subsequent commit may fix it
-            }
+          const persistedState = await saveGroupState(activeGroupId, nextState)
+          forwardGroupStateToPairedDevices(userId, activeGroupId, persistedState).catch(() => {})
+
+          if (cancelled) return
+          setGroupCryptoState(persistedState)
+          groupCryptoStateRef.current = persistedState
+          // Clear local removed flag so live messages resume immediately
+          removedInfoRef.current = null
+
+          // Emit an event to let Dashboard clear any stale removed flag for this group
+          try {
+            window.dispatchEvent(new CustomEvent('groupStateSynced', { detail: { groupId } }))
+          } catch {
+            /* ignore */
           }
-          // Clear only those that succeeded; simplest: clear all and rely on future arrival to re-buffer if still failing
-          pendingEncryptedGroupMessagesRef.current.set(key, [])
-        }
-      } catch (err) {
-        console.error('[GroupChat] Failed to process group welcome:', err)
-      }
-    }
 
-    const handleGroupCommit = async ({ groupId, commit }) => {
-      if (String(groupId ?? '') !== String(activeGroupId)) return
-      if (removedInfoRef.current) return
-
-      try {
-        // Use this device's MLS init private key when available to keep epoch
-        // secrets consistent with the Welcome processed on this device.
-        const identityKeys = await getIdentityKeys()
-        const myInitPrivKeyB64 =
-          localStorage.getItem('echo-device-mls-priv') || identityKeys?.privateKeyX25519 || null
-        const priorState = groupCryptoStateRef.current
-        const systemMessage = buildCommitSystemMessage({ commit, priorState })
-
-        const nextState = await applyCommit({
-          state: priorState,
-          commit,
-          myInitPrivKeyB64,
-        })
-        const persistedState = await saveGroupState(activeGroupId, nextState)
-        forwardGroupStateToPairedDevices(userId, activeGroupId, persistedState).catch(() => {})
-
-        if (cancelled) return
-        setGroupCryptoState(persistedState)
-        groupCryptoStateRef.current = persistedState
-        setGroupMeta((prev) => {
-          const nextMeta = {
-            ...prev,
-            epoch: Number.isInteger(commit?.epoch) ? commit.epoch : prev.epoch,
+          // Add a local system message so the re-joined user sees a visual notification
+          const joinedAt = new Date().toISOString()
+          const joinedMessage = {
+            _id: `group-joined:${String(groupId)}:${joinedAt}`,
+            userId: '',
+            username: '',
+            text: 'You joined the group',
+            createdAt: joinedAt,
+            seenStatus: true,
+            messageType: 'system',
           }
-          groupMetaRef.current = nextMeta
-          return nextMeta
-        })
-        if (systemMessage) {
           await updateSavedMessages(
             userId,
             getGroupCacheId(activeGroupId),
-            systemMessage,
+            joinedMessage,
             setMessages
           )
-        }
 
-        // Retry any buffered messages after commit updates keys/epochs
-        const key = String(groupId)
-        const pending = pendingEncryptedGroupMessagesRef.current.get(key) || []
-        if (pending.length > 0) {
-          for (const pendingMsg of pending) {
-            try {
-              await decryptIncomingGroupMessage({
-                message: pendingMsg,
-                userId,
-                username,
-                currentState: persistedState,
-                setMessages,
-              })
-            } catch {
-              // keep buffered
+          // Retry any buffered messages now that state is available
+          const key = String(groupId)
+          const pending = pendingEncryptedGroupMessagesRef.current.get(key) || []
+          if (pending.length > 0) {
+            for (const pendingMsg of pending) {
+              try {
+                await decryptIncomingGroupMessage({
+                  message: pendingMsg,
+                  userId,
+                  username,
+                  currentState: persistedState,
+                  setMessages,
+                })
+              } catch {
+                // If it still fails, keep it buffered; a subsequent commit may fix it
+              }
             }
+            // Clear only those that succeeded; simplest: clear all and rely on future arrival to re-buffer if still failing
+            pendingEncryptedGroupMessagesRef.current.set(key, [])
           }
-          pendingEncryptedGroupMessagesRef.current.set(key, [])
+        } catch (err) {
+          console.error('[GroupChat] Failed to process group welcome:', err)
         }
-      } catch (err) {
-        console.error('[GroupChat] Failed to apply group commit:', err)
-      }
+      })
+    }
+
+    const handleGroupCommit = ({ groupId, commit }) => {
+      if (String(groupId ?? '') !== String(activeGroupId)) return
+      if (removedInfoRef.current) return
+
+      // Share the live-message queue so a commit can't be partially applied
+      // while a membership-changed recovery is in flight (and vice versa).
+      return enqueueLiveGroupMessageTask(async () => {
+        try {
+          if (cancelled) return
+          // Use this device's MLS init private key when available to keep epoch
+          // secrets consistent with the Welcome processed on this device.
+          const identityKeys = await getIdentityKeys()
+          const myInitPrivKeyB64 =
+            localStorage.getItem('echo-device-mls-priv') || identityKeys?.privateKeyX25519 || null
+          const priorState = groupCryptoStateRef.current
+          const systemMessage = buildCommitSystemMessage({ commit, priorState })
+
+          if (
+            Number.isInteger(priorState?.epoch) &&
+            Number.isInteger(commit?.epoch) &&
+            priorState.epoch >= commit.epoch
+          ) {
+            return
+          }
+
+          if (
+            Number.isInteger(priorState?.epoch) &&
+            Number.isInteger(commit?.epoch) &&
+            commit.epoch !== priorState.epoch + 1
+          ) {
+            return
+          }
+
+          // Own-commit short-circuit: we already produced and persisted nextState
+          // via buildAddCommit / buildRemoveCommit in GroupHeader, so re-applying
+          // here would re-run applyUpdatePath with the stale localStorage device
+          // init priv key after our leaf has rotated — yielding null commitSecret
+          // and stranding us with applicationSecretB64=null. Adopt GroupHeader's
+          // saved state when it's already on ELD; otherwise defer entirely —
+          // GroupHeader's matching `groupStateSynced` dispatch will deliver the
+          // correct state to handleGroupStateSynced. Falling through to applyCommit
+          // here would write a broken state and risk clobbering that sync if it
+          // arrives later in the event loop.
+          const isOwnCommit =
+            Number.isInteger(priorState?.selfLeafIndex) &&
+            Number.isInteger(commit?.senderLeafIndex) &&
+            priorState.selfLeafIndex === commit.senderLeafIndex
+          if (isOwnCommit) {
+            const fresh = await loadGroupState(activeGroupId)
+            const freshIsAhead =
+              fresh &&
+              Number.isInteger(fresh.epoch) &&
+              fresh.epoch >= commit.epoch &&
+              (fresh.applicationSecretB64 || fresh.groupKeyB64)
+            if (freshIsAhead) {
+              if (cancelled) return
+              setGroupCryptoState(fresh)
+              groupCryptoStateRef.current = fresh
+              setGroupMeta((prev) => {
+                const nextMeta = {
+                  ...prev,
+                  epoch: Number.isInteger(commit?.epoch) ? commit.epoch : prev.epoch,
+                }
+                groupMetaRef.current = nextMeta
+                return nextMeta
+              })
+              if (systemMessage) {
+                await updateSavedMessages(
+                  userId,
+                  getGroupCacheId(activeGroupId),
+                  systemMessage,
+                  setMessages
+                )
+              }
+            }
+            // Whether fresh was ready or not, never applyCommit our own commit —
+            // leaving the existing (pre-remove) ref state in place is safe
+            // (applicationSecretB64 is still set from the previous epoch), and the
+            // pending groupStateSynced dispatch will advance us when it fires.
+            return
+          }
+
+          const nextState = await applyCommit({
+            state: priorState,
+            commit,
+            myInitPrivKeyB64,
+          })
+          const persistedState = await saveGroupState(activeGroupId, nextState)
+          forwardGroupStateToPairedDevices(userId, activeGroupId, persistedState).catch(() => {})
+
+          if (cancelled) return
+          setGroupCryptoState(persistedState)
+          groupCryptoStateRef.current = persistedState
+          setGroupMeta((prev) => {
+            const nextMeta = {
+              ...prev,
+              epoch: Number.isInteger(commit?.epoch) ? commit.epoch : prev.epoch,
+            }
+            groupMetaRef.current = nextMeta
+            return nextMeta
+          })
+          if (systemMessage) {
+            await updateSavedMessages(
+              userId,
+              getGroupCacheId(activeGroupId),
+              systemMessage,
+              setMessages
+            )
+          }
+
+          // Retry any buffered messages after commit updates keys/epochs
+          const key = String(groupId)
+          const pending = pendingEncryptedGroupMessagesRef.current.get(key) || []
+          if (pending.length > 0) {
+            for (const pendingMsg of pending) {
+              try {
+                await decryptIncomingGroupMessage({
+                  message: pendingMsg,
+                  userId,
+                  username,
+                  currentState: persistedState,
+                  setMessages,
+                })
+              } catch {
+                // keep buffered
+              }
+            }
+            pendingEncryptedGroupMessagesRef.current.set(key, [])
+          }
+        } catch (err) {
+          console.error('[GroupChat] Failed to apply group commit:', err)
+        }
+      })
     }
 
     const handleGroupStateSynced = async (event) => {

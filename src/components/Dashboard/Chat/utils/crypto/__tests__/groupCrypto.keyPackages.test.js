@@ -121,8 +121,14 @@ vi.mock('../../../../../../utils/storage/EncryptedLocalDatabase', () => ({
 }))
 
 const { bytesToBase64 } = await import('../../helpers.js')
-const { buildAddCommit, buildInitialWelcomes, createNewGroupState, processWelcome, applyCommit } =
-  await import('../groupCryptoProvider.js')
+const {
+  buildAddCommit,
+  buildInitialWelcomes,
+  buildRemoveCommit,
+  createNewGroupState,
+  processWelcome,
+  applyCommit,
+} = await import('../groupCryptoProvider.js')
 const { generateKeyPackage } = await import('../groupCrypto/keyPackage.js')
 const { buildUpdateCommit } = await import('../groupCrypto/groupCryptoProvider.js')
 
@@ -246,6 +252,70 @@ describe('group crypto KeyPackage bindings', () => {
     expect(carolCarol?.leafSigningPubKeyB64).toBe(carol.keyPackage.leafSigningPubKeyB64)
     expect(carolCarol?.credential?.signature).toBe(carol.keyPackage.credential.signature)
     expect(carolState.leafSigningPrivKeyB64).toBe(carol.leafSigningPrivKeyB64)
+  })
+
+  it('allows one logical user to occupy multiple device leaves and removes all leaves by index', async () => {
+    const { creatorState, bob, bobState } = await initialPair('kp-device-leaves')
+    const bobPhone = await generateMemberMaterial('bob', 0x22)
+
+    const { commit, welcome, nextState } = await buildAddCommit({
+      state: creatorState,
+      newMember: { userId: 'bob', username: 'Bob phone', leafIndex: 2 },
+      memberInitKeys: [
+        {
+          userId: 'bob',
+          leafIndex: 2,
+          initKeyB64: bobPhone.initKeyB64,
+          keyPackage: bobPhone.keyPackage,
+        },
+      ],
+    })
+
+    expect(commit.targetUserId).toBe('bob')
+    expect(commit.targetLeafIndex).toBe(2)
+    expect(
+      nextState.roster.filter((member) => member.userId === 'bob').map((m) => m.leafIndex)
+    ).toEqual([1, 2])
+
+    const bobNext = await applyCommit({
+      state: bobState,
+      commit,
+      myInitPrivKeyB64: bob.initKeyB64,
+    })
+    const bobPhoneState = await processWelcome({
+      welcome,
+      selfUserId: 'bob',
+      myInitPrivKeyB64: bobPhone.initKeyB64,
+      myKeyPackage: bobPhone.keyPackage,
+      myLeafSigningPrivKeyB64: bobPhone.leafSigningPrivKeyB64,
+    })
+
+    expect(bobNext.roster.filter((member) => member.userId === 'bob')).toHaveLength(2)
+    expect(bobPhoneState.selfLeafIndex).toBe(2)
+
+    const firstRemove = await buildRemoveCommit({
+      state: nextState,
+      targetUserId: 'bob',
+      targetLeafIndex: 1,
+      memberInitKeys: [],
+    })
+    const bobPhoneAfterFirstRemove = await applyCommit({
+      state: bobPhoneState,
+      commit: firstRemove.commit,
+      myInitPrivKeyB64: bobPhone.initKeyB64,
+    })
+
+    expect(bobPhoneAfterFirstRemove.selfLeafIndex).toBe(2)
+    expect(bobPhoneAfterFirstRemove.applicationSecretB64).toBeTruthy()
+
+    const secondRemove = await buildRemoveCommit({
+      state: firstRemove.nextState,
+      targetUserId: 'bob',
+      targetLeafIndex: 2,
+      memberInitKeys: [],
+    })
+
+    expect(secondRemove.nextState.roster.some((member) => member.userId === 'bob')).toBe(false)
   })
 
   it('processWelcome rejects a KeyPackage that does not belong to the welcome recipient', async () => {

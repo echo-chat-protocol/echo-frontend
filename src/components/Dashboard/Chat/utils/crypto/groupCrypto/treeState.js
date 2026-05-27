@@ -222,14 +222,23 @@ export function blankNodeAndPath(treeNodes, leafIndex, leafCount) {
 
 // Fill leaf public keys from the latest init-key inputs.
 export function installLeafPublicKeysFromMemberInitKeys(treeNodes, roster, memberInitKeys) {
-  const initKeyMap = new Map(
-    (Array.isArray(memberInitKeys) ? memberInitKeys : [])
-      .map((entry) => [String(entry?.userId), resolveInitKeyB64(entry)])
-      .filter(([, initKeyB64]) => typeof initKeyB64 === 'string' && initKeyB64.length > 0)
-  )
+  const initKeyByLeaf = new Map()
+  const initKeyByUser = new Map()
+  for (const entry of Array.isArray(memberInitKeys) ? memberInitKeys : []) {
+    const initKeyB64 = resolveInitKeyB64(entry)
+    if (typeof initKeyB64 !== 'string' || initKeyB64.length === 0) continue
+    if (Number.isInteger(entry?.leafIndex)) {
+      initKeyByLeaf.set(entry.leafIndex, initKeyB64)
+    }
+    if (entry?.userId != null) {
+      initKeyByUser.set(String(entry.userId), initKeyB64)
+    }
+  }
+
   for (const member of normalizeRoster(roster)) {
     if (!Number.isInteger(member.leafIndex)) continue
-    const publicKeyB64 = initKeyMap.get(String(member.userId))
+    const publicKeyB64 =
+      initKeyByLeaf.get(member.leafIndex) ?? initKeyByUser.get(String(member.userId))
     if (!publicKeyB64) continue
     const nodeIndex = leafNode(member.leafIndex)
     if (nodeIndex >= treeNodes.length) continue

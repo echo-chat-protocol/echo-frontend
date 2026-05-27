@@ -68,6 +68,7 @@ export default function QRGenerator({ onDeviceLinked = null }) {
   const createSetupQr = useCallback(async () => {
     setBusy(true)
     setError(null)
+
     setSetupQr(null)
     setSession(null)
     setEphemeral(null)
@@ -79,12 +80,15 @@ export default function QRGenerator({ onDeviceLinked = null }) {
     setSecondsUntilReset(null)
     try {
       const eph = await generatePairingEphemeralDebug()
-      const created = await deviceService.createDhSession({
-        targetEphemeralPubKey: encodeKeyBase64(eph.ekPub),
-        origin: window.location.origin,
-        version: 'echo-history-package-v1',
-        targetDevice: { role: 'main-device' },
-      })
+      const created = await deviceService.createDhSession(
+        {
+          targetEphemeralPubKey: encodeKeyBase64(eph.ekPub),
+          origin: window.location.origin,
+          version: 'echo-history-package-v1',
+          targetDevice: { role: 'main-device' },
+        },
+        serverUrl
+      )
       if (!created?.sessionId || !created?.targetAccessToken) {
         throw new Error(
           'Server did not return a usable DH session. Restart the backend and try again.'
@@ -183,6 +187,7 @@ export default function QRGenerator({ onDeviceLinked = null }) {
         const result = await deviceService.getDhSession({
           sessionId: session.sessionId,
           targetAccessToken: session.targetAccessToken,
+          serverUrl,
         })
         const received = result.session?.sourceEphemeralPubKey
         if (!received) return

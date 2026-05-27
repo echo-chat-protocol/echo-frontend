@@ -37,6 +37,8 @@ import {
 
 import { decryptIncomingGroupMessage } from './Chat/utils/chat/groupMessageDecryption'
 import {
+  applyCommit,
+  buildAddCommit,
   loadGroupState,
   saveGroupState,
   processWelcome,
@@ -821,12 +823,212 @@ const Dashboard = () => {
     }
     sharedSocket.on('groupWelcome', handleGroupWelcomeBackground)
 
+    // Apply MLS commits at the Dashboard level so sibling devices (and any
+    // device whose GroupChat for the affected group isn't currently mounted)
+    // still advance their local epoch on add/remove. Without this, only the
+    // primary device that has the chat open processes `groupCommit`, and the
+    // synced sibling's roster and key material drift until they manually
+    // open the group.
+    //
+    // Serialized via a per-group promise queue so two commits for the same
+    // group can't race on EncryptedLocalDatabase reads/writes. Idempotent on
+    // epoch: if our state already covers this commit, we no-op so GroupChat's
+    // in-component handler can still take ownership when it's mounted.
+    const groupCommitQueues = new Map()
+    const enqueueGroupCommitTask = (groupId, task) => {
+      const gid = String(groupId)
+      const prev = groupCommitQueues.get(gid) ?? Promise.resolve()
+      const next = prev.catch(() => {}).then(task)
+      groupCommitQueues.set(
+        gid,
+        next.catch(() => {})
+      )
+      return next
+    }
+
+    const handleGroupCommitBackground = ({ groupId, commit }) => {
+      if (!groupId || !commit || typeof commit !== 'object') return
+      const gid = String(groupId)
+
+      enqueueGroupCommitTask(gid, async () => {
+        try {
+          const existing = await loadGroupState(gid).catch(() => null)
+          // No local state yet — a Welcome will bootstrap it. Commits that
+          // arrive before our Welcome are recovered via fetchGroupMessages
+          // replay when GroupChat opens.
+          if (!existing) return
+
+          // Idempotent epoch gate. The in-component GroupChat handler may
+          // already have advanced our state to this commit's epoch (or
+          // beyond), in which case applyCommit would throw "Invalid commit
+          // epoch". Skip cleanly instead of producing a misleading error.
+          if (
+            Number.isInteger(existing.epoch) &&
+            Number.isInteger(commit.epoch) &&
+            existing.epoch >= commit.epoch
+          ) {
+            return
+          }
+
+          // Without an applicable epoch+1 commit we can't advance. If commit
+          // is too far ahead (e.g. we missed an earlier commit while offline),
+          // let GroupChat's replay-on-open path catch up from server history.
+          if (
+            Number.isInteger(existing.epoch) &&
+            Number.isInteger(commit.epoch) &&
+            commit.epoch !== existing.epoch + 1
+          ) {
+            return
+          }
+
+          const identityKeys = await getIdentityKeys()
+          const myInitPrivKeyB64 =
+            localStorage.getItem('echo-device-mls-priv') || identityKeys?.privateKeyX25519 || null
+
+          const nextState = await applyCommit({
+            state: existing,
+            commit,
+            myInitPrivKeyB64,
+          })
+          const persisted = await saveGroupState(gid, nextState)
+          forwardGroupStateToPairedDevices(userIdRef.current, gid, persisted).catch(() => {})
+
+          // Tell any mounted GroupChat to reload from disk so its React state
+          // mirrors the new epoch without re-applying the commit (which would
+          // now throw on the epoch check).
+          window.dispatchEvent(new CustomEvent('groupStateSynced', { detail: { groupId: gid } }))
+        } catch (err) {
+          console.warn('[Dashboard] Background commit application failed:', err)
+        }
+      })
+    }
+    sharedSocket.on('groupCommit', handleGroupCommitBackground)
+
     // ── Device sync — persists across view/chat changes ──────────────────────
     let devicePollInterval = null
     // Bumped to v3: prior v2 runs could complete with an unlocked-ELD bypass
     // that left ELD.privatePreKey out of sync with Device.signedPreKey.
     const DEVICE_BUNDLE_FLAG = 'echo-device-bundle-uploaded-v3'
     localStorage.removeItem('echo-device-bundle-uploaded-v2')
+
+    const emitWithAck = (event, payload) =>
+      new Promise((resolve, reject) => {
+        sharedSocket.emit(event, payload, (ack) => {
+          if (ack?.success) resolve(ack)
+          else reject(new Error(ack?.error || `Failed to ${event}`))
+        })
+      })
+
+    const fetchOwnMlsKeyPackages = () =>
+      new Promise((resolve) => {
+        sharedSocket.emit('fetchAllKeyPackages', { userId }, (res) => {
+          if (!res?.success || !Array.isArray(res.packages)) {
+            resolve([])
+            return
+          }
+          resolve(
+            res.packages
+              .filter((pkg) => pkg?.initKeyB64 || pkg?.keyPackage?.initKeyB64)
+              .map((pkg) => ({
+                userId,
+                clientId: pkg.clientId ?? null,
+                initKeyB64: pkg.initKeyB64 ?? pkg.keyPackage?.initKeyB64 ?? null,
+                keyPackage: pkg.keyPackage ?? null,
+              }))
+          )
+        })
+      })
+
+    const ensureOwnDeviceLeavesForKnownGroups = async () => {
+      const isBenignMlsEpochError = (err) => {
+        const msg = String(err?.message || err || '')
+        return /invalid commit epoch/i.test(msg) || /conflict/i.test(msg) || err?.status === 409
+      }
+      const packages = await fetchOwnMlsKeyPackages()
+      if (packages.length === 0) return
+
+      let groups = []
+      try {
+        groups = JSON.parse(localStorage.getItem(`groups-${userId}`) || '[]')
+      } catch {
+        groups = []
+      }
+
+      for (const group of Array.isArray(groups) ? groups : []) {
+        const groupId = String(group?.groupId ?? group?.id ?? '')
+        if (!groupId || group?.removedFromGroup || group?.mlsEnabled === false) continue
+
+        let state = await loadGroupState(groupId).catch(() => null)
+        if (!state?.initSecretB64 || !Array.isArray(state?.roster)) continue
+
+        const nodePublicKeys = new Set(
+          (state.tree?.nodes ?? [])
+            .map((node) => node?.publicKeyB64)
+            .filter((value) => typeof value === 'string' && value.length > 0)
+        )
+        const missingPackages = packages.filter((pkg) => {
+          const initKeyB64 = pkg.keyPackage?.initKeyB64 ?? pkg.initKeyB64
+          return initKeyB64 && !nodePublicKeys.has(initKeyB64)
+        })
+        if (missingPackages.length === 0) continue
+
+        let nextLeafIndex =
+          state.roster.reduce(
+            (max, member) =>
+              Number.isInteger(member?.leafIndex) && member.leafIndex > max
+                ? member.leafIndex
+                : max,
+            -1
+          ) + 1
+
+        for (const pkg of missingPackages) {
+          const leafIndex = nextLeafIndex
+          nextLeafIndex += 1
+          const memberInitKeys = [{ ...pkg, leafIndex }]
+          const { commit, welcome, welcomes, nextState } = await buildAddCommit({
+            state,
+            newMember: {
+              userId,
+              username,
+              leafIndex,
+            },
+            memberInitKeys,
+          })
+
+          try {
+            await emitWithAck('sendGroupCommit', { groupId, commit })
+          } catch (err) {
+            if (isBenignMlsEpochError(err)) {
+              // Another owned device or this device already advanced the epoch.
+              // Stop trying to add remaining missing packages for this group.
+              break
+            }
+            // Non-epoch errors are unexpected; log and stop attempting further adds for this group.
+            console.warn('[MLS] sendGroupCommit failed while ensuring device leaves:', err)
+            break
+          }
+          for (const welcomeMessage of (Array.isArray(welcomes) ? welcomes : [welcome]).filter(
+            Boolean
+          )) {
+            try {
+              await emitWithAck('sendGroupWelcome', {
+                groupId,
+                recipientUserId: welcomeMessage.recipientUserId,
+                welcome: welcomeMessage,
+              })
+            } catch (err) {
+              if (!isBenignMlsEpochError(err)) {
+                console.warn('[MLS] sendGroupWelcome failed while ensuring device leaves:', err)
+              }
+              // Do not throw — move on to the next welcome or group.
+            }
+          }
+
+          state = await saveGroupState(groupId, nextState)
+          forwardGroupStateToPairedDevices(userId, groupId, state).catch(() => {})
+        }
+      }
+    }
 
     const initDeviceSync = async () => {
       const deviceMetadata = getDeviceMetadata()
@@ -859,11 +1061,15 @@ const Dashboard = () => {
           const b64 = (b) => btoa(String.fromCharCode(...b))
           localStorage.setItem('echo-device-mls-priv', b64(privBytes))
           localStorage.setItem('echo-device-mls-pub', b64(pubBytes))
-          void publishMlsKeyPackage()
         } catch {
           // non-fatal — fall back to identity key
         }
       }
+
+      await publishMlsKeyPackage()
+      ensureOwnDeviceLeavesForKnownGroups().catch((err) => {
+        console.warn('[MLS] Failed to ensure synced device leaves:', err)
+      })
 
       const poll = () => {
         if (!eld.isUnlocked?.()) return
@@ -947,6 +1153,7 @@ const Dashboard = () => {
       sharedSocket.off('groupMemberRemoved', handleGroupMemberRemoved)
       sharedSocket.off('groupMemberAdded', handleGroupMemberAdded)
       sharedSocket.off('groupWelcome', handleGroupWelcomeBackground)
+      sharedSocket.off('groupCommit', handleGroupCommitBackground)
       sharedSocket.off('newGroupMessage', handleNewGroupMessageNotification)
       window.removeEventListener('groupStateSynced', handleGroupStateSynced)
       sharedSocket.off('deviceEnvelope', handleDeviceEnvelope)

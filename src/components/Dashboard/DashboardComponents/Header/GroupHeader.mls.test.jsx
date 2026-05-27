@@ -39,7 +39,9 @@ const settle = async () => {
 function setInputValue(input, value) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
   setter.call(input, value)
-  input.dispatchEvent(new Event('input', { bubbles: true }))
+  input.dispatchEvent(
+    new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value })
+  )
   input.dispatchEvent(new Event('change', { bubbles: true }))
 }
 
@@ -90,6 +92,7 @@ describe('GroupHeader MLS membership updates', () => {
     groupProfilePicture = '/uploads/group-1.png'
 
     socket = {
+      connected: true,
       emit: vi.fn((event, payload, callback) => {
         if (event === 'openGroup') {
           callback?.({
@@ -165,6 +168,19 @@ describe('GroupHeader MLS membership updates', () => {
           callback?.({
             success: true,
             initKeyB64: payload.userId === 'bob' ? 'bob-init-key-b64' : 'key-init-b64',
+          })
+          return
+        }
+
+        if (event === 'fetchAllKeyPackages') {
+          callback?.({
+            success: true,
+            packages: [
+              {
+                clientId: payload.userId === 'bob' ? 'bob-device-1' : 'alice-device-1',
+                initKeyB64: payload.userId === 'bob' ? 'bob-init-key-b64' : 'key-init-b64',
+              },
+            ],
           })
         }
       }),
@@ -247,6 +263,7 @@ describe('GroupHeader MLS membership updates', () => {
       searchButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await flush()
     })
+    await settle()
   }
 
   it('builds and relays MLS add-member artifacts, then saves next state', async () => {
@@ -284,8 +301,13 @@ describe('GroupHeader MLS membership updates', () => {
       state: expect.objectContaining({ groupId: 'group-1', selfLeafIndex: 0 }),
       newMember: { userId: 'bob', username: 'Bob', leafIndex: 1 },
       memberInitKeys: [
-        { userId: 'alice', leafIndex: 0, initKeyB64: 'key-init-b64' },
-        { userId: 'bob', leafIndex: 1, initKeyB64: 'bob-init-key-b64' },
+        {
+          userId: 'bob',
+          leafIndex: 1,
+          clientId: 'bob-device-1',
+          initKeyB64: 'bob-init-key-b64',
+          keyPackage: null,
+        },
       ],
     })
     expect(socket.emit).toHaveBeenCalledWith(
@@ -349,7 +371,8 @@ describe('GroupHeader MLS membership updates', () => {
     expect(buildRemoveCommitMock).toHaveBeenCalledWith({
       state: expect.objectContaining({ groupId: 'group-1', selfLeafIndex: 0 }),
       targetUserId: 'bob',
-      memberInitKeys: [{ userId: 'alice', leafIndex: 0, initKeyB64: 'key-init-b64' }],
+      targetLeafIndex: 1,
+      memberInitKeys: [],
     })
     expect(socket.emit).toHaveBeenCalledWith(
       'sendGroupCommit',
@@ -370,7 +393,6 @@ describe('GroupHeader MLS membership updates', () => {
     mlsEnabled = false
     currentMembers = [
       makeMember({ userId: 'alice', username: 'Alice', leafIndex: 0, role: 'admin' }),
-      makeMember({ userId: 'bob', username: 'Bob', leafIndex: 1 }),
     ]
 
     await renderHeader()
@@ -380,13 +402,19 @@ describe('GroupHeader MLS membership updates', () => {
     const addButton = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Add'
     )
+
+    await act(async () => {
+      addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flush()
+    })
+    await settle()
+    await openMembersModal()
+
     const removeButton = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Remove'
     )
 
     await act(async () => {
-      addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await flush()
       removeButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await flush()
     })

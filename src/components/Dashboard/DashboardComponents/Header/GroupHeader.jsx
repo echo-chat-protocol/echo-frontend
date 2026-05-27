@@ -327,7 +327,6 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
                   .filter((pkg) => pkg?.initKeyB64 || pkg?.keyPackage?.initKeyB64)
                   .map((pkg) => ({
                     userId: member.userId,
-                    leafIndex: member.leafIndex,
                     clientId: pkg.clientId ?? null,
                     initKeyB64: pkg.initKeyB64 ?? pkg.keyPackage?.initKeyB64 ?? null,
                     keyPackage: pkg.keyPackage ?? null,
@@ -341,7 +340,6 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
                 resolve([
                   {
                     userId: member.userId,
-                    leafIndex: member.leafIndex,
                     clientId: res.clientId ?? null,
                     initKeyB64: res.initKeyB64 ?? res.keyPackage?.initKeyB64 ?? null,
                     keyPackage: res.keyPackage ?? null,
@@ -355,31 +353,67 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
           })
         })
 
-      // Fetch KeyPackages for ALL member devices in the new roster.
-      const memberInitKeys = (await Promise.all(roster.map(fetchDeviceKeyPackages))).flat()
-
-      const {
-        commit,
-        welcome,
-        welcomes: addWelcomes,
-        nextState,
-      } = await buildAddCommit({
-        state: localState,
-        newMember: addedMember,
-        memberInitKeys, // <-- pass the fetched init keys
-      })
-
-      await emitWithAck('sendGroupCommit', { groupId, commit }, 'Failed to send group commit')
-      const welcomes =
-        Array.isArray(addWelcomes) && addWelcomes.length > 0 ? addWelcomes : [welcome]
-      for (const welcomeMessage of welcomes.filter(Boolean)) {
-        await emitWithAck(
-          'sendGroupWelcome',
-          { groupId, recipientUserId: welcomeMessage.recipientUserId, welcome: welcomeMessage },
-          'Failed to send group welcome'
-        )
+      const devicePackages = await fetchDeviceKeyPackages(addedMember)
+      if (devicePackages.length === 0) {
+        throw new Error(`No KeyPackage for member ${addedMember.userId}`)
       }
-      await saveGroupState(groupId, nextState)
+
+      const maxLeafIndex = (localState.roster ?? []).reduce(
+        (max, member) =>
+          Number.isInteger(member?.leafIndex) && member.leafIndex > max ? member.leafIndex : max,
+        -1
+      )
+      let nextLeafIndex = maxLeafIndex + 1
+      let workingState = localState
+
+      for (const devicePackage of devicePackages) {
+        const targetLeafIndex = nextLeafIndex
+        nextLeafIndex += 1
+        const newMemberLeaf = { ...addedMember, leafIndex: targetLeafIndex }
+        const memberInitKeys = [{ ...devicePackage, leafIndex: targetLeafIndex }]
+        const {
+          commit,
+          welcome,
+          welcomes: addWelcomes,
+          nextState,
+        } = await buildAddCommit({
+          state: workingState,
+          newMember: newMemberLeaf,
+          memberInitKeys,
+        })
+
+        await emitWithAck('sendGroupCommit', { groupId, commit }, 'Failed to send group commit')
+        // Persist the inviter's epoch advancement immediately after the
+        // commit is accepted so the input is not stuck in "MLS not ready".
+        try {
+          const persistedState = await saveGroupState(groupId, nextState)
+          // Nudge GroupChat (if mounted) to reload MLS state from disk.
+          try {
+            window.dispatchEvent(
+              new CustomEvent('groupStateSynced', { detail: { groupId: String(groupId) } })
+            )
+          } catch {
+            /* ignore */
+          }
+          // Keep local working copy in sync even if the final save below were skipped.
+          workingState = persistedState
+        } catch {
+          // Fall through — the final save below will persist if this one fails.
+          workingState = nextState
+        }
+        const welcomes =
+          Array.isArray(addWelcomes) && addWelcomes.length > 0 ? addWelcomes : [welcome]
+        for (const welcomeMessage of welcomes.filter(Boolean)) {
+          await emitWithAck(
+            'sendGroupWelcome',
+            { groupId, recipientUserId: welcomeMessage.recipientUserId, welcome: welcomeMessage },
+            'Failed to send group welcome'
+          )
+        }
+        // workingState already set above; keep as-is
+      }
+
+      await saveGroupState(groupId, workingState)
       refresh()
       setMembersOpen(false)
     } catch (err) {
@@ -442,19 +476,24 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
         return
       }
 
-      // Persist refreshed roster into MLS state if it differs
-      const rosterChanged = JSON.stringify(localState.roster ?? []) !== JSON.stringify(roster)
-      if (rosterChanged) {
-        localState = await saveGroupState(groupId, { ...localState, roster })
+      const localRoster = Array.isArray(localState.roster) ? localState.roster : []
+      const targetLeaves = localRoster
+        .filter((m) => String(m.userId) === memberIdStr)
+        .sort((a, b) => {
+          if (a.leafIndex === localState.selfLeafIndex) return 1
+          if (b.leafIndex === localState.selfLeafIndex) return -1
+          return a.leafIndex - b.leafIndex
+        })
+      if (targetLeaves.length === 0) {
+        throw new Error(`Target userId ${memberIdStr} not found in local MLS roster`)
       }
 
-      // Remaining members (excluding the one being removed) need the new epoch key
-      const remainingMembers = roster.filter((m) => String(m.userId) !== memberIdStr)
+      const remainingLeaves = localRoster.filter((m) => String(m.userId) !== memberIdStr)
       const isSelfRemoval = memberIdStr === String(userId)
 
       // If this is the last member leaving the group, there is no next epoch to
       // distribute. Remove the membership directly instead of forcing an MLS commit.
-      if (remainingMembers.length === 0 && isSelfRemoval) {
+      if (remainingLeaves.length === 0 && isSelfRemoval) {
         await emitWithAck(
           'removeGroupMember',
           { groupId, memberId: memberIdStr },
@@ -463,30 +502,17 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
         return
       }
 
-      const memberInitKeys = await Promise.all(
-        remainingMembers.map(
-          (m) =>
-            new Promise((resolve) => {
-              socket.emit('fetchKeyPackage', { userId: m.userId }, (res) => {
-                if (res?.success && res.initKeyB64) {
-                  resolve({ userId: m.userId, leafIndex: m.leafIndex, initKeyB64: res.initKeyB64 })
-                } else {
-                  console.warn(`[GroupHeader] No KeyPackage for member ${m.userId}`)
-                  resolve(null)
-                }
-              })
-            })
-        )
-      ).then((results) => results.filter(Boolean))
-
-      const { commit, nextState } = await buildRemoveCommit({
-        state: localState,
-        targetUserId: memberIdStr,
-        memberInitKeys,
-      })
-
       if (isSelfRemoval) {
-        await emitWithAck('sendGroupCommit', { groupId, commit }, 'Failed to send group commit')
+        for (const targetLeaf of targetLeaves) {
+          const { commit, nextState } = await buildRemoveCommit({
+            state: localState,
+            targetUserId: memberIdStr,
+            targetLeafIndex: targetLeaf.leafIndex,
+            memberInitKeys: [],
+          })
+          await emitWithAck('sendGroupCommit', { groupId, commit }, 'Failed to send group commit')
+          localState = nextState
+        }
       }
 
       await emitWithAck(
@@ -496,10 +522,47 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
       )
 
       if (!isSelfRemoval) {
-        await emitWithAck('sendGroupCommit', { groupId, commit }, 'Failed to send group commit')
+        for (const targetLeaf of targetLeaves) {
+          const { commit, nextState } = await buildRemoveCommit({
+            state: localState,
+            targetUserId: memberIdStr,
+            targetLeafIndex: targetLeaf.leafIndex,
+            memberInitKeys: [],
+          })
+          await emitWithAck('sendGroupCommit', { groupId, commit }, 'Failed to send group commit')
+          // Persist + nudge GroupChat immediately so its ref advances before
+          // the server's commit broadcast races with our state. Without this,
+          // GroupChat's handleGroupCommit ends up re-applying our own commit
+          // against the stale pre-remove state and the sender's rotated leaf
+          // priv key — producing null applicationSecretB64 and stranding the
+          // remover with "MLS state not ready". Mirrors the add flow.
+          try {
+            const persistedState = await saveGroupState(groupId, nextState)
+            try {
+              window.dispatchEvent(
+                new CustomEvent('groupStateSynced', { detail: { groupId: String(groupId) } })
+              )
+            } catch {
+              /* ignore */
+            }
+            localState = persistedState
+          } catch {
+            localState = nextState
+          }
+        }
       }
 
-      await saveGroupState(groupId, nextState)
+      await saveGroupState(groupId, localState)
+      // Final nudge so GroupChat reloads its React state from the saved
+      // post-remove epoch. Without this, a mounted GroupChat could keep
+      // displaying its pre-remove crypto state until the user refreshes.
+      try {
+        window.dispatchEvent(
+          new CustomEvent('groupStateSynced', { detail: { groupId: String(groupId) } })
+        )
+      } catch {
+        /* ignore */
+      }
       refresh()
     } catch (err) {
       console.error('[GroupHeader] Failed to remove member:', err)

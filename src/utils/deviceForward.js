@@ -244,12 +244,84 @@ export async function processRawDeviceEnvelope(userId, rawEnvelope) {
       const { groupId, groupState } = payload
       if (groupId && groupState) {
         const local = await loadGroupState(groupId).catch(() => null)
+        const localMlsPub = localStorage.getItem('echo-device-mls-pub') || null
+        const localMlsPriv = localStorage.getItem('echo-device-mls-priv') || null
+        const incomingNodes = Array.isArray(groupState.tree?.nodes) ? groupState.tree.nodes : []
+        const ownLeafNodeIndex =
+          localMlsPub && incomingNodes.length > 0
+            ? incomingNodes.findIndex((node) => node?.publicKeyB64 === localMlsPub)
+            : -1
+        const ownLeafIndex =
+          ownLeafNodeIndex >= 0 && ownLeafNodeIndex % 2 === 0 ? ownLeafNodeIndex / 2 : null
+        const mergeIncomingTree = (baseTree = {}, selfLeafIndex = null) => {
+          const baseNodes = Array.isArray(baseTree?.nodes) ? baseTree.nodes : []
+          const sourceNodes = incomingNodes.length > 0 ? incomingNodes : baseNodes
+          const selfNodeIndex = Number.isInteger(selfLeafIndex) ? selfLeafIndex * 2 : -1
+          const nodes = sourceNodes.map((node, index) => ({
+            publicKeyB64:
+              index === selfNodeIndex && localMlsPub ? localMlsPub : (node?.publicKeyB64 ?? null),
+            privateKeyB64:
+              index === selfNodeIndex && localMlsPriv
+                ? localMlsPriv
+                : baseNodes[index]?.publicKeyB64 === node?.publicKeyB64
+                  ? (baseNodes[index]?.privateKeyB64 ?? null)
+                  : null,
+          }))
+          const incomingLeafData =
+            groupState.tree?.leafData && typeof groupState.tree.leafData === 'object'
+              ? groupState.tree.leafData
+              : {}
+          const selfLeafKey = Number.isInteger(selfLeafIndex) ? String(selfLeafIndex) : null
+          const leafData =
+            selfLeafKey && baseTree?.leafData?.[selfLeafKey] && !incomingLeafData[selfLeafKey]
+              ? { ...incomingLeafData, [selfLeafKey]: baseTree.leafData[selfLeafKey] }
+              : incomingLeafData
+          return {
+            ...baseTree,
+            nodes,
+            leafData,
+          }
+        }
+
+        const syncedEpochState = {
+          ...groupState,
+          // Application sender generations are local receive/send ratchets, not
+          // epoch key material. Syncing them makes siblings believe they already
+          // consumed messages that only the forwarding device encrypted/decrypted.
+          senderGenerations: {},
+          applicationMessageCounter: 0,
+        }
+
         if (!local) {
-          // No local state — first time seeing this group. Save as-is for bootstrap.
-          await saveGroupState(groupId, groupState)
+          // No local state: only bootstrap if this device already has its own
+          // MLS leaf in the forwarded tree. Otherwise saving as-is would clone
+          // the sender's selfLeafIndex and make two devices transmit from the
+          // same leaf/counter.
+          if (!Number.isInteger(ownLeafIndex)) return
+          await saveGroupState(groupId, {
+            ...syncedEpochState,
+            selfUserId: userId,
+            selfLeafIndex: ownLeafIndex,
+            tree: mergeIncomingTree(groupState.tree, ownLeafIndex),
+          })
         } else if (groupState.epoch != null && groupState.epoch > local.epoch) {
           // Epoch advanced: update epoch secrets but keep our own leaf identity and tree.
           // Our selfLeafIndex, leafSigningPrivKeyB64, and tree private keys are ours.
+          //
+          // tree.leafData (public-only: userId, username, leafSigningPubKey,
+          // credential) must come from the forwarded state — otherwise
+          // normalizeGroupState reconstructs the roster from our STALE local
+          // leafData, silently reverting an admin's add/remove on this device
+          // and leaving siblings showing the removed member.
+          const selfLeafIndex = Number.isInteger(ownLeafIndex) ? ownLeafIndex : local.selfLeafIndex
+          const mergedTree = mergeIncomingTree(local.tree, selfLeafIndex)
+          const ownSenderGeneration =
+            Number.isInteger(selfLeafIndex) && local.senderGenerations
+              ? local.senderGenerations[String(selfLeafIndex)]
+              : null
+          const senderGenerations = Number.isInteger(ownSenderGeneration)
+            ? { [String(selfLeafIndex)]: ownSenderGeneration }
+            : {}
           await saveGroupState(groupId, {
             ...local,
             applicationSecretB64: groupState.applicationSecretB64,
@@ -263,8 +335,13 @@ export async function processRawDeviceEnvelope(userId, rawEnvelope) {
             confirmedTranscriptHashB64: groupState.confirmedTranscriptHashB64,
             treeHashB64: groupState.treeHashB64,
             epoch: groupState.epoch,
+            selfLeafIndex,
             roster: groupState.roster,
-            senderGenerations: groupState.senderGenerations,
+            senderGenerations,
+            applicationMessageCounter: Number.isInteger(ownSenderGeneration)
+              ? ownSenderGeneration
+              : 0,
+            tree: mergedTree,
           })
         }
         window.dispatchEvent(new CustomEvent('groupStateSynced', { detail: { groupId } }))

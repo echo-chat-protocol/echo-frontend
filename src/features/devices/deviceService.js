@@ -125,12 +125,12 @@ export const deviceService = {
   revokeDevice: (deviceId) => request('POST', `/devices/${deviceId}/revoke`, {}),
   registerDeviceKeys: (deviceId, keyBundle) =>
     request('POST', `/devices/${deviceId}/keys`, keyBundle),
-  completeSyncTarget: ({ sessionId, targetAccessToken, targetDevice = {} }) =>
+  completeSyncTarget: ({ sessionId, targetAccessToken, targetDevice = {}, serverUrl = null }) =>
     request(
       'POST',
       '/sync/complete-target',
       { sessionId, targetAccessToken, targetDevice },
-      BASE,
+      serverUrl ? resolveApiBase(serverUrl) : BASE,
       true,
       targetAccessToken
     ),
@@ -139,7 +139,10 @@ export const deviceService = {
   fetchEnvelopes: (deviceId) => request('GET', `/messages/envelopes/${deviceId}`),
   ackEnvelope: (envelopeId, body) => request('POST', `/messages/envelopes/${envelopeId}/ack`, body),
 
-  createDhSession: (body) => requestWithLoopbackFallback('POST', '/sync/create-session', body),
+  createDhSession: (body, serverUrl = null) =>
+    serverUrl
+      ? request('POST', '/sync/create-session', body, resolveApiBase(serverUrl))
+      : requestWithLoopbackFallback('POST', '/sync/create-session', body),
   submitDhIdentityToServer: (serverUrl, body) =>
     request(
       'POST',
@@ -149,12 +152,12 @@ export const deviceService = {
       true,
       body?.targetAccessToken
     ),
-  getDhSession: ({ sessionId, targetAccessToken }) =>
+  getDhSession: ({ sessionId, targetAccessToken, serverUrl = null }) =>
     request(
       'GET',
       `/sync/dh-session/${sessionId}?targetAccessToken=${encodeURIComponent(targetAccessToken)}`,
       undefined,
-      BASE,
+      serverUrl ? resolveApiBase(serverUrl) : BASE,
       true,
       targetAccessToken
     ),

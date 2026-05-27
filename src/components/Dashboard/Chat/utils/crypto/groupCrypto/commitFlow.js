@@ -26,7 +26,6 @@ import {
   applyLeafDataPatch,
   blankNodeAndPath,
   computeLeafCount,
-  findLeafIndexForUser,
   installLeafPublicKeysFromMemberInitKeys,
   makeTreeFromPublicNodes,
   normalizeRoster,
@@ -75,6 +74,25 @@ function resolvePrevConfirmationTag(state) {
     return base64ToBytes(state.confirmationTagB64)
   }
   return new Uint8Array(32)
+}
+
+function resolveSelfLeafIndexAfterCommit(currentState, newRoster) {
+  const currentSelfLeafIndex = currentState.selfLeafIndex
+  const normalizedRoster = normalizeRoster(newRoster)
+
+  if (Number.isInteger(currentSelfLeafIndex)) {
+    const currentLeafStillPresent = normalizedRoster.some(
+      (member) =>
+        member.leafIndex === currentSelfLeafIndex &&
+        String(member.userId) === String(currentState.selfUserId)
+    )
+    return currentLeafStillPresent ? currentSelfLeafIndex : null
+  }
+
+  const match = normalizedRoster.find(
+    (member) => String(member.userId) === String(currentState.selfUserId ?? '')
+  )
+  return Number.isInteger(match?.leafIndex) ? match.leafIndex : null
 }
 
 // Build the fresh path secrets and node keys for a commit path.
@@ -278,12 +296,17 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
   }
 
   const roster = normalizeRoster(currentState.roster)
-  if (roster.some((m) => String(m.userId) === newMemberUserId)) {
-    throw new Error(`Member ${newMemberUserId} already exists in group ${currentState.groupId}`)
+  if (roster.some((m) => m.leafIndex === newMember.leafIndex)) {
+    throw new Error(`Leaf ${newMember.leafIndex} already exists in group ${currentState.groupId}`)
   }
 
+  const newMemberInitEntries = (memberInitKeys ?? []).filter((entry) =>
+    entry.leafIndex != null
+      ? entry.leafIndex === newMember.leafIndex
+      : String(entry.userId) === newMemberUserId
+  )
   const newMemberKeyPackage =
-    memberInitKeys?.find((e) => String(e.userId) === newMemberUserId)?.keyPackage ?? null
+    newMemberInitEntries.find((entry) => entry?.keyPackage)?.keyPackage ?? null
   const newMemberIdentity = resolveRosterIdentityFromKeyPackage(newMemberKeyPackage)
 
   const addProposal = await createProposal(
@@ -320,11 +343,6 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
   const newTree = resizeNodes(currentState.tree.nodes, width)
   installLeafPublicKeysFromMemberInitKeys(newTree, newRoster, memberInitKeys)
 
-  const newMemberInitEntries = (memberInitKeys ?? []).filter((entry) =>
-    entry.leafIndex != null
-      ? entry.leafIndex === newMember.leafIndex
-      : String(entry.userId) === newMemberUserId
-  )
   const newMemberInitKeyB64 = resolveInitKeyB64(newMemberInitEntries[0])
   if (!newMemberInitKeyB64) {
     throw new Error(
@@ -360,9 +378,7 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
   const prevTH = await resolvePrevTranscriptHash(currentState)
   const prevConfirmationTag = resolvePrevConfirmationTag(currentState)
 
-  const senderRosterEntry = newRoster.find(
-    (m) => String(m.userId) === String(currentState.selfUserId)
-  )
+  const senderRosterEntry = newRoster.find((m) => m.leafIndex === currentState.selfLeafIndex)
 
   const commit = {
     groupId: currentState.groupId,
@@ -490,7 +506,7 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
 }
 
 // Build a remove commit for one target member.
-export async function buildRemoveCommit({ state, targetUserId, memberInitKeys }) {
+export async function buildRemoveCommit({ state, targetUserId, targetLeafIndex, memberInitKeys }) {
   const currentState = normalizeGroupState(state)
   const targetUserIdStr = String(targetUserId ?? '')
 
@@ -504,7 +520,9 @@ export async function buildRemoveCommit({ state, targetUserId, memberInitKeys })
   }
 
   const roster = normalizeRoster(currentState.roster)
-  const targetMember = roster.find((m) => String(m.userId) === targetUserIdStr)
+  const targetMember = Number.isInteger(targetLeafIndex)
+    ? roster.find((m) => m.leafIndex === targetLeafIndex && String(m.userId) === targetUserIdStr)
+    : roster.find((m) => String(m.userId) === targetUserIdStr)
   if (!targetMember) throw new Error(`Target userId ${targetUserIdStr} not found in group roster`)
 
   const removeProposal = await createProposal(
@@ -552,9 +570,7 @@ export async function buildRemoveCommit({ state, targetUserId, memberInitKeys })
   const prevTH = await resolvePrevTranscriptHash(currentState)
   const prevConfirmationTag = resolvePrevConfirmationTag(currentState)
 
-  const senderRosterEntry = newRoster.find(
-    (m) => String(m.userId) === String(currentState.selfUserId)
-  )
+  const senderRosterEntry = roster.find((m) => m.leafIndex === currentState.selfLeafIndex)
 
   const commit = {
     groupId: currentState.groupId,
@@ -605,7 +621,9 @@ export async function buildRemoveCommit({ state, targetUserId, memberInitKeys })
   commit.signature = await signCommit(commit, currentState.leafSigningPrivKeyB64)
 
   const selfStillPresent = newRoster.some(
-    (m) => String(m.userId) === String(currentState.selfUserId)
+    (m) =>
+      m.leafIndex === currentState.selfLeafIndex &&
+      String(m.userId) === String(currentState.selfUserId)
   )
 
   // A removed member keeps the new roster view but loses epoch secrets.
@@ -817,7 +835,7 @@ export async function buildReInitCommit({ state, newGroupId, newCipherSuite }) {
   const prevConfirmationTag = resolvePrevConfirmationTag(currentState)
 
   const senderRosterEntry = currentState.roster.find(
-    (m) => String(m.userId) === String(currentState.selfUserId)
+    (m) => m.leafIndex === currentState.selfLeafIndex
   )
 
   const commit = {
@@ -986,7 +1004,7 @@ export async function applyCommit({ state, commit, myInitPrivKeyB64 }) {
     : resizeNodes(currentState.tree.nodes, nodeWidth(leafCount))
   const candidateTree = [...baseTree]
 
-  const selfLeafIndex = findLeafIndexForUser(newRoster, currentState.selfUserId)
+  const selfLeafIndex = resolveSelfLeafIndexAfterCommit(currentState, newRoster)
 
   const commitSecret = await applyUpdatePath(
     candidateTree,

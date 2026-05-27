@@ -190,12 +190,17 @@ export async function decryptApplicationMessage({
     throw new Error(`Cannot determine generation for group ${normalizedState.groupId}`)
   }
 
-  // Each sender advances one generation per message.
+  // Each sender advances one generation per message. Replays (gen < expected)
+  // are rejected; forward jumps are accepted because app keys are derived
+  // directly from (applicationSecret, senderLeafIndex, generation) with no
+  // chained ratchet, so any generation is independently decryptable when an
+  // earlier message is missing (e.g., dropped from the 50-message fetch window
+  // after a remove + re-add).
   const expectedGeneration = normalizedState.senderGenerations[String(senderLeafIndex)] ?? 0
-  if (generation !== expectedGeneration) {
+  if (generation < expectedGeneration) {
     throw new Error(
       `MLS generation mismatch for group ${normalizedState.groupId}: ` +
-        `expected ${expectedGeneration}, got ${generation}`
+        `expected >= ${expectedGeneration}, got ${generation}`
     )
   }
 

@@ -46,6 +46,17 @@ export function resolveApiBase(rawBase = import.meta.env.VITE_SOCKET_URL || DEFA
 
 export function resolvePairingServerUrl() {
   const configured = import.meta.env.VITE_PAIRING_SERVER_URL || import.meta.env.VITE_PUBLIC_APP_URL
+
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    isLoopbackHost(window.location.hostname) &&
+    typeof __DEV_LAN_ORIGIN__ === 'string' &&
+    __DEV_LAN_ORIGIN__
+  ) {
+    return __DEV_LAN_ORIGIN__.replace(/\/$/, '')
+  }
+
   if (configured) return configured.replace(/\/$/, '')
 
   if (typeof window !== 'undefined' && window.location?.origin) {

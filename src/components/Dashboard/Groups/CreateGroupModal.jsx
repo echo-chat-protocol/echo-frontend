@@ -220,39 +220,61 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
 
           const currentDeviceId = localStorage.getItem('echo-device-id') || null
           const creatorDeviceKeys = mlsEnabled ? await fetchDeviceKeyPackages(userId) : []
-          const memberInitKeysWithLeaf = mlsEnabled
-            ? roster
-                .flatMap((member) => {
-                  if (String(member.userId) === String(userId)) {
-                    const currentDeviceEntry = {
-                      userId: String(userId),
-                      leafIndex: member.leafIndex,
-                      clientId: currentDeviceId,
-                      initKeyB64: creatorInitPubKeyB64,
-                      excludeFromWelcome: true,
-                    }
-                    const siblingEntries = creatorDeviceKeys
-                      .filter(
-                        (entry) =>
-                          entry.initKeyB64 &&
-                          entry.initKeyB64 !== creatorInitPubKeyB64 &&
-                          (currentDeviceId === null || entry.clientId !== currentDeviceId)
-                      )
-                      .map((entry) => ({ ...entry, leafIndex: member.leafIndex }))
-                    return [currentDeviceEntry, ...siblingEntries]
-                  }
-                  const existing = memberInitKeys.filter(
-                    (entry) => String(entry.userId) === String(member.userId)
-                  )
-                  return existing.map((entry) => ({ ...entry, leafIndex: member.leafIndex }))
+          const expandedRoster = [...roster]
+          const memberInitKeysWithLeaf = []
+          let nextLeafIndex =
+            expandedRoster.reduce(
+              (max, member) =>
+                Number.isInteger(member.leafIndex) && member.leafIndex > max
+                  ? member.leafIndex
+                  : max,
+              -1
+            ) + 1
+
+          if (mlsEnabled) {
+            for (const member of roster) {
+              if (String(member.userId) === String(userId)) {
+                memberInitKeysWithLeaf.push({
+                  userId: String(userId),
+                  leafIndex: member.leafIndex,
+                  clientId: currentDeviceId,
+                  initKeyB64: creatorInitPubKeyB64,
+                  excludeFromWelcome: true,
                 })
-                .filter((entry) => entry?.initKeyB64 || entry?.keyPackage?.initKeyB64)
-            : []
+
+                const siblingEntries = creatorDeviceKeys.filter(
+                  (entry) =>
+                    entry.initKeyB64 &&
+                    entry.initKeyB64 !== creatorInitPubKeyB64 &&
+                    (currentDeviceId === null || entry.clientId !== currentDeviceId)
+                )
+                for (const entry of siblingEntries) {
+                  const leafIndex = nextLeafIndex
+                  nextLeafIndex += 1
+                  expandedRoster.push({ ...member, leafIndex })
+                  memberInitKeysWithLeaf.push({ ...entry, leafIndex })
+                }
+                continue
+              }
+
+              const deviceEntries = memberInitKeys.filter(
+                (entry) => String(entry.userId) === String(member.userId)
+              )
+              deviceEntries.forEach((entry, index) => {
+                const leafIndex = index === 0 ? member.leafIndex : nextLeafIndex
+                if (index > 0) {
+                  nextLeafIndex += 1
+                  expandedRoster.push({ ...member, leafIndex })
+                }
+                memberInitKeysWithLeaf.push({ ...entry, leafIndex })
+              })
+            }
+          }
 
           const creatorState = await createNewGroupState({
             groupId: ack.group.groupId,
             creatorUserId: userId,
-            roster,
+            roster: expandedRoster,
             cipherSuite: ack.group?.cipherSuite ?? cipherSuite ?? undefined,
             memberInitKeys: memberInitKeysWithLeaf,
             selfInitPrivKeyB64: creatorInitPrivKeyB64,
@@ -261,7 +283,7 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
           if (mlsEnabled && creatorState?.groupKeyB64) {
             const welcomes = await buildInitialWelcomes({
               creatorState,
-              roster,
+              roster: expandedRoster,
               memberInitKeys: memberInitKeysWithLeaf,
             })
             for (const welcome of welcomes) {
