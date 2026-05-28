@@ -89,6 +89,36 @@ export async function decryptIncomingGroupMessage({
 
   await updateSavedMessages(userId, getGroupCacheId(groupId), formattedMessage, setMessages)
 
+  if (typeof globalThis !== 'undefined' && globalThis.__echoGroupTrace) {
+    try {
+      globalThis.__echoGroupTrace.push({
+        direction: 'in',
+        phase: 'arrive',
+        groupId,
+        messageId: formattedMessage._id,
+        senderUserId: formattedMessage.userId,
+        senderUsername: fromUsername,
+        isOwnMessage,
+        createdAt,
+        contentType: message?.contentType ?? null,
+        framing: message?.encryptedSenderDataB64
+          ? 'encrypted-sender-data'
+          : message?.headerB64
+            ? 'plaintext-header'
+            : 'plaintext',
+        sizes: {
+          ciphertextB64: message?.ciphertextB64?.length ?? 0,
+          encryptedSenderDataB64: message?.encryptedSenderDataB64?.length ?? 0,
+          headerB64: message?.headerB64?.length ?? 0,
+        },
+        plaintext: text,
+        usedPendingPlaintext: isOwnMessage && hasAppMessage && typeof text === 'string',
+      })
+    } catch {
+      /* trace is best-effort */
+    }
+  }
+
   return {
     formattedMessage,
     nextState,

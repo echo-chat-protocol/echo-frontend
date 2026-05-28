@@ -32,25 +32,33 @@ function localBackendBase(base = BASE) {
   }
 }
 
-async function requestWithLoopbackFallback(method, path, body, base = BASE, authToken = null) {
+async function requestWithLoopbackFallback(
+  method,
+  path,
+  body,
+  base = BASE,
+  authToken = null,
+  syncTargetToken = null
+) {
   const fallbackBase = localBackendBase(base)
   if (fallbackBase && fallbackBase !== base) {
-    return request(method, path, body, fallbackBase, true, authToken)
+    return request(method, path, body, fallbackBase, true, authToken, syncTargetToken)
   }
 
   try {
-    return await request(method, path, body, base, true, authToken)
+    return await request(method, path, body, base, true, authToken, syncTargetToken)
   } catch (error) {
     if (!fallbackBase || fallbackBase === base) throw error
-    return request(method, path, body, fallbackBase, true, authToken)
+    return request(method, path, body, fallbackBase, true, authToken, syncTargetToken)
   }
 }
 
-function authHeaders(authToken = null) {
+function authHeaders(authToken = null, syncTargetToken = null) {
   const token = authToken || tokenStorage.getAccess() || localStorage.getItem('token')
   return {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(syncTargetToken ? { 'X-Sync-Target-Token': syncTargetToken } : {}),
   }
 }
 
@@ -58,8 +66,32 @@ function makeAuthError(message = 'Not authenticated') {
   return Object.assign(new Error(message), { status: 401, code: 'unauthorized' })
 }
 
-async function request(method, path, body, base = BASE, retry = true, authToken = null) {
-  if (!authToken && !tokenStorage.getAccess() && !localStorage.getItem('token')) {
+// Device pairing/sync endpoints authenticate with a rendezvous session token
+// (X-Sync-Target-Token) or are intentionally public before the phone has a JWT.
+function allowsUnauthenticatedAccess(method, path, syncTargetToken) {
+  if (syncTargetToken) return true
+  if (method === 'POST' && path === '/pairing/request') return true
+  if (method === 'GET' && path.startsWith('/pairing/poll/')) return true
+  if (method === 'GET' && path.startsWith('/pairing/session/')) return true
+  if (method === 'POST' && path === '/sync/create-session') return true
+  return false
+}
+
+async function request(
+  method,
+  path,
+  body,
+  base = BASE,
+  retry = true,
+  authToken = null,
+  syncTargetToken = null
+) {
+  if (
+    !allowsUnauthenticatedAccess(method, path, syncTargetToken) &&
+    !authToken &&
+    !tokenStorage.getAccess() &&
+    !localStorage.getItem('token')
+  ) {
     throw makeAuthError()
   }
 
@@ -69,15 +101,15 @@ async function request(method, path, body, base = BASE, retry = true, authToken 
   try {
     const res = await fetch(`${base}${path}`, {
       method,
-      headers: authHeaders(authToken),
+      headers: authHeaders(authToken, syncTargetToken),
       signal: controller.signal,
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     })
     const data = await res.json().catch(() => ({}))
-    if (res.status === 401 && retry && !authToken) {
+    if (res.status === 401 && retry && !authToken && !syncTargetToken) {
       try {
         await refreshAccessToken()
-        return request(method, path, body, base, false)
+        return request(method, path, body, base, false, authToken, syncTargetToken)
       } catch {
         throw Object.assign(new Error(data.message || data.error || 'Invalid or expired token'), {
           ...data,
@@ -132,6 +164,7 @@ export const deviceService = {
       { sessionId, targetAccessToken, targetDevice },
       serverUrl ? resolveApiBase(serverUrl) : BASE,
       true,
+      null,
       targetAccessToken
     ),
 
@@ -150,15 +183,17 @@ export const deviceService = {
       body,
       resolveApiBase(serverUrl),
       true,
+      null,
       body?.targetAccessToken
     ),
   getDhSession: ({ sessionId, targetAccessToken, serverUrl = null }) =>
     request(
       'GET',
-      `/sync/dh-session/${sessionId}?targetAccessToken=${encodeURIComponent(targetAccessToken)}`,
+      `/sync/dh-session/${sessionId}`,
       undefined,
       serverUrl ? resolveApiBase(serverUrl) : BASE,
       true,
+      null,
       targetAccessToken
     ),
   transferDhChunk: ({ sessionId, targetAccessToken, chunk }) =>
@@ -171,6 +206,7 @@ export const deviceService = {
         chunk,
       },
       BASE,
+      null,
       targetAccessToken
     ),
   transferDhChunkToServer: (serverUrl, { sessionId, targetAccessToken, chunk }) =>
@@ -180,15 +216,17 @@ export const deviceService = {
       { sessionId, targetAccessToken, chunk },
       resolveApiBase(serverUrl),
       true,
+      null,
       targetAccessToken
     ),
   listDhChunksFromServer: (serverUrl, { sessionId, targetAccessToken }) =>
     request(
       'GET',
-      `/sync/sessions/${sessionId}/chunks?targetAccessToken=${encodeURIComponent(targetAccessToken)}`,
+      `/sync/sessions/${sessionId}/chunks`,
       undefined,
       resolveApiBase(serverUrl),
       true,
+      null,
       targetAccessToken
     ),
 }

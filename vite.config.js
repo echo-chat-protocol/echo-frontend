@@ -51,6 +51,8 @@ function resolveLanOrigin(port) {
 }
 
 const devLanOrigin = resolveLanOrigin(devServerPort)
+const hmrHost =
+  process.env.TAURI_DEV_HOST || (devLanOrigin ? new URL(devLanOrigin).hostname : 'localhost')
 
 export default defineConfig({
   define: {
@@ -60,6 +62,11 @@ export default defineConfig({
   server: {
     host: true,
     port: devServerPort,
+    hmr: {
+      // Ensure the WebView (tauri.localhost) connects HMR to the correct port/host
+      clientPort: devServerPort,
+      host: hmrHost,
+    },
     proxy: {
       '/api': devProxy,
       '/sync': devProxy,

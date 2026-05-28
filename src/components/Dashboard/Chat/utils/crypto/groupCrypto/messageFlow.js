@@ -78,6 +78,25 @@ export async function encryptApplicationMessage({ state, plaintextBytes, aadByte
     generation
   )
 
+  if (typeof globalThis !== 'undefined' && globalThis.__echoGroupTrace) {
+    try {
+      globalThis.__echoGroupTrace.push({
+        direction: 'out',
+        phase: 'encrypt',
+        groupId: normalizedState.groupId,
+        epoch: normalizedState.epoch,
+        senderLeafIndex: normalizedState.selfLeafIndex,
+        generation,
+        appSecret,
+        derivedKey: key,
+        nonce,
+        plaintextBytes,
+      })
+    } catch {
+      /* trace is best-effort */
+    }
+  }
+
   const plaintextInput =
     typeof plaintextBytes === 'string'
       ? TEXT_ENCODER.encode(plaintextBytes)
@@ -209,6 +228,31 @@ export async function decryptApplicationMessage({
 
   const resolvedAad = aadBytes instanceof Uint8Array ? aadBytes : new Uint8Array(0)
   const plaintextBytes = decrypt_aad_bytes(ciphertextBytes, key, nonce, resolvedAad)
+
+  if (typeof globalThis !== 'undefined' && globalThis.__echoGroupTrace) {
+    try {
+      globalThis.__echoGroupTrace.push({
+        direction: 'in',
+        phase: 'decrypt',
+        groupId: normalizedState.groupId,
+        epoch: normalizedState.epoch,
+        senderLeafIndex,
+        generation,
+        expectedGeneration,
+        sourceFraming:
+          encryptedSenderDataB64 && normalizedState.senderDataSecretB64
+            ? 'encrypted-sender-data'
+            : 'plaintext-header',
+        appSecret,
+        derivedKey: key,
+        nonce,
+        ciphertextBytes,
+        plaintextBytes,
+      })
+    } catch {
+      /* trace is best-effort */
+    }
+  }
 
   if (!includeNewState) return plaintextBytes
 

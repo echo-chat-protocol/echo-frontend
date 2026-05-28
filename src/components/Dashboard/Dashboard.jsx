@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect, useMemo, lazy, Suspense } from 'react'
 
 const DeviceSyncModal = lazy(() => import('../../features/devices/DeviceSyncModal'))
+const DebugPanel = lazy(() => import('./Debug/DebugPanel'))
 import { useNavigate } from 'react-router-dom'
 import { Menu, ArrowLeft } from 'lucide-react'
+import DebugToggleButton from './Debug/DebugToggleButton'
 import Friends from './Friends/Friends'
 import Chat from './Chat/Chat'
 import Sidebar from './DashboardComponents/Sidebar/Sidebar'
@@ -41,6 +43,7 @@ import {
   saveGroupState,
   processWelcome,
 } from './Chat/utils/crypto/groupCryptoProvider'
+import { resolveMyInitPrivKeyB64 } from './Chat/utils/crypto/groupCrypto/groupMlsReplay'
 import { decryptIncomingMessage } from './Chat/utils/chat/messageDecryption'
 import { base64ToArrayBuffer } from './Chat/utils/helpers'
 import { generateOneTimePreKeys } from './Chat/utils/crypto/opk'
@@ -57,6 +60,10 @@ import {
 import wasmInit, { diffie_hellman } from '@mascaro101/echo-protocol'
 import { getDeviceMetadata } from '../../features/devices/deviceMetadata'
 import { revokeCurrentDeviceForLogout } from '../../features/devices/logoutDevice'
+import {
+  getOrCreateDeviceMlsKeyPackage,
+  resolveProcessWelcomeOptions,
+} from '../../features/devices/mlsDeviceKeyPackage'
 // import GroupList from './DashboardComponents/Groups/GroupList'
 import CreateGroupModal from './Groups/CreateGroupModal'
 import GroupChat from './Chat/GroupChat'
@@ -118,6 +125,7 @@ const Dashboard = () => {
     return localStorage.getItem('sidebarCollapsed') === 'true'
   })
   const [showDeviceSync, setShowDeviceSync] = useState(false)
+  const [showDebugPanel, setShowDebugPanel] = useState(false)
   const [removedGroups, setRemovedGroups] = useState({})
   // When navigating to Settings, this lets us open a specific section (e.g., 'devices') once
   const [settingsInitialSection, setSettingsInitialSection] = useState(null)
@@ -230,6 +238,18 @@ const Dashboard = () => {
     if (userId) localStorage.setItem('userId', userId)
   }, [userId])
 
+  // Ctrl+` (or Cmd+`) toggles the debug panel
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === '`') {
+        e.preventDefault()
+        setShowDebugPanel((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   // Rotate SPK if older than 30 days
   useEffect(() => {
     if (!socket || !eld.isUnlocked?.()) return
@@ -284,23 +304,42 @@ const Dashboard = () => {
 
         const deviceId = localStorage.getItem('echo-device-id')
         const mlsPub = localStorage.getItem('echo-device-mls-pub') || identityKeys.publicKeyX25519
-        return await new Promise((resolve) => {
-          sharedSocket.emit(
-            'publishKeyPackage',
-            { initKeyB64: mlsPub, clientId: deviceId || null },
-            (res) => {
-              if (res?.success) {
-                mlsKeyPackagePublishedRef.current = true
-                clearMlsKeyPackageRetry()
-                resolve(true)
-                return
-              }
 
-              console.warn('[MLS] Failed to publish KeyPackage:', res?.error)
-              scheduleMlsKeyPackageRetry()
-              resolve(false)
+        // Publish a FULL signed KeyPackage (leafSigningPubKey + credential + signature),
+        // not just an initKey. Without the signing pubkey, buildAddCommit writes a leaf
+        // with leafSigningPubKeyB64=null, which makes the recipient's processWelcome
+        // diverge on treeHash the moment the recipient generates its own signing key.
+        // That divergence is what breaks message delivery across devices.
+        let keyPackagePayload = null
+        if (userId) {
+          try {
+            const record = await getOrCreateDeviceMlsKeyPackage({
+              userId,
+              clientId: deviceId || null,
+              initKeyB64: mlsPub,
+            })
+            keyPackagePayload = record?.keyPackage ?? null
+          } catch (err) {
+            console.warn('[MLS] Could not build device KeyPackage:', err)
+          }
+        }
+
+        return await new Promise((resolve) => {
+          const payload = keyPackagePayload
+            ? { keyPackage: keyPackagePayload, clientId: deviceId || null }
+            : { initKeyB64: mlsPub, clientId: deviceId || null }
+          sharedSocket.emit('publishKeyPackage', payload, (res) => {
+            if (res?.success) {
+              mlsKeyPackagePublishedRef.current = true
+              clearMlsKeyPackageRetry()
+              resolve(true)
+              return
             }
-          )
+
+            console.warn('[MLS] Failed to publish KeyPackage:', res?.error)
+            scheduleMlsKeyPackageRetry()
+            resolve(false)
+          })
         })
       } catch (err) {
         console.warn('[MLS] Could not load identity keys for KeyPackage publish:', err)
@@ -805,7 +844,7 @@ const Dashboard = () => {
         const nextState = await processWelcome({
           welcome,
           selfUserId: userIdRef.current,
-          myInitPrivKeyB64,
+          ...resolveProcessWelcomeOptions({ userId: userIdRef.current, myInitPrivKeyB64 }),
         })
         const persisted = await saveGroupState(gid, nextState)
         forwardGroupStateToPairedDevices(userIdRef.current, gid, persisted).catch(() => {})
@@ -855,6 +894,14 @@ const Dashboard = () => {
           // arrive before our Welcome are recovered via fetchGroupMessages
           // replay when GroupChat opens.
           if (!existing) return
+          // Placeholder state (created by syncLocalStateFromServer when this
+          // device sees the group on the server but has no MLS material yet)
+          // carries a server-derived roster with no leafSigningPubKey entries.
+          // Trying to applyCommit against it throws "No signing pub key for
+          // commit sender at leafIndex …", losing the commit; the right path
+          // is to wait for the Welcome or GroupChat-open replay to land real
+          // leafData first.
+          if (!existing.applicationSecretB64 || !existing.initSecretB64) return
 
           // Idempotent epoch gate. The in-component GroupChat handler may
           // already have advanced our state to this commit's epoch (or
@@ -879,9 +926,34 @@ const Dashboard = () => {
             return
           }
 
+          // Never re-apply our own commit here. GroupHeader already persisted
+          // nextState before broadcasting; re-running applyUpdatePath with the
+          // device fallback init key yields null commitSecret and can strand the
+          // sender at the previous epoch.
+          const isOwnCommit =
+            Number.isInteger(existing.selfLeafIndex) &&
+            Number.isInteger(commit.senderLeafIndex) &&
+            existing.selfLeafIndex === commit.senderLeafIndex
+          if (isOwnCommit) {
+            const fresh = await loadGroupState(gid).catch(() => null)
+            if (
+              fresh &&
+              Number.isInteger(fresh.epoch) &&
+              Number.isInteger(commit.epoch) &&
+              fresh.epoch >= commit.epoch &&
+              (fresh.applicationSecretB64 || fresh.groupKeyB64)
+            ) {
+              window.dispatchEvent(
+                new CustomEvent('groupStateSynced', { detail: { groupId: gid } })
+              )
+            }
+            return
+          }
+
           const identityKeys = await getIdentityKeys()
-          const myInitPrivKeyB64 =
+          const fallbackPriv =
             localStorage.getItem('echo-device-mls-priv') || identityKeys?.privateKeyX25519 || null
+          const myInitPrivKeyB64 = resolveMyInitPrivKeyB64(existing, fallbackPriv)
 
           const nextState = await applyCommit({
             state: existing,
@@ -904,6 +976,8 @@ const Dashboard = () => {
 
     // ── Device sync — persists across view/chat changes ──────────────────────
     let devicePollInterval = null
+    let deviceLeafSweepInterval = null
+    let handleDeviceLeafSweepRequest = null
     // Bumped to v3: prior v2 runs could complete with an unlocked-ELD bypass
     // that left ELD.privatePreKey out of sync with Device.signedPreKey.
     const DEVICE_BUNDLE_FLAG = 'echo-device-bundle-uploaded-v3'
@@ -924,14 +998,18 @@ const Dashboard = () => {
             resolve([])
             return
           }
+          // Same constraint as deviceGroupLeaves.js: only consider packages that
+          // carry a full signed KeyPackage. A bare initKey would force
+          // buildAddCommit to write leafSigningPubKeyB64=null and desync the
+          // treeHash across devices, which silently breaks message decryption.
           resolve(
             res.packages
-              .filter((pkg) => pkg?.initKeyB64 || pkg?.keyPackage?.initKeyB64)
+              .filter((pkg) => pkg?.keyPackage?.initKeyB64 && pkg?.keyPackage?.leafSigningPubKeyB64)
               .map((pkg) => ({
                 userId,
                 clientId: pkg.clientId ?? null,
-                initKeyB64: pkg.initKeyB64 ?? pkg.keyPackage?.initKeyB64 ?? null,
-                keyPackage: pkg.keyPackage ?? null,
+                initKeyB64: pkg.keyPackage.initKeyB64,
+                keyPackage: pkg.keyPackage,
               }))
           )
         })
@@ -959,14 +1037,35 @@ const Dashboard = () => {
         let state = await loadGroupState(groupId).catch(() => null)
         if (!state?.initSecretB64 || !Array.isArray(state?.roster)) continue
 
-        const nodePublicKeys = new Set(
-          (state.tree?.nodes ?? [])
-            .map((node) => node?.publicKeyB64)
+        // Stable per-device identity in the tree is the leaf signing pub key,
+        // not the node publicKey. Every commit's update path rotates the
+        // sender's leaf node publicKey, so matching by initKeyB64 would treat
+        // an already-added device as "missing" after the very first commit and
+        // re-add it on every poll — that's how one send turns into N phantom
+        // leaves.
+        const leafSigningPubKeys = new Set(
+          Object.values(state.tree?.leafData ?? {})
+            .map((leaf) => leaf?.leafSigningPubKeyB64)
             .filter((value) => typeof value === 'string' && value.length > 0)
         )
+        const thisDeviceId = localStorage.getItem('echo-device-id')
+        const seenSigningPubKeys = new Set()
         const missingPackages = packages.filter((pkg) => {
-          const initKeyB64 = pkg.keyPackage?.initKeyB64 ?? pkg.initKeyB64
-          return initKeyB64 && !nodePublicKeys.has(initKeyB64)
+          const signingPubKeyB64 = pkg.keyPackage?.leafSigningPubKeyB64 ?? null
+          // No signing key in the KP means buildAddCommit would reject it
+          // anyway (see fetchOwnMlsKeyPackages filter), so drop it here too.
+          if (!signingPubKeyB64) return false
+          if (leafSigningPubKeys.has(signingPubKeyB64)) return false
+          // Never try to add ourselves as a second leaf — if our current
+          // identity isn't in the tree, the right answer is an Update commit,
+          // not a duplicate Add for the same device.
+          if (pkg.clientId && thisDeviceId && pkg.clientId === thisDeviceId) return false
+          // De-dupe within this sweep: if two KP rows somehow share a signing
+          // pub key (legacy bare-initKey row + a refreshed full KP, an old
+          // unconsumed row from a re-paired clientId, etc.), only add once.
+          if (seenSigningPubKeys.has(signingPubKeyB64)) return false
+          seenSigningPubKeys.add(signingPubKeyB64)
+          return true
         })
         if (missingPackages.length === 0) continue
 
@@ -1078,6 +1177,43 @@ const Dashboard = () => {
     }
     initDeviceSync()
 
+    // Re-run the device-leaf sweep on demand: a synced sibling that just
+    // came online dispatches `echo-request-device-leaf-sweep` from its
+    // bootstrap path, and we also re-sweep periodically because the server
+    // does not push a "sibling published KP" event.  Without this, the
+    // primary device only ever sweeps once at Dashboard mount — if the
+    // sibling's KeyPackage hadn't reached the server yet, the new leaf is
+    // never added, the Add commit never fires, and the epoch stays put.
+    let deviceLeafSweepInFlight = false
+    let deviceLeafSweepPending = false
+    const runDeviceLeafSweep = async (reason) => {
+      if (deviceLeafSweepInFlight) {
+        // Coalesce: a sweep is already running, mark that another pass is
+        // wanted so we don't drop request-event signals (the in-flight pass
+        // loaded state before this request arrived).
+        deviceLeafSweepPending = true
+        return
+      }
+      deviceLeafSweepInFlight = true
+      try {
+        do {
+          deviceLeafSweepPending = false
+          await ensureOwnDeviceLeavesForKnownGroups()
+        } while (deviceLeafSweepPending)
+      } catch (err) {
+        console.warn(`[MLS] Device-leaf sweep (${reason}) failed:`, err)
+      } finally {
+        deviceLeafSweepInFlight = false
+      }
+    }
+    handleDeviceLeafSweepRequest = () => {
+      void runDeviceLeafSweep('request')
+    }
+    window.addEventListener('echo-request-device-leaf-sweep', handleDeviceLeafSweepRequest)
+    deviceLeafSweepInterval = setInterval(() => {
+      void runDeviceLeafSweep('poll')
+    }, 12_000)
+
     const handleDeviceEnvelope = (rawEnvelope) => {
       processRawDeviceEnvelope(userId, rawEnvelope).catch(() => {})
     }
@@ -1087,6 +1223,24 @@ const Dashboard = () => {
       if (reqTargetUserId) broadcastSessionSync(userId, reqTargetUserId).catch(() => {})
     }
     sharedSocket.on('deviceSessionRequest', handleDeviceSessionRequest)
+
+    // A sibling device (e.g. a freshly paired phone) is asking us to add it
+    // into a group as its own MLS leaf. Only act on it if we hold initSecret
+    // for that group (i.e. we are an active member with epoch material).
+    // Route through runDeviceLeafSweep so this serializes with the 12s poll
+    // and the `echo-request-device-leaf-sweep` event — the sibling's bootstrap
+    // path fires both signals back-to-back, and unsynchronized handlers each
+    // load stale state then build a duplicate Add, producing phantom leaves.
+    const handleSiblingGroupMlsBootstrapRequest = async ({ groupId }) => {
+      const gid = String(groupId ?? '')
+      if (!gid) return
+      try {
+        await runDeviceLeafSweep('sibling-bootstrap')
+      } catch (err) {
+        console.warn('[MLS] sibling bootstrap response failed:', err)
+      }
+    }
+    sharedSocket.on('siblingGroupMlsBootstrapRequest', handleSiblingGroupMlsBootstrapRequest)
 
     // Primary device revoked this one — tear down and bounce to landing.
     const evictThisDevice = (reason) => {
@@ -1156,9 +1310,15 @@ const Dashboard = () => {
       window.removeEventListener('groupStateSynced', handleGroupStateSynced)
       sharedSocket.off('deviceEnvelope', handleDeviceEnvelope)
       sharedSocket.off('deviceSessionRequest', handleDeviceSessionRequest)
+      sharedSocket.off('siblingGroupMlsBootstrapRequest', handleSiblingGroupMlsBootstrapRequest)
+      sharedSocket.off('deviceSessionRequest', handleDeviceSessionRequest)
       sharedSocket.off('deviceRevoked', handleDeviceRevoked)
       sharedSocket.off('connect_error', handleConnectError)
       if (devicePollInterval) clearInterval(devicePollInterval)
+      if (deviceLeafSweepInterval) clearInterval(deviceLeafSweepInterval)
+      if (handleDeviceLeafSweepRequest) {
+        window.removeEventListener('echo-request-device-leaf-sweep', handleDeviceLeafSweepRequest)
+      }
       clearMlsKeyPackageRetry()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1434,6 +1594,20 @@ const Dashboard = () => {
           <DeviceSyncModal onClose={() => setShowDeviceSync(false)} />
         </Suspense>
       )}
+
+      {/* Debug panel toggle — floating, draggable so it never permanently blocks UI */}
+      <DebugToggleButton active={showDebugPanel} onToggle={() => setShowDebugPanel((v) => !v)} />
+
+      {/* Debug panel — slides in from the right; resizable up to full width */}
+      <Suspense fallback={null}>
+        <DebugPanel
+          open={showDebugPanel}
+          onClose={() => setShowDebugPanel(false)}
+          activeChat={activeChat}
+          userId={userId}
+          removedGroups={removedGroups}
+        />
+      </Suspense>
 
       {/* Floating shell */}
       <div className='relative flex h-full min-h-0 w-full gap-0 p-0 md:gap-3 md:p-3'>

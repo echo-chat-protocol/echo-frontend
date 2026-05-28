@@ -63,6 +63,16 @@ function makeMember({ userId, username, leafIndex, role = 'member' }) {
   }
 }
 
+function makeKeyPackage(userId) {
+  const initKeyB64 = userId === 'bob' ? 'bob-init-key-b64' : 'key-init-b64'
+  return {
+    userId,
+    initKeyB64,
+    leafSigningPubKeyB64: `${userId}-signing-pub-b64`,
+    credential: { userId, signature: `${userId}-credential-signature` },
+  }
+}
+
 describe('GroupHeader MLS membership updates', () => {
   let container
   let root
@@ -165,9 +175,10 @@ describe('GroupHeader MLS membership updates', () => {
         }
 
         if (event === 'fetchKeyPackage') {
+          const keyPackage = makeKeyPackage(payload.userId)
           callback?.({
             success: true,
-            initKeyB64: payload.userId === 'bob' ? 'bob-init-key-b64' : 'key-init-b64',
+            keyPackage,
           })
           return
         }
@@ -178,7 +189,7 @@ describe('GroupHeader MLS membership updates', () => {
             packages: [
               {
                 clientId: payload.userId === 'bob' ? 'bob-device-1' : 'alice-device-1',
-                initKeyB64: payload.userId === 'bob' ? 'bob-init-key-b64' : 'key-init-b64',
+                keyPackage: makeKeyPackage(payload.userId),
               },
             ],
           })
@@ -306,7 +317,7 @@ describe('GroupHeader MLS membership updates', () => {
           leafIndex: 1,
           clientId: 'bob-device-1',
           initKeyB64: 'bob-init-key-b64',
-          keyPackage: null,
+          keyPackage: makeKeyPackage('bob'),
         },
       ],
     })
@@ -372,7 +383,7 @@ describe('GroupHeader MLS membership updates', () => {
       state: expect.objectContaining({ groupId: 'group-1', selfLeafIndex: 0 }),
       targetUserId: 'bob',
       targetLeafIndex: 1,
-      memberInitKeys: [],
+      memberInitKeys: expect.any(Array),
     })
     expect(socket.emit).toHaveBeenCalledWith(
       'sendGroupCommit',
@@ -382,6 +393,15 @@ describe('GroupHeader MLS membership updates', () => {
       },
       expect.any(Function)
     )
+    expect(socket.emit).toHaveBeenCalledWith(
+      'removeGroupMember',
+      { groupId: 'group-1', memberId: 'bob' },
+      expect.any(Function)
+    )
+    const commitIdx = socket.emit.mock.calls.findIndex(([event]) => event === 'sendGroupCommit')
+    const removeIdx = socket.emit.mock.calls.findIndex(([event]) => event === 'removeGroupMember')
+    expect(commitIdx).toBeGreaterThanOrEqual(0)
+    expect(removeIdx).toBeGreaterThan(commitIdx)
     expect(saveGroupStateMock).toHaveBeenCalledWith('group-1', {
       groupId: 'group-1',
       epoch: 3,

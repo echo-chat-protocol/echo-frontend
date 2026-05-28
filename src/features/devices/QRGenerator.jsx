@@ -47,6 +47,10 @@ function formatCountdown(seconds) {
   return `${minutes}:${String(remainder).padStart(2, '0')}`
 }
 
+function isTerminalSyncSessionStatus(status) {
+  return status === 'completed' || status === 'cancelled' || status === 'expired'
+}
+
 export default function QRGenerator({ onDeviceLinked = null }) {
   const autoCreateAttemptedRef = useRef(false)
   const autoResettingRef = useRef(false)
@@ -182,13 +186,27 @@ export default function QRGenerator({ onDeviceLinked = null }) {
   useEffect(() => {
     if (!session?.sessionId || !session?.targetAccessToken || !ephemeral?.ekPriv || dhDebug) return
 
+    let cancelled = false
     const timer = setInterval(async () => {
+      if (cancelled) return
       try {
         const result = await deviceService.getDhSession({
           sessionId: session.sessionId,
           targetAccessToken: session.targetAccessToken,
           serverUrl,
         })
+        const polledStatus = result.session?.status
+        if (isTerminalSyncSessionStatus(polledStatus)) {
+          clearInterval(timer)
+          if (!autoResettingRef.current) {
+            autoResettingRef.current = true
+            createSetupQr().finally(() => {
+              autoResettingRef.current = false
+            })
+          }
+          return
+        }
+
         const received = result.session?.sourceEphemeralPubKey
         if (!received) return
 
@@ -203,7 +221,13 @@ export default function QRGenerator({ onDeviceLinked = null }) {
         setDhDebug({ ...debug, scannerPub })
         clearInterval(timer)
       } catch (e) {
-        if (e?.code === 'sync_session_expired') {
+        const terminalCode =
+          e?.code === 'sync_session_expired' ||
+          e?.code === 'sync_session_completed' ||
+          e?.code === 'sync_session_inactive' ||
+          e?.code === 'sync_session_not_found'
+        if (terminalCode) {
+          clearInterval(timer)
           if (!autoResettingRef.current) {
             autoResettingRef.current = true
             createSetupQr().finally(() => {
@@ -216,8 +240,18 @@ export default function QRGenerator({ onDeviceLinked = null }) {
       }
     }, 1500)
 
-    return () => clearInterval(timer)
-  }, [createSetupQr, dhDebug, ephemeral?.ekPriv, session?.sessionId, session?.targetAccessToken])
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [
+    createSetupQr,
+    dhDebug,
+    ephemeral?.ekPriv,
+    serverUrl,
+    session?.sessionId,
+    session?.targetAccessToken,
+  ])
 
   useEffect(() => {
     if (!dhDebug?.dhShared || !pairingCode || !session?.sessionId || !session?.targetAccessToken)
@@ -269,23 +303,25 @@ export default function QRGenerator({ onDeviceLinked = null }) {
     return () => {
       cancelled = true
     }
-  }, [dhDebug?.dhShared, pairingCode, session?.sessionId, session?.targetAccessToken])
+  }, [dhDebug?.dhShared, pairingCode, session?.sessionId, session?.targetAccessToken, serverUrl])
 
   useEffect(() => {
     if (transferStatus !== 'ready' || !session?.sessionId || !session?.targetAccessToken) return
 
     let cancelled = false
     const timer = setInterval(async () => {
+      if (cancelled) return
       try {
         const result = await deviceService.getDhSession({
           sessionId: session.sessionId,
           targetAccessToken: session.targetAccessToken,
+          serverUrl,
         })
-        if (result.session?.status !== 'completed') return
-
-        if (!cancelled) {
-          onDeviceLinked?.()
-          clearInterval(timer)
+        if (result.session?.status === 'completed') {
+          if (!cancelled) {
+            onDeviceLinked?.()
+            clearInterval(timer)
+          }
         }
       } catch (error) {
         if (error?.code === 'sync_session_completed' || /already completed/i.test(error?.message)) {
@@ -305,7 +341,6 @@ export default function QRGenerator({ onDeviceLinked = null }) {
             onDeviceLinked?.()
             clearInterval(timer)
           }
-          return
         }
         // Keep polling; the phone may still be completing the target side.
       }
@@ -315,7 +350,7 @@ export default function QRGenerator({ onDeviceLinked = null }) {
       cancelled = true
       clearInterval(timer)
     }
-  }, [onDeviceLinked, session?.sessionId, session?.targetAccessToken, transferStatus])
+  }, [onDeviceLinked, serverUrl, session?.sessionId, session?.targetAccessToken, transferStatus])
 
   const reset = () => {
     createSetupQr()

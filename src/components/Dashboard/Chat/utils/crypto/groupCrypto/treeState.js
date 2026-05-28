@@ -220,6 +220,40 @@ export function blankNodeAndPath(treeNodes, leafIndex, leafCount) {
   }
 }
 
+// Build leaf-scoped init-key entries from the persisted tree snapshot.
+export function memberInitKeysFromTree(roster, treeNodes, { excludeLeafIndex = null } = {}) {
+  const keys = []
+  for (const member of normalizeRoster(roster)) {
+    if (!Number.isInteger(member.leafIndex)) continue
+    if (Number.isInteger(excludeLeafIndex) && member.leafIndex === excludeLeafIndex) continue
+    const nodeIndex = leafNode(member.leafIndex)
+    const publicKeyB64 = treeNodes?.[nodeIndex]?.publicKeyB64
+    if (typeof publicKeyB64 !== 'string' || publicKeyB64.length === 0) continue
+    keys.push({
+      userId: member.userId,
+      leafIndex: member.leafIndex,
+      initKeyB64: publicKeyB64,
+    })
+  }
+  return keys
+}
+
+// Prefer explicit caller entries; fill gaps from supplemental tree snapshots.
+export function mergeMemberInitKeys(primary = [], supplemental = []) {
+  const byLeaf = new Map()
+  for (const entry of supplemental) {
+    const initKeyB64 = resolveInitKeyB64(entry)
+    if (!Number.isInteger(entry?.leafIndex) || !initKeyB64) continue
+    byLeaf.set(entry.leafIndex, { ...entry, leafIndex: entry.leafIndex, initKeyB64 })
+  }
+  for (const entry of primary) {
+    const initKeyB64 = resolveInitKeyB64(entry)
+    if (!Number.isInteger(entry?.leafIndex) || !initKeyB64) continue
+    byLeaf.set(entry.leafIndex, { ...entry, leafIndex: entry.leafIndex, initKeyB64 })
+  }
+  return [...byLeaf.values()]
+}
+
 // Fill leaf public keys from the latest init-key inputs.
 export function installLeafPublicKeysFromMemberInitKeys(treeNodes, roster, memberInitKeys) {
   const initKeyByLeaf = new Map()
@@ -237,11 +271,21 @@ export function installLeafPublicKeysFromMemberInitKeys(treeNodes, roster, membe
 
   for (const member of normalizeRoster(roster)) {
     if (!Number.isInteger(member.leafIndex)) continue
-    const publicKeyB64 =
-      initKeyByLeaf.get(member.leafIndex) ?? initKeyByUser.get(String(member.userId))
+    const explicit = initKeyByLeaf.get(member.leafIndex)
+    const fallback = initKeyByUser.get(String(member.userId))
+    const publicKeyB64 = explicit ?? fallback
     if (!publicKeyB64) continue
     const nodeIndex = leafNode(member.leafIndex)
     if (nodeIndex >= treeNodes.length) continue
+    // Same-userId siblings (multi-device): the userId fallback would otherwise
+    // overwrite an existing primary leaf with the new sibling's initKey, which
+    // corrupts the tree (primary leaf publicKey ≠ primary's KP). That makes the
+    // 12s sweep keep "rediscovering" the primary as missing, and re-adding it
+    // every poll, advancing the epoch on a broken tree.
+    // Why: only the entry that explicitly targets a leafIndex is authoritative
+    // for that leaf; the userId fallback must not clobber a leaf that is
+    // already populated.
+    if (!explicit && treeNodes[nodeIndex]?.publicKeyB64) continue
     treeNodes[nodeIndex] = {
       publicKeyB64,
       privateKeyB64: treeNodes[nodeIndex]?.privateKeyB64 ?? null,

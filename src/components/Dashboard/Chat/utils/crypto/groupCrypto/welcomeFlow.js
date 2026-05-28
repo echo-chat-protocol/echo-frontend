@@ -332,6 +332,10 @@ export async function processWelcome({
     confirmedTranscriptHash,
   })
 
+  const incomingRecipientLeaf = resolvedLeafData[String(welcome.recipientLeafIndex)] ?? null
+  const incomingSigningPubKeyB64 = incomingRecipientLeaf?.leafSigningPubKeyB64 ?? null
+  const incomingCredential = incomingRecipientLeaf?.credential ?? null
+
   let leafSigningPrivKeyB64
   let leafSigningPubKeyB64
   let credential
@@ -339,6 +343,16 @@ export async function processWelcome({
     leafSigningPrivKeyB64 = myLeafSigningPrivKeyB64
     leafSigningPubKeyB64 = myKeyPackage.leafSigningPubKeyB64
     credential = myKeyPackage.credential ?? null
+  } else if (incomingSigningPubKeyB64) {
+    // The Welcome sender already wrote a signing identity for our leaf into the
+    // shared GroupInfo. Trust it so our local tree.leafData matches everyone
+    // else's — overwriting it with a fresh keypair desynchronizes the treeHash
+    // and breaks all subsequent epoch-secret derivations.
+    // We won't be able to sign commits without the private half, but app
+    // message send/receive only needs the shared epoch secrets.
+    leafSigningPrivKeyB64 = null
+    leafSigningPubKeyB64 = incomingSigningPubKeyB64
+    credential = incomingCredential
   } else {
     // Older callers can still generate a local signing identity on welcome.
     const generated = await generateLeafSigningKeypair()
@@ -352,12 +366,15 @@ export async function processWelcome({
   }
 
   const leafData = { ...resolvedLeafData }
-  // Always write the local leaf from the recipient view before building state.
-  leafData[String(welcome.recipientLeafIndex)] = {
+  // Preserve the GroupInfo's view of this leaf when it already matches the
+  // identity we're committing to. Only patch fields that were absent so the
+  // resulting tree.leafData is byte-identical to every peer's view.
+  const recipientKey = String(welcome.recipientLeafIndex)
+  leafData[recipientKey] = {
     userId: effectiveSelfUserId,
-    username: leafData[String(welcome.recipientLeafIndex)]?.username ?? 'Member',
-    leafSigningPubKeyB64,
-    credential,
+    username: leafData[recipientKey]?.username ?? 'Member',
+    leafSigningPubKeyB64: incomingSigningPubKeyB64 ?? leafSigningPubKeyB64,
+    credential: incomingCredential ?? credential,
   }
 
   const roster = rosterFromLeafData(leafData)

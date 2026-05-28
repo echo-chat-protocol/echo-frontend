@@ -56,6 +56,17 @@ const getKey = (userId, targetUserId, index) => {
   return key
 }
 
+function getMessageDedupeKey(message) {
+  if (
+    message?.messageType === 'system' &&
+    typeof message.commitGroupId === 'string' &&
+    Number.isInteger(message.commitEpoch)
+  ) {
+    return `commit:${message.commitGroupId}:${message.commitEpoch}`
+  }
+  return message?._id ?? null
+}
+
 const updateSavedMessages = (userId, targetUserId, message, setMessages) => {
   console.log('📂 Updating saved messages')
   console.log('📂 Saved message:', message)
@@ -63,14 +74,18 @@ const updateSavedMessages = (userId, targetUserId, message, setMessages) => {
   const savedSessionKey = `chatSession-${userId}-${targetUserId}`
   const savedSession = localStorage.getItem(savedSessionKey)
   let savedMessages = []
+  const incomingKey = getMessageDedupeKey(message)
 
   if (savedSession) {
     const parsedSession = JSON.parse(savedSession)
     savedMessages = parsedSession.savedMessages || []
 
-    if (savedMessages.some((msg) => msg._id === message._id)) {
-      console.log('⚠️ Duplicate message ignored:', message._id)
-
+    const existingIndex = savedMessages.findIndex((msg) => {
+      const existingKey = getMessageDedupeKey(msg)
+      return incomingKey ? existingKey === incomingKey : msg._id === message._id
+    })
+    if (existingIndex >= 0) {
+      console.log('⚠️ Duplicate message ignored:', incomingKey || message._id)
       return
     }
   }
@@ -83,7 +98,7 @@ const updateSavedMessages = (userId, targetUserId, message, setMessages) => {
   window.dispatchEvent(new Event('localStorageUpdated'))
   console.log('📂 Updated saved messages:', savedMessages)
 
-  setMessages(savedMessages)
+  if (typeof setMessages === 'function') setMessages(savedMessages)
 }
 
 export { storeKey, getLatestKey, getKey, updateSavedMessages }

@@ -272,10 +272,29 @@ export async function processRawDeviceEnvelope(userId, rawEnvelope) {
               ? groupState.tree.leafData
               : {}
           const selfLeafKey = Number.isInteger(selfLeafIndex) ? String(selfLeafIndex) : null
-          const leafData =
-            selfLeafKey && baseTree?.leafData?.[selfLeafKey] && !incomingLeafData[selfLeafKey]
-              ? { ...incomingLeafData, [selfLeafKey]: baseTree.leafData[selfLeafKey] }
+          const baseLeafData =
+            baseTree?.leafData && typeof baseTree.leafData === 'object' ? baseTree.leafData : {}
+          // Use the forwarded leafData as the source of truth (it's the
+          // post-commit view at the new epoch — entries removed by Remove
+          // commits must NOT be resurrected from local). The one exception is
+          // when the forward arrives with an *empty* leafData: that's almost
+          // certainly a sender-side bug (placeholder-state forward, partial
+          // serialization, etc.) rather than "every leaf was removed", and
+          // wiping the receiver's view to match strands it on the next
+          // inbound commit with "No signing pub key at leafIndex 0". Fall
+          // back to the local leafData in that degenerate case.
+          const incomingLeafCount = Object.keys(incomingLeafData).length
+          const useIncoming = incomingLeafCount > 0
+          const leafData = useIncoming
+            ? selfLeafKey && baseLeafData[selfLeafKey] && !incomingLeafData[selfLeafKey]
+              ? { ...incomingLeafData, [selfLeafKey]: baseLeafData[selfLeafKey] }
               : incomingLeafData
+            : baseLeafData
+          if (!useIncoming && Object.keys(baseLeafData).length > 0) {
+            console.warn(
+              '[DeviceForward] Incoming groupStateSync had empty leafData; keeping local leafData to avoid stranding'
+            )
+          }
           return {
             ...baseTree,
             nodes,

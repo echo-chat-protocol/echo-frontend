@@ -10,6 +10,10 @@ import {
   buildAddCommit,
   buildRemoveCommit,
 } from '../../Chat/utils/crypto/groupCryptoProvider'
+import {
+  memberInitKeysFromTree,
+  mergeMemberInitKeys,
+} from '../../Chat/utils/crypto/groupCrypto/treeState.js'
 
 import { compressImage } from '../../Chat/utils/imageUtils'
 
@@ -318,42 +322,63 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
       const localState = await loadGroupState(groupId)
       if (!localState) throw new Error('Missing local MLS state for commit generation')
 
+      // Only accept full signed KeyPackages with BOTH initKeyB64 and
+      // leafSigningPubKeyB64.  A bare-initKey package would be added as a
+      // no-sig leaf, which (a) shows up in the debug panel as "no-sig",
+      // (b) cannot author or verify commits, and (c) desyncs treeHash across
+      // devices once any other member generates real signing material.  The
+      // peer's mobile re-publishes a full KP on every Dashboard mount — wait
+      // for it.
+      const isFullKeyPackage = (pkg) =>
+        Boolean(pkg?.keyPackage?.initKeyB64 && pkg?.keyPackage?.leafSigningPubKeyB64)
+
       const fetchDeviceKeyPackages = (member) =>
         new Promise((resolve) => {
           socket.emit('fetchAllKeyPackages', { userId: member.userId }, (allRes) => {
             if (allRes?.success && Array.isArray(allRes.packages) && allRes.packages.length > 0) {
+              const filtered = allRes.packages.filter(isFullKeyPackage)
+              if (filtered.length === 0) {
+                console.warn(
+                  `[GroupHeader] No full KeyPackage for ${member.userId} — peer device hasn't re-published its signed KP yet`
+                )
+              }
               resolve(
-                allRes.packages
-                  .filter((pkg) => pkg?.initKeyB64 || pkg?.keyPackage?.initKeyB64)
-                  .map((pkg) => ({
-                    userId: member.userId,
-                    clientId: pkg.clientId ?? null,
-                    initKeyB64: pkg.initKeyB64 ?? pkg.keyPackage?.initKeyB64 ?? null,
-                    keyPackage: pkg.keyPackage ?? null,
-                  }))
+                filtered.map((pkg) => ({
+                  userId: member.userId,
+                  clientId: pkg.clientId ?? null,
+                  initKeyB64: pkg.keyPackage.initKeyB64,
+                  keyPackage: pkg.keyPackage,
+                }))
               )
               return
             }
 
             socket.emit('fetchKeyPackage', { userId: member.userId }, (res) => {
-              if (res?.success && (res.initKeyB64 || res.keyPackage?.initKeyB64)) {
+              if (res?.success && isFullKeyPackage(res)) {
                 resolve([
                   {
                     userId: member.userId,
                     clientId: res.clientId ?? null,
-                    initKeyB64: res.initKeyB64 ?? res.keyPackage?.initKeyB64 ?? null,
-                    keyPackage: res.keyPackage ?? null,
+                    initKeyB64: res.keyPackage.initKeyB64,
+                    keyPackage: res.keyPackage,
                   },
                 ])
               } else {
-                console.warn(`[GroupHeader] No KeyPackage for member ${member.userId}`)
+                console.warn(`[GroupHeader] No full KeyPackage for member ${member.userId}`)
                 resolve([])
               }
             })
           })
         })
 
-      const devicePackages = await fetchDeviceKeyPackages(addedMember)
+      const seenPackageSigningKeys = new Set()
+      const devicePackages = (await fetchDeviceKeyPackages(addedMember)).filter((pkg) => {
+        const signingPubKeyB64 = pkg?.keyPackage?.leafSigningPubKeyB64 ?? null
+        if (!signingPubKeyB64) return false
+        if (seenPackageSigningKeys.has(signingPubKeyB64)) return false
+        seenPackageSigningKeys.add(signingPubKeyB64)
+        return true
+      })
       if (devicePackages.length === 0) {
         throw new Error(`No KeyPackage for member ${addedMember.userId}`)
       }
@@ -491,6 +516,58 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
       const remainingLeaves = localRoster.filter((m) => String(m.userId) !== memberIdStr)
       const isSelfRemoval = memberIdStr === String(userId)
 
+      const isFullKeyPackage = (pkg) =>
+        Boolean(pkg?.keyPackage?.initKeyB64 && pkg?.keyPackage?.leafSigningPubKeyB64)
+
+      const fetchAllDeviceKeyPackages = (member) =>
+        new Promise((resolve) => {
+          socket.emit('fetchAllKeyPackages', { userId: member.userId }, (allRes) => {
+            if (allRes?.success && Array.isArray(allRes.packages)) {
+              resolve(allRes.packages.filter(isFullKeyPackage))
+              return
+            }
+            resolve([])
+          })
+        })
+
+      const resolveRemoveMemberInitKeys = async (state, members) => {
+        const fromTree = memberInitKeysFromTree(members, state.tree?.nodes ?? [])
+        const coveredLeaves = new Set(fromTree.map((entry) => entry.leafIndex))
+        const missingLeaves = members.filter(
+          (member) => Number.isInteger(member?.leafIndex) && !coveredLeaves.has(member.leafIndex)
+        )
+
+        const fetched = []
+        for (const member of missingLeaves) {
+          const packages = await fetchAllDeviceKeyPackages(member)
+          const signingPubKeyB64 =
+            state.tree?.leafData?.[String(member.leafIndex)]?.leafSigningPubKeyB64 ??
+            member.leafSigningPubKeyB64 ??
+            null
+          const matched =
+            (signingPubKeyB64
+              ? packages.find((pkg) => pkg?.keyPackage?.leafSigningPubKeyB64 === signingPubKeyB64)
+              : null) ?? packages[0]
+          if (!matched?.keyPackage?.initKeyB64) {
+            console.warn(
+              `[GroupHeader] Missing init key for leaf ${member.leafIndex} (${member.userId}) while building remove commit`
+            )
+            continue
+          }
+          fetched.push({
+            userId: member.userId,
+            leafIndex: member.leafIndex,
+            clientId: matched.clientId ?? null,
+            initKeyB64: matched.keyPackage.initKeyB64,
+            keyPackage: matched.keyPackage,
+          })
+        }
+
+        return mergeMemberInitKeys(fetched, fromTree)
+      }
+
+      const removeMemberInitKeys = await resolveRemoveMemberInitKeys(localState, remainingLeaves)
+
       // If this is the last member leaving the group, there is no next epoch to
       // distribute. Remove the membership directly instead of forcing an MLS commit.
       if (remainingLeaves.length === 0 && isSelfRemoval) {
@@ -502,15 +579,36 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
         return
       }
 
-      if (isSelfRemoval) {
-        for (const targetLeaf of targetLeaves) {
-          const { commit, nextState } = await buildRemoveCommit({
-            state: localState,
-            targetUserId: memberIdStr,
-            targetLeafIndex: targetLeaf.leafIndex,
-            memberInitKeys: [],
-          })
-          await emitWithAck('sendGroupCommit', { groupId, commit }, 'Failed to send group commit')
+      // Broadcast MLS remove commits before removeGroupMember so peers receive
+      // groupCommit (advanced epoch) before groupMemberRemoved. If membership
+      // is marked removed first, handleMembershipChanged syncs a server roster
+      // that already excludes the target while local epoch secrets still reflect
+      // the old tree — remaining members can lose applicationSecretB64.
+      for (const targetLeaf of targetLeaves) {
+        const { commit, nextState } = await buildRemoveCommit({
+          state: localState,
+          targetUserId: memberIdStr,
+          targetLeafIndex: targetLeaf.leafIndex,
+          memberInitKeys: removeMemberInitKeys,
+        })
+        await emitWithAck('sendGroupCommit', { groupId, commit }, 'Failed to send group commit')
+        // Persist + nudge GroupChat immediately so its ref advances before
+        // the server's commit broadcast races with our state. Without this,
+        // GroupChat's handleGroupCommit ends up re-applying our own commit
+        // against the stale pre-remove state and the sender's rotated leaf
+        // priv key — producing null applicationSecretB64 and stranding the
+        // remover with "MLS state not ready". Mirrors the add flow.
+        try {
+          const persistedState = await saveGroupState(groupId, nextState)
+          try {
+            window.dispatchEvent(
+              new CustomEvent('groupStateSynced', { detail: { groupId: String(groupId) } })
+            )
+          } catch {
+            /* ignore */
+          }
+          localState = persistedState
+        } catch {
           localState = nextState
         }
       }
@@ -520,37 +618,6 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
         { groupId, memberId: memberIdStr },
         'Failed to remove group member'
       )
-
-      if (!isSelfRemoval) {
-        for (const targetLeaf of targetLeaves) {
-          const { commit, nextState } = await buildRemoveCommit({
-            state: localState,
-            targetUserId: memberIdStr,
-            targetLeafIndex: targetLeaf.leafIndex,
-            memberInitKeys: [],
-          })
-          await emitWithAck('sendGroupCommit', { groupId, commit }, 'Failed to send group commit')
-          // Persist + nudge GroupChat immediately so its ref advances before
-          // the server's commit broadcast races with our state. Without this,
-          // GroupChat's handleGroupCommit ends up re-applying our own commit
-          // against the stale pre-remove state and the sender's rotated leaf
-          // priv key — producing null applicationSecretB64 and stranding the
-          // remover with "MLS state not ready". Mirrors the add flow.
-          try {
-            const persistedState = await saveGroupState(groupId, nextState)
-            try {
-              window.dispatchEvent(
-                new CustomEvent('groupStateSynced', { detail: { groupId: String(groupId) } })
-              )
-            } catch {
-              /* ignore */
-            }
-            localState = persistedState
-          } catch {
-            localState = nextState
-          }
-        }
-      }
 
       await saveGroupState(groupId, localState)
       // Final nudge so GroupChat reloads its React state from the saved

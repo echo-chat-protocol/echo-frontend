@@ -27,7 +27,10 @@ import {
   blankNodeAndPath,
   computeLeafCount,
   installLeafPublicKeysFromMemberInitKeys,
+  installOwnLeafPrivateKey,
   makeTreeFromPublicNodes,
+  memberInitKeysFromTree,
+  mergeMemberInitKeys,
   normalizeRoster,
   publicTreeSnapshot,
   resizeNodes,
@@ -320,13 +323,30 @@ export async function buildAddCommit({ state, newMember, memberInitKeys }) {
     currentState.leafSigningPrivKeyB64
   )
 
+  // Refuse to write a no-sig leaf: every member must have a verified signing
+  // identity (signing pub key + credential).  A leaf without leafSigningPubKey
+  // can never produce or verify commits, and its presence in the tree forces
+  // every subsequent treeHash to omit identity bits — which silently desyncs
+  // application keys across devices.  If we reach this point without a KP,
+  // the caller filtered KPs incorrectly (must require a full signed
+  // KeyPackage with both initKeyB64 and leafSigningPubKeyB64).
+  const newLeafSigningPubKeyB64 =
+    newMemberIdentity?.leafSigningPubKeyB64 ?? newMember?.leafSigningPubKeyB64 ?? null
+  const newLeafCredential = newMemberIdentity?.credential ?? newMember?.credential ?? null
+  if (!newLeafSigningPubKeyB64 || !newLeafCredential) {
+    throw new Error(
+      `Cannot add leaf ${newMember.leafIndex} for ${newMemberUserId}: missing signing identity ` +
+        `(leafSigningPubKeyB64=${Boolean(newLeafSigningPubKeyB64)}, credential=${Boolean(newLeafCredential)}). ` +
+        `Wait for a full signed KeyPackage before adding.`
+    )
+  }
+
   const newLeafData = applyLeafDataPatch(currentState.tree.leafData, {
     [String(newMember.leafIndex)]: {
       userId: newMemberUserId,
       username: newMember?.username ?? 'Member',
-      leafSigningPubKeyB64:
-        newMemberIdentity?.leafSigningPubKeyB64 ?? newMember?.leafSigningPubKeyB64 ?? null,
-      credential: newMemberIdentity?.credential ?? newMember?.credential ?? null,
+      leafSigningPubKeyB64: newLeafSigningPubKeyB64,
+      credential: newLeafCredential,
     },
   })
 
@@ -549,7 +569,13 @@ export async function buildRemoveCommit({ state, targetUserId, targetLeafIndex, 
   })
 
   const newTree = resizeNodes(currentState.tree.nodes, nodeWidth(leafCount))
-  installLeafPublicKeysFromMemberInitKeys(newTree, roster, memberInitKeys)
+  const hydratedMemberInitKeys = mergeMemberInitKeys(
+    memberInitKeys,
+    memberInitKeysFromTree(roster, currentState.tree.nodes, {
+      excludeLeafIndex: targetMember.leafIndex,
+    })
+  )
+  installLeafPublicKeysFromMemberInitKeys(newTree, roster, hydratedMemberInitKeys)
   blankNodeAndPath(newTree, targetMember.leafIndex, leafCount)
 
   const nextEpoch = currentState.epoch + 1
@@ -1006,6 +1032,13 @@ export async function applyCommit({ state, commit, myInitPrivKeyB64 }) {
 
   const selfLeafIndex = resolveSelfLeafIndexAfterCommit(currentState, newRoster)
 
+  if (commit.type === 'remove' && Number.isInteger(commit.targetLeafIndex)) {
+    blankNodeAndPath(candidateTree, commit.targetLeafIndex, leafCount)
+  }
+  if (Number.isInteger(selfLeafIndex)) {
+    installOwnLeafPrivateKey(candidateTree, selfLeafIndex, myInitPrivKeyB64)
+  }
+
   const commitSecret = await applyUpdatePath(
     candidateTree,
     commit.updatePath,
@@ -1050,6 +1083,24 @@ export async function applyCommit({ state, commit, myInitPrivKeyB64 }) {
       nextEpochSecrets.epochSecret,
       expectedTH,
       base64ToBytes(commit.confirmationTagB64)
+    )
+  }
+
+  const hadEpochSecrets = Boolean(currentState.applicationSecretB64 || currentState.initSecretB64)
+  const selfStillPresent = Number.isInteger(selfLeafIndex)
+  if (hadEpochSecrets && selfStillPresent && !nextEpochSecrets) {
+    if (!commitSecret) {
+      throw new Error(
+        'Failed to derive MLS commit secret from update path — remaining member was not included in path encryption'
+      )
+    }
+    if (!currentState.initSecretB64) {
+      throw new Error(
+        'Failed to derive MLS epoch secrets after commit — local initSecretB64 is missing'
+      )
+    }
+    throw new Error(
+      'Failed to derive MLS epoch secrets after commit — refusing to clear keys for remaining member'
     )
   }
 
