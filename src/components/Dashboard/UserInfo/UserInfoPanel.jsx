@@ -5,15 +5,16 @@ import {
   Video,
   Bell,
   BellOff,
-  Image as ImgIcon,
   Trash2,
   Ban,
   Fingerprint,
   ShieldCheck,
   Hash,
+  Copy,
 } from 'lucide-react'
 import { getSocket } from '../../../socket'
 import { getPeerIdentityKeys } from '../Chat/utils/chat/keyManagement'
+import { formatProfileImage } from '../DashboardComponents/utils/helpers'
 
 /**
  * UserInfoPanel — contact info side panel.
@@ -26,6 +27,7 @@ import { getPeerIdentityKeys } from '../Chat/utils/chat/keyManagement'
 export default function UserInfoPanel({ contact, onClose }) {
   const [profile, setProfile] = useState(null)
   const [fingerprint, setFingerprint] = useState(null)
+  const [copied, setCopied] = useState(false)
 
   // Fetch full profile from server
   useEffect(() => {
@@ -75,12 +77,30 @@ export default function UserInfoPanel({ contact, onClose }) {
 
   if (!contact) return null
 
-  const name = profile?.username || contact?.username || contact?.name || 'Unknown'
-  const avatar = profile?.profilePicture || contact?.profileImage || contact?.avatar || null
-  const about = profile?.aboutme || 'No bio.'
-  const handle = name.toLowerCase().replace(/\s+/g, '.')
-
+  const profileName =
+    profile?.display_name ||
+    profile?.username ||
+    contact?.display_name ||
+    contact?.username ||
+    contact?.name ||
+    'Unknown'
+  const avatarSource =
+    profile?.avatar_url || profile?.profilePicture || contact?.profileImage || contact?.avatar || ''
+  const avatar = avatarSource ? formatProfileImage(avatarSource, profileName) : null
+  const about = profile?.bio || profile?.aboutme || profile?.about || 'No bio yet.'
+  const userId = String(profile?.id || contact?.id || '')
   const fingerprintChunks = fingerprint ? fingerprint.split(' ') : Array(8).fill('????')
+
+  const copyUserId = async () => {
+    if (!userId) return
+    try {
+      await navigator.clipboard.writeText(userId)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch {
+      setCopied(false)
+    }
+  }
 
   const handleCompareNumbers = () => {
     window.dispatchEvent(
@@ -93,7 +113,7 @@ export default function UserInfoPanel({ contact, onClose }) {
   return (
     <aside
       data-testid='user-info-panel'
-      className='echo-floating relative w-[340px] shrink-0 overflow-y-auto animate-slide-in-right border-l border-white/[0.05] rounded-none'
+      className='echo-floating relative h-full w-full max-w-[390px] shrink-0 overflow-y-auto animate-slide-in-right border-l border-white/[0.05] rounded-none'
       style={{ borderRadius: 0 }}
     >
       {/* Sticky header */}
@@ -115,20 +135,33 @@ export default function UserInfoPanel({ contact, onClose }) {
           {avatar ? (
             <img
               src={avatar}
-              alt={name}
+              alt={profileName}
               className='h-24 w-24 rounded-full object-cover ring-1 ring-white/10'
               onError={(e) => {
-                e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=8e79f2&color=fff`
+                e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(profileName)}&background=8e79f2&color=fff`
               }}
             />
           ) : (
             <div className='grid h-24 w-24 place-items-center rounded-full bg-gradient-to-br from-violet-500/40 to-violet-700/70 ring-1 ring-white/10 text-white text-3xl font-bold'>
-              {name[0]}
+              {profileName[0]}
             </div>
           )}
         </div>
-        <h2 className='relative mt-4 text-[18px] font-semibold tracking-[-0.02em]'>{name}</h2>
-        <p className='relative mt-0.5 text-[12px] text-white/45 mono'>@{handle}</p>
+        <h2 className='relative mt-4 text-[18px] font-semibold tracking-[-0.02em]'>
+          {profileName}
+        </h2>
+        <p className='relative mt-0.5 text-[12px] text-white/45 mono'>
+          ECHO ID: {userId || 'unknown'}
+        </p>
+        <button
+          type='button'
+          onClick={copyUserId}
+          className='relative mx-auto mt-3 inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-3.5 py-1.5 text-[11px] text-white/65 transition hover:border-violet-400/30 hover:bg-violet-500/[0.06] hover:text-white'
+        >
+          <span className='mono'>ID {userId || 'unknown'}</span>
+          <Copy size={11} />
+          {copied && <span className='text-emerald-300'>Copied</span>}
+        </button>
         <div className='relative mt-4 flex justify-center gap-2'>
           <ActionBtn icon={<Phone size={14} />} label='Call' />
           <ActionBtn icon={<Video size={14} />} label='Video' />
@@ -139,6 +172,17 @@ export default function UserInfoPanel({ contact, onClose }) {
       {/* About */}
       <Section title='About'>
         <p className='text-[12.5px] leading-relaxed text-white/65'>{about}</p>
+      </Section>
+
+      <Section title='Identity' icon={<Fingerprint size={11} />}>
+        <div className='grid gap-2'>
+          <div className='rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5'>
+            <p className='text-[10px] uppercase tracking-[0.18em] text-white/35'>ECHO ID</p>
+            <p className='mt-1 break-all text-[12px] mono text-white/82'>
+              {userId || 'No ID available'}
+            </p>
+          </div>
+        </div>
       </Section>
 
       {/* Cryptographic fingerprint */}
@@ -169,24 +213,6 @@ export default function UserInfoPanel({ contact, onClose }) {
           >
             Compare safety numbers
           </button>
-        </div>
-      </Section>
-
-      {/* Shared media */}
-      <Section title='Shared media' icon={<ImgIcon size={11} />}>
-        <div className='grid grid-cols-3 gap-1.5'>
-          {[1, 2, 3, 4, 5, 6].map((n) => (
-            <div
-              key={n}
-              className='aspect-square overflow-hidden rounded-md border border-white/[0.06] bg-white/[0.02]'
-            >
-              <img
-                src={`https://picsum.photos/seed/echo${n}/200`}
-                alt=''
-                className='h-full w-full object-cover opacity-80 hover:opacity-100 transition'
-              />
-            </div>
-          ))}
         </div>
       </Section>
 

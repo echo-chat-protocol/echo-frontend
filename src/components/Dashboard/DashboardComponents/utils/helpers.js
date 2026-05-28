@@ -61,10 +61,21 @@ export const fetchUserProfileFromSocket = (socket, userId) => {
   return new Promise((resolve, reject) => {
     socket.emit('getUserInfo', { userId }, (response) => {
       if (response && response.success && response.user) {
+        const username = response.user.username || ''
+        const displayName =
+          response.user.display_name || response.user.name || response.user.username || ''
+        const bio = response.user.bio || response.user.aboutme || response.user.about || ''
+        const profilePicture =
+          response.user.avatar_url || response.user.profilePicture || response.user.avatar || ''
+
         const profileData = {
-          username: response.user.username || '',
-          aboutme: response.user.aboutme || '',
-          profilePicture: response.user.profilePicture || '',
+          id: userId,
+          username,
+          display_name: displayName,
+          bio,
+          aboutme: bio,
+          profilePicture,
+          avatar_url: profilePicture,
         }
 
         // Cache the profile data
