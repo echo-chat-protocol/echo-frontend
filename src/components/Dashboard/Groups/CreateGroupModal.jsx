@@ -3,6 +3,7 @@ import PropTypes from 'prop-types'
 import { X, Camera, Search, UsersRound, Check, Lock } from 'lucide-react'
 import { getSocket } from '../../../socket'
 import { formatProfileImage } from '../DashboardComponents/utils/helpers'
+import { searchUsersByUsername } from '@/utils/userSearch'
 import { getIdentityKeys } from '../Chat/utils/chat/keyManagement'
 import {
   createNewGroupState,
@@ -64,7 +65,7 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
   }
 
   const handleSearch = useCallback(
-    (term) => {
+    async (term) => {
       if (!open) return
       const t = (term ?? searchTerm).trim()
       if (!t) {
@@ -72,27 +73,33 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
         return
       }
       setSearching(true)
-      socket.emit('searchUser', { searchTerm: t }, (response) => {
-        if (!response?.success || !response?.user) {
-          setSearching(false)
-          return
-        }
-        const basicUser = response.user
-        socket.emit('getUserInfo', { userId: basicUser.id }, (profileResponse) => {
-          const profilePicture = profileResponse?.success
-            ? profileResponse?.user?.profilePicture
-            : null
-          const formattedProfileImage = formatProfileImage(profilePicture, basicUser.username)
-          const u = { ...basicUser, profileImage: formattedProfileImage }
-          setResults((prev) => {
-            const exists = prev.some((x) => String(x.id) === String(u.id))
-            return exists ? prev : [...prev, u]
-          })
-          setSearching(false)
-        })
-      })
+      try {
+        const found = await searchUsersByUsername(t)
+        const enriched = await Promise.all(
+          found.map(
+            (basicUser) =>
+              new Promise((resolve) => {
+                socket?.emit('getUserInfo', { userId: basicUser.id }, (profileResponse) => {
+                  const profilePicture = profileResponse?.success
+                    ? profileResponse?.user?.profilePicture
+                    : null
+                  const formattedProfileImage = formatProfileImage(
+                    profilePicture,
+                    basicUser.username
+                  )
+                  resolve({ ...basicUser, profileImage: formattedProfileImage })
+                })
+              })
+          )
+        )
+        setResults(enriched)
+      } catch {
+        setResults([])
+      } finally {
+        setSearching(false)
+      }
     },
-    [searchTerm, socket, open]
+    [searchTerm, open, socket]
   )
 
   const handleSearchTermChange = (val) => {

@@ -58,7 +58,7 @@ const readToken = (key) => {
 }
 
 export const tokenStorage = {
-  getAccess: () => readToken(TOKEN_KEY),
+  getAccess: () => readToken(TOKEN_KEY) || readToken('token'),
   getRefresh: () => readToken(REFRESH_KEY),
   setAccess: (t) => {
     if (isUsableToken(t)) localStorage.setItem(TOKEN_KEY, t)

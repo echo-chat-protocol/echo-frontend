@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { getSocket } from '../../../socket'
 import PropTypes from 'prop-types'
-import { UsersService } from '@services'
 import { formatProfileImage } from '../DashboardComponents/utils/helpers'
+import { searchUsersByUsername } from '@/utils/userSearch'
 import { Search, MessageSquareText, Phone, Video, UserPlus, UserCheck } from 'lucide-react'
 
 const TABS = [
@@ -57,8 +57,8 @@ const Friends = ({ token, onActiveChatChange, onAddContact }) => {
       }
 
       try {
-        const res = await UsersService.search({ searchTerm: searchQuery })
-        const users = (res?.users || []).map((u) => ({
+        const found = await searchUsersByUsername(searchQuery)
+        const users = found.map((u) => ({
           ...u,
           profileImage: formatProfileImage(u.profilePicture, u.username),
         }))

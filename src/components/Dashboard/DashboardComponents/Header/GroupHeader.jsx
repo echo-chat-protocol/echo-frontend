@@ -3,6 +3,7 @@ import PropTypes from 'prop-types'
 import { Camera, MoreHorizontal, Plus, Search, X } from 'lucide-react'
 import { getSocket } from '../../../../socket'
 import { formatProfileImage } from '../utils/helpers'
+import { searchUsersByUsername } from '@/utils/userSearch'
 
 import {
   loadGroupState,
@@ -271,31 +272,28 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
     }
   }
 
-  const handleSearch = () => {
+  const handleSearch = async () => {
     const term = searchTerm.trim()
     if (!term) return
     setLoading(true)
     setSearchResult(null)
 
-    // If socket is not connected, bail fast to avoid hanging the loader
-    if (!socket?.connected) {
-      setLoading(false)
-      return
-    }
-
-    socket.emit('searchUser', { searchTerm: term }, (res) => {
-      if (!res?.success || !res?.user) {
+    try {
+      const found = await searchUsersByUsername(term)
+      const basic = found[0]
+      if (!basic?.id) {
         setLoading(false)
         return
       }
-      const basic = res.user
       socket.emit('getUserInfo', { userId: basic.id }, (infoRes) => {
         const profilePicture = infoRes?.success ? infoRes?.user?.profilePicture : null
         const profileImage = formatProfileImage(profilePicture, basic.username)
         setSearchResult({ ...basic, profileImage })
         setLoading(false)
       })
-    })
+    } catch {
+      setLoading(false)
+    }
   }
 
   const handleAdd = async (memberId) => {

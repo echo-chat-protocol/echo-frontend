@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Search, X, MessageSquareText, Loader2 } from 'lucide-react'
 import PropTypes from 'prop-types'
-import { UsersService } from '@services'
 import { formatProfileImage } from '../utils/helpers'
+import { searchUsersByUsername } from '@/utils/userSearch'
 
 /**
  * NewChatModal — search any user by username and start a DM,
@@ -38,9 +38,8 @@ export default function NewChatModal({ open, onClose, onStartChat }) {
     setSearched(true)
 
     try {
-      const res = await UsersService.search({ searchTerm: trimmed })
-      console.log('[NewChatModal] /users/search response:', res)
-      const users = (res?.users || []).map((u) => ({
+      const found = await searchUsersByUsername(trimmed)
+      const users = found.map((u) => ({
         ...u,
         profileImage: formatProfileImage(u.profilePicture, u.username),
       }))

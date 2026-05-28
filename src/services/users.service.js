@@ -2,7 +2,7 @@
  * Users service — /api/v1/users/*
  *
  * Endpoints:
- *   POST   /users/search          → Search for a user by exact username
+ *   POST   /users/search          → Search for users by username (prefix/contains)
  *   GET    /users/online          → List currently online user IDs
  *   PUT    /users/profile/update  → Update authenticated user's profile & account
  *   PUT    /users/profile/banner  → Update authenticated user's profile banner
@@ -13,10 +13,10 @@ import api from './api'
 
 const UsersService = {
   /**
-   * Search for a user by exact username.
+   * Search for users by username.
    *
-   * @param {{ username: string }} data
-   * @returns {Promise<{ user: object }>}
+   * @param {{ searchTerm: string }} data
+   * @returns {Promise<{ success: boolean, users: object[] }>}
    */
   search: (data) => api.post('/users/search', data),
 
