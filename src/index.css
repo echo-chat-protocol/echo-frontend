@@ -865,3 +865,85 @@ code,
   background-size: 24px 24px;
   z-index: 0;
 }
+/* === Echo laptop empty-state animations === */
+@keyframes echo-laptop-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+@keyframes echo-laptop-logo-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(0.97);
+  }
+}
+@keyframes echo-bubble-rx-in {
+  0%,
+  10% {
+    opacity: 0;
+    transform: translateY(4px) scale(0.85);
+  }
+  25%,
+  70% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  90%,
+  100% {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.95);
+  }
+}
+@keyframes echo-bubble-tx-in {
+  0%,
+  35% {
+    opacity: 0;
+    transform: translateY(4px) scale(0.85);
+  }
+  50%,
+  85% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  95%,
+  100% {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.95);
+  }
+}
+
+.echo-laptop-lid {
+  animation: echo-laptop-float 4.5s ease-in-out infinite;
+  transform-box: fill-box;
+}
+.echo-laptop-logo {
+  animation: echo-laptop-logo-pulse 3s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.echo-laptop-bubble-rx {
+  animation: echo-bubble-rx-in 4.5s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: left center;
+}
+.echo-laptop-bubble-tx {
+  animation: echo-bubble-tx-in 4.5s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: right center;
+}
+
+:root {
+  --echo-accent: #a855f7;
+  --echo-accent-soft: #c084fc;
+  --echo-accent-dark: #7c3aed;
+  --echo-accent-rgb: 168, 85, 247;
+}

@@ -67,7 +67,7 @@ export default function Sidebar({
           <div className='leading-tight animate-fade-in'>
             <div className='text-[15px] font-semibold tracking-[-0.04em]'>ECHO</div>
             <div className='text-[9.5px] uppercase tracking-[0.22em] text-white/35 mono mt-0.5'>
-              v3.2.0
+              v{__APP_VERSION__}
             </div>
           </div>
         )}
@@ -143,6 +143,9 @@ export default function Sidebar({
               <span className='text-white/55'>argon2id</span>
               <span className='text-white/25'> / </span>
               <span className='text-white/55'>x25519</span>
+            </div>
+            <div className='mono text-[10px] tracking-[0.05em] text-white/25 leading-relaxed'>
+              v{__APP_VERSION__}
             </div>
           </div>
         )}

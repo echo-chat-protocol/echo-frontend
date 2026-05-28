@@ -2,9 +2,7 @@ import { useState, useRef, useEffect, useMemo, lazy, Suspense } from 'react'
 
 const DeviceSyncModal = lazy(() => import('../../features/devices/DeviceSyncModal'))
 import { useNavigate } from 'react-router-dom'
-import { useTranslation } from 'react-i18next'
-import { Lock, MessageCircle, Menu, ArrowLeft } from 'lucide-react'
-import PropTypes from 'prop-types'
+import { Menu, ArrowLeft } from 'lucide-react'
 import Friends from './Friends/Friends'
 import Chat from './Chat/Chat'
 import Sidebar from './DashboardComponents/Sidebar/Sidebar'
@@ -63,9 +61,9 @@ import { revokeCurrentDeviceForLogout } from '../../features/devices/logoutDevic
 import CreateGroupModal from './Groups/CreateGroupModal'
 import GroupChat from './Chat/GroupChat'
 import { tokenStorage } from '@services/api'
+import EmptyState from './EmptyState'
 
 const Dashboard = () => {
-  const { t } = useTranslation()
   const token = tokenStorage.getAccess()
   const navigate = useNavigate()
   const { username, userId, profileImage } = getUserData(token)
@@ -1382,35 +1380,6 @@ const Dashboard = () => {
       return tb - ta
     })
 
-  // ─── Extracted to avoid re-creation on every Dashboard render ─────────────────
-  const EmptyState = ({ activeView, t }) => (
-    <div className='echo-floating flex justify-center items-center h-full p-8 relative overflow-hidden'>
-      <div className='echo-aurora opacity-25' />
-      <div className='text-center max-w-[300px] relative z-10'>
-        <div className='animate-bounce mb-6'>
-          <MessageCircle size={64} strokeWidth={1.5} className='text-gray-400 mx-auto' />
-        </div>
-        <h3 className='text-xl font-semibold text-white mt-4 mb-2'>
-          {activeView === 'chats'
-            ? t('dashboard.emptyState.selectChat')
-            : t('dashboard.emptyState.noChatSelected')}
-        </h3>
-        <p className='text-gray-300 max-w-md text-center'>
-          {activeView === 'chats'
-            ? 'Choose a conversation from the list or start a new chat with a friend'
-            : 'Search for a friend to start a new conversation'}
-        </p>
-
-        <div className='flex items-center justify-center text-xs text-gray-400 mt-8 pt-8 pb-4 border-t border-gray-700'>
-          <Lock className='w-4 h-4 mr-1.5' />
-          <span>Your messages are encrypted using</span>
-          <img src='/EchoProtocolLogo.png' alt='Echo Protocol' className='h-12 ml-1.5' />
-        </div>
-      </div>
-    </div>
-  )
-  EmptyState.propTypes = { activeView: PropTypes.string.isRequired, t: PropTypes.func.isRequired }
-
   // ── Build ChatList items from recentConversations + groups ──────────────────
   const chatListItems = useMemo(() => {
     const directItems = filteredConversations.map((conv) => ({
@@ -1658,7 +1627,7 @@ const Dashboard = () => {
               )}
             </div>
           ) : (
-            <EmptyState activeView={activeView} t={t} />
+            <EmptyState />
           )}
         </div>
 
