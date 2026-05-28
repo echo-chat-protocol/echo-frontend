@@ -16,6 +16,13 @@ vi.mock('../../../socket', () => ({
   getSocket: (...args) => getSocketMock(...args),
 }))
 
+// Search runs through the shared `searchUsersByUsername` util (HTTP-first with a
+// socket fallback). Mock it so these MLS tests exercise the group-creation flow
+// deterministically instead of hitting the real network.
+vi.mock('@/utils/userSearch', () => ({
+  searchUsersByUsername: vi.fn().mockResolvedValue([{ id: 'bob', username: 'Bob' }]),
+}))
+
 vi.mock('../DashboardComponents/utils/helpers', () => ({
   formatProfileImage: (...args) => formatProfileImageMock(...args),
 }))

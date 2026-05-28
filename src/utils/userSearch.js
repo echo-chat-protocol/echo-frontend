@@ -7,14 +7,28 @@ function normalizeSearchResponse(res) {
   return []
 }
 
+const SOCKET_SEARCH_TIMEOUT_MS = 6000
+
 function searchUsersViaSocket(searchTerm) {
   const socket = getSocket()
-  if (!socket?.connected) return Promise.resolve([])
+  if (!socket || typeof socket.emit !== 'function') return Promise.resolve([])
 
+  // Do NOT gate on `socket.connected`: socket.io buffers emits while the
+  // connection is (re)establishing and fires the ack once it's up, so bailing
+  // out here silently returned zero results whenever the REST search fell back
+  // to the socket before `connected` had flipped true (common on Tauri/mobile,
+  // where REST search frequently returns no matches). A timeout guards against
+  // a socket that never connects so the caller never hangs.
   return new Promise((resolve) => {
-    socket.emit('searchUser', { searchTerm }, (res) => {
-      resolve(normalizeSearchResponse(res))
-    })
+    let settled = false
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish([]), SOCKET_SEARCH_TIMEOUT_MS)
+    socket.emit('searchUser', { searchTerm }, (res) => finish(normalizeSearchResponse(res)))
   })
 }
 
