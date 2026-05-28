@@ -1,16 +1,22 @@
-import './i18n/config.js'
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import './theme.css'
-import './index.css'
-import '@fortawesome/fontawesome-free/css/all.min.css'
-import { AuthProvider } from './store/AuthContext'
-import App from './App.jsx'
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import '@/index.css'
+import './i18n'
+import App from '@/App'
 
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    <AuthProvider>
-      <App />
-    </AuthProvider>
-  </StrictMode>
+import { ThemeProvider } from '@/contexts/ThemeContext'
+import { I18nProvider } from '@/contexts/I18nContext'
+import { AuthProvider } from '@/store/AuthContext'
+
+const root = ReactDOM.createRoot(document.getElementById('root'))
+root.render(
+  <React.StrictMode>
+    <I18nProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </ThemeProvider>
+    </I18nProvider>
+  </React.StrictMode>
 )

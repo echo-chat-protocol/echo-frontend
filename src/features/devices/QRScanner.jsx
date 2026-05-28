@@ -1,0 +1,508 @@
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { Html5Qrcode } from 'html5-qrcode'
+import {
+  CheckCircle2,
+  RotateCcw,
+  AlertCircle,
+  ShieldCheck,
+  ShieldX,
+  StopCircle,
+} from 'lucide-react'
+import { getOrCreateDeviceIK, decryptQRPayloadDebug, parseQRPayload, hexBytes } from './qrCrypto'
+
+export default function QRScanner({ onScanRaw } = {}) {
+  const videoRef = useRef(null)
+  const canvasRef = useRef(null)
+  const streamRef = useRef(null)
+  const detectorRef = useRef(null)
+  const rafRef = useRef(null)
+  const h5Ref = useRef(null)
+  const scanCountRef = useRef(0)
+  const logEndRef = useRef(null)
+  const autoStartAttemptedRef = useRef(false)
+
+  const [ik, setIk] = useState(null)
+  const [started, setStarted] = useState(false)
+  const [result, setResult] = useState(null) // { text, source, debug }
+  const [error, setError] = useState(null)
+  const [logs, setLogs] = useState([])
+
+  const log = useCallback((msg, color = null) => {
+    const ts = new Date().toISOString().slice(11, 23)
+    setLogs((prev) => [...prev.slice(-120), { ts, msg, color }])
+  }, [])
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [logs])
+
+  useEffect(() => {
+    log('Component mounted')
+    log(
+      `BarcodeDetector: ${'BarcodeDetector' in window ? 'AVAILABLE ✓' : 'NOT AVAILABLE ✗'}`,
+      'BarcodeDetector' in window ? '#4ade80' : '#f87171'
+    )
+    log(`Html5Qrcode: ${typeof Html5Qrcode}`)
+
+    getOrCreateDeviceIK()
+      .then((k) => {
+        setIk(k)
+        log(`IK loaded — source: ${k.source}`, '#a855f7')
+        log(`IK pub:  ${hexBytes(k.pub)}`, '#a855f7')
+      })
+      .catch((e) => {
+        log(`IK load FAILED: ${e.message}`, '#f87171')
+        setError(e.message)
+      })
+
+    return () => {
+      cancelAnimationFrame(rafRef.current)
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+      h5Ref.current?.stop().catch(() => {})
+    }
+  }, [])
+
+  // ── Shared scan handler ───────────────────────────────────────────────────
+
+  const handleScan = useCallback(
+    async (raw) => {
+      log(`─── QR DETECTED (${raw.length} chars) ───────────────`, '#22d3ee')
+      log(`Raw: ${raw.slice(0, 80)}${raw.length > 80 ? '…' : ''}`)
+
+      if (onScanRaw) {
+        log('onScanRaw mode — forwarding raw to parent')
+        await onScanRaw(raw)
+        return
+      }
+
+      const payload = parseQRPayload(raw)
+      log(
+        `parseQRPayload: ${payload ? 'valid echo-qr-v1 ✓' : 'not an ECHO message QR'}`,
+        payload ? '#4ade80' : '#f59e0b'
+      )
+
+      if (payload) {
+        if (!ik) {
+          log('ERROR: IK not ready', '#f87171')
+          return
+        }
+
+        log('─── SCANNER CRYPTO TRACE ───────────────────────────', '#22d3ee')
+        log(`IK source:  ${ik.source}`, '#a855f7')
+        log(`IK pub:     ${hexBytes(ik.pub)}`, '#a855f7')
+        log(
+          `epk (QR):   ${hexBytes(Array.from(atob(payload.epk)).map((c) => c.charCodeAt(0)))}`,
+          '#a855f7'
+        )
+        log(
+          `salt (QR):  ${hexBytes(Array.from(atob(payload.s)).map((c) => c.charCodeAt(0)))}`,
+          '#f59e0b'
+        )
+        log(
+          `nonce (QR): ${hexBytes(
+            Array.from(atob(payload.n)).map((c) => c.charCodeAt(0)),
+            12
+          )}`,
+          '#f59e0b'
+        )
+        log(`ct (first 24B hex): ${payload.ct.slice(0, 48)}…`)
+        log('Computing DH(IK_priv, epk)…', '#22d3ee')
+
+        try {
+          const { text, debug } = await decryptQRPayloadDebug(payload, ik)
+
+          log(`DH shared:  ${hexBytes(debug.dhShared)}`, '#22d3ee')
+          log(`sym key:    ${hexBytes(debug.symKey)}`, '#f59e0b')
+          log('AES-256-GCM decrypt… ✓', '#4ade80')
+          log(`Plaintext:  "${text}"`, '#4ade80')
+
+          setResult({ text, source: 'encrypted', debug })
+        } catch (e) {
+          const d = e.debug || {}
+          if (d.dhShared) log(`DH shared:  ${hexBytes(d.dhShared)}`, '#f87171')
+          if (d.symKey) log(`sym key:    ${hexBytes(d.symKey)}`, '#f87171')
+          log('AES-256-GCM decrypt… ✗ FAILED', '#f87171')
+          log(`Error: ${e.message}`, '#f87171')
+          log('IK mismatch? Generator and scanner IK pub must match for DH to work.', '#f59e0b')
+          setResult({ text: null, source: 'failed', debug: d })
+        }
+      } else {
+        log('Plain (unencrypted) QR — displaying as-is', '#f59e0b')
+        setResult({ text: raw, source: 'plain', debug: null })
+      }
+    },
+    [ik, onScanRaw, log]
+  )
+
+  // ── Canvas + BarcodeDetector scan loop ────────────────────────────────────
+
+  const tick = useCallback(async () => {
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    if (!video || !canvas) return
+
+    if (video.readyState < 2) {
+      rafRef.current = requestAnimationFrame(tick)
+      return
+    }
+
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    canvas.getContext('2d').drawImage(video, 0, 0)
+    scanCountRef.current++
+    const n = scanCountRef.current
+
+    if (n % 30 === 1) {
+      log(`Frame #${n} — ${canvas.width}×${canvas.height} — readyState: ${video.readyState}`)
+    }
+
+    if (detectorRef.current) {
+      try {
+        const codes = await detectorRef.current.detect(canvas)
+        if (n % 30 === 1) log(`BarcodeDetector: ${codes.length} code(s) in frame`)
+        if (codes.length > 0) {
+          log(`QR detected — format: ${codes[0].format}`, '#4ade80')
+          cancelAnimationFrame(rafRef.current)
+          streamRef.current?.getTracks().forEach((t) => t.stop())
+          setStarted(false)
+          handleScan(codes[0].rawValue)
+          return
+        }
+      } catch (e) {
+        if (n % 30 === 1) log(`BarcodeDetector.detect error: ${e.message}`, '#f87171')
+      }
+    }
+
+    rafRef.current = requestAnimationFrame(tick)
+  }, [handleScan, log])
+
+  // ── Start scanner ─────────────────────────────────────────────────────────
+
+  const startScanner = useCallback(async () => {
+    setError(null)
+    setResult(null)
+    scanCountRef.current = 0
+    log('─── START SCANNER ────────────────────────────────────', '#22d3ee')
+
+    if ('BarcodeDetector' in window) {
+      try {
+        const formats = await window.BarcodeDetector.getSupportedFormats()
+        log(`BarcodeDetector formats: ${formats.join(', ')}`, '#4ade80')
+        detectorRef.current = new window.BarcodeDetector({ formats: ['qr_code'] })
+      } catch (e) {
+        log(`BarcodeDetector init failed: ${e.message} — falling back to html5-qrcode`, '#f59e0b')
+        detectorRef.current = null
+      }
+    } else {
+      log('BarcodeDetector not available — using html5-qrcode fallback', '#f59e0b')
+      detectorRef.current = null
+    }
+
+    try {
+      log('Requesting camera (environment facing)…')
+      const constraints = {
+        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      }
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+      streamRef.current = stream
+      const track = stream.getVideoTracks()[0]
+      log(`Camera acquired: "${track.label}"`, '#4ade80')
+      const s = track.getSettings()
+      log(`Resolution: ${s.width}×${s.height}`)
+    } catch (e) {
+      log(`getUserMedia FAILED: ${e.name} — ${e.message}`, '#f87171')
+      const msg =
+        e.name === 'NotAllowedError'
+          ? 'Camera permission denied.'
+          : e.name === 'NotFoundError'
+            ? 'No camera found.'
+            : `Camera error: ${e.message}`
+      setError(msg)
+      return
+    }
+
+    if (detectorRef.current) {
+      log('Path: BarcodeDetector + RAF scan loop')
+      videoRef.current.srcObject = streamRef.current
+
+      await new Promise((resolve, reject) => {
+        videoRef.current.onloadedmetadata = () => {
+          log(`Video metadata: ${videoRef.current.videoWidth}×${videoRef.current.videoHeight}`)
+          resolve()
+        }
+        videoRef.current.onerror = reject
+      })
+
+      await videoRef.current.play()
+      log(`Video playing — readyState: ${videoRef.current.readyState}`)
+      setStarted(true)
+      rafRef.current = requestAnimationFrame(tick)
+      log('RAF scan loop started — scanning every frame…', '#4ade80')
+    } else {
+      log('Path: html5-qrcode fallback')
+      try {
+        const container = document.getElementById('qr-h5-container')
+        log(`h5 container: found=${!!container}, width=${container?.offsetWidth}px`)
+
+        const scanner = new Html5Qrcode('qr-h5-container')
+        h5Ref.current = scanner
+
+        await scanner.start(
+          { facingMode: 'environment' },
+          { fps: 10 },
+          (raw) => {
+            log(`html5-qrcode decoded (${raw.length} chars)`, '#4ade80')
+            scanner.stop().catch(() => {})
+            setStarted(false)
+            handleScan(raw)
+          },
+          () => {
+            scanCountRef.current++
+          }
+        )
+
+        // Remove the file-picker UI that html5-qrcode injects
+        setTimeout(() => {
+          const c = document.getElementById('qr-h5-container')
+          if (c) {
+            c.querySelectorAll('input[type="file"]').forEach((el) => {
+              el.closest('div[style]')?.remove() || (el.style.display = 'none')
+            })
+            c.querySelectorAll('select').forEach((el) => {
+              el.closest('div[style]')?.remove() || (el.style.display = 'none')
+            })
+            // Remove "Scan an image file" button/section
+            c.querySelectorAll('[id$="--scan-type-change"]').forEach(
+              (el) => (el.style.display = 'none')
+            )
+          }
+        }, 300)
+
+        setStarted(true)
+        log('html5-qrcode live feed active', '#4ade80')
+      } catch (e) {
+        log(`html5-qrcode start FAILED: ${e.name} — ${e.message}`, '#f87171')
+        setError('Could not start scanner: ' + e.message)
+        streamRef.current?.getTracks().forEach((t) => t.stop())
+      }
+    }
+  }, [handleScan, ik, log, onScanRaw, tick])
+
+  useEffect(() => {
+    if (started || result || error || autoStartAttemptedRef.current) return
+    if (!onScanRaw && !ik) return
+
+    autoStartAttemptedRef.current = true
+    startScanner()
+  }, [error, ik, onScanRaw, result, startScanner, started])
+
+  const stopScanner = () => {
+    log('Scanner stopped by user')
+    cancelAnimationFrame(rafRef.current)
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+    h5Ref.current?.stop().catch(() => {})
+    setStarted(false)
+  }
+
+  const reset = () => {
+    setResult(null)
+    setError(null)
+    autoStartAttemptedRef.current = false
+  }
+
+  const resetAll = () => {
+    setResult(null)
+    setError(null)
+    setLogs([])
+  }
+
+  // ── Debug panel (always rendered) ─────────────────────────────────────────
+
+  const DebugPanel = () => (
+    <div className='sr-only w-full rounded-xl border border-white/10 bg-black/80 overflow-hidden'>
+      <div className='flex items-center justify-between px-3 py-1.5 border-b border-white/10 bg-white/5'>
+        <span className='text-[9px] font-semibold uppercase tracking-widest text-[#a855f7]'>
+          ■ SCANNER DEBUG LOG
+        </span>
+        <button
+          onClick={resetAll}
+          className='text-[9px] text-[#4a4a5a] hover:text-white transition-colors'
+        >
+          clear
+        </button>
+      </div>
+      <div
+        className='p-2 text-[10px] font-mono leading-relaxed overflow-y-auto'
+        style={{ maxHeight: 280 }}
+      >
+        {logs.length === 0 && (
+          <span className='text-[#4a4a5a]'>Debug output will appear here…</span>
+        )}
+        {logs.map((l, i) => (
+          <div key={i} style={{ color: l.color || '#6ee7b7' }}>
+            <span className='text-[#3a3a4a] select-none'>[{l.ts}] </span>
+            {l.msg}
+          </div>
+        ))}
+        <div ref={logEndRef} />
+      </div>
+    </div>
+  )
+
+  // ── Crypto debug detail (shown in result views) ────────────────────────────
+
+  const CryptoDetail = ({ debug, failed }) => {
+    if (!debug) return null
+    return (
+      <div className='w-full rounded-xl border border-white/10 bg-black/80 p-3 text-[10px] font-mono space-y-2'>
+        <p
+          className='text-[9px] font-semibold uppercase tracking-widest mb-2'
+          style={{ color: failed ? '#f87171' : '#4ade80' }}
+        >
+          ■ SCANNER CRYPTO DETAIL
+        </p>
+        <div>
+          <span className='text-[#a855f7]'>IK source: </span>
+          <span className='text-white'>{debug.ikSource}</span>
+        </div>
+        <div>
+          <span className='text-[#a855f7]'>IK pub: </span>
+          <span className='text-white break-all'>{hexBytes(debug.ikPub)}</span>
+        </div>
+        <div>
+          <span className='text-[#22d3ee]'>epk (QR): </span>
+          <span className='text-white break-all'>{hexBytes(debug.ekPub)}</span>
+        </div>
+        <div>
+          <span className='text-[#22d3ee]'>DH op: </span>
+          <span className='text-white'>{debug.dhOp}</span>
+        </div>
+        <div>
+          <span className='text-[#22d3ee]'>DH shared: </span>
+          <span className='text-white break-all'>{hexBytes(debug.dhShared)}</span>
+        </div>
+        <div>
+          <span className='text-[#f59e0b]'>sym key: </span>
+          <span className='text-white break-all'>{hexBytes(debug.symKey)}</span>
+        </div>
+        <div>
+          <span className='text-[#f59e0b]'>nonce: </span>
+          <span className='text-white break-all'>{hexBytes(debug.nonce, 12)}</span>
+        </div>
+        {failed && (
+          <p className='text-[#f87171] mt-1 leading-snug'>
+            ⚠ DH shared secret differs from generator — IK mismatch. Both sides must use the same
+            X25519 key pair.
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  // ── Result: failed ────────────────────────────────────────────────────────
+
+  if (result?.source === 'failed')
+    return (
+      <div className='flex flex-col items-center gap-4 py-4 w-full max-w-sm mx-auto'>
+        <div className='rounded-[24px] border border-red-400/20 bg-red-400/10 p-4'>
+          <ShieldX className='h-10 w-10 text-red-400' />
+        </div>
+        <div className='text-center'>
+          <h3 className='text-lg font-semibold mb-1'>Scan failed</h3>
+          <p className='text-sm text-white/45'>Try a fresh QR</p>
+        </div>
+        <CryptoDetail debug={result.debug} failed />
+        <DebugPanel />
+        <button onClick={reset} className='btn-primary flex items-center gap-2'>
+          <RotateCcw className='h-4 w-4' /> Try again
+        </button>
+      </div>
+    )
+
+  // ── Result: success ───────────────────────────────────────────────────────
+
+  if (result?.text !== null && result?.text !== undefined)
+    return (
+      <div className='flex flex-col items-center gap-4 py-4 w-full max-w-sm mx-auto'>
+        <div className='rounded-[24px] border border-emerald-300/20 bg-emerald-300/10 p-4'>
+          <CheckCircle2 className='h-10 w-10 text-emerald-300' />
+        </div>
+        <div className='text-center'>
+          <h3 className='text-xl font-semibold mb-1'>
+            {result.source === 'encrypted' ? 'Decrypted' : 'QR received'}
+          </h3>
+          {result.source === 'encrypted' && (
+            <p className='text-xs text-[#6f6f7e] flex items-center justify-center gap-1'>
+              <ShieldCheck className='h-3 w-3 text-[#a855f7]' />
+              Verified
+            </p>
+          )}
+        </div>
+        <div className='w-full rounded-[24px] border border-white/10 bg-white/[0.04] px-5 py-4 text-center'>
+          <p className='text-2xl font-mono text-white break-all leading-relaxed'>{result.text}</p>
+        </div>
+        {result.source === 'encrypted' && <CryptoDetail debug={result.debug} failed={false} />}
+        <DebugPanel />
+        <button onClick={reset} className='btn-primary flex items-center gap-2'>
+          <RotateCcw className='h-4 w-4' /> Scan again
+        </button>
+      </div>
+    )
+
+  // ── Camera view ───────────────────────────────────────────────────────────
+
+  return (
+    <div className='flex flex-col items-center gap-3 w-full max-w-sm mx-auto'>
+      <div className='relative w-full overflow-hidden rounded-[32px] border border-white/10 bg-[#070708] shadow-[0_32px_120px_-70px_rgba(255,255,255,0.75)]'>
+        <video
+          ref={videoRef}
+          className='w-full bg-black'
+          style={{ display: started && detectorRef.current ? 'block' : 'none', minHeight: 320 }}
+          playsInline
+          muted
+        />
+
+        <canvas ref={canvasRef} className='hidden' />
+
+        <div
+          id='qr-h5-container'
+          className='w-full overflow-hidden'
+          style={{
+            minHeight: started && !detectorRef.current ? 320 : 0,
+            display: started && !detectorRef.current ? 'block' : 'none',
+          }}
+        />
+
+        {!started && (
+          <div className='flex min-h-80 flex-col items-center justify-center gap-5 p-8'>
+            <div className='relative h-48 w-48 rounded-[28px] border border-white/12 bg-white/[0.03]'>
+              <span className='absolute left-4 top-4 h-9 w-9 rounded-tl-2xl border-l-2 border-t-2 border-white/70' />
+              <span className='absolute right-4 top-4 h-9 w-9 rounded-tr-2xl border-r-2 border-t-2 border-white/70' />
+              <span className='absolute bottom-4 left-4 h-9 w-9 rounded-bl-2xl border-b-2 border-l-2 border-white/70' />
+              <span className='absolute bottom-4 right-4 h-9 w-9 rounded-br-2xl border-b-2 border-r-2 border-white/70' />
+              <span className='absolute left-7 right-7 top-1/2 h-px bg-emerald-300/80 shadow-[0_0_24px_rgba(110,231,183,0.75)]' />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {started && (
+        <button
+          onClick={stopScanner}
+          className='flex items-center gap-2 text-xs text-[#a0a0a0] hover:text-white transition-colors'
+        >
+          <StopCircle className='h-4 w-4' /> Stop
+        </button>
+      )}
+
+      {error && (
+        <div className='flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300 w-full'>
+          <AlertCircle className='h-4 w-4 shrink-0 mt-0.5' />
+          {error}
+        </div>
+      )}
+
+      <DebugPanel />
+    </div>
+  )
+}

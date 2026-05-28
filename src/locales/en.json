@@ -1,0 +1,18 @@
+{
+  "nav": {
+    "features": "Features",
+    "playground": "Playground",
+    "security": "Security",
+    "pricing": "Pricing",
+    "docs": "Docs",
+    "signin": "Sign in",
+    "download": "Download ECHO"
+  },
+  "hero": {
+    "title_1": "The messenger your",
+    "title_2": "conversations deserve.",
+    "subtitle": "ECHO is a privacy-first communication layer with <1>E2EE</1>, on-device key generation and a transparent open-source crypto stack. No metadata. No backdoors. No compromises.",
+    "download": "Download Echo",
+    "start": "Start For Free"
+  }
+}

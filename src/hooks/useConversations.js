@@ -3,35 +3,53 @@ import { useState, useEffect, useRef } from 'react'
 export const useConversations = (userId) => {
   const [recentConversations, setRecentConversations] = useState([])
   const [unreadMessages, setUnreadMessages] = useState({})
-  const isInitialized = useRef(false) // prevents overwrite on re-renders
+  const initializedUserId = useRef(null) // prevents overwrite before the active user loads
+  const skipNextSave = useRef(false)
 
-  // Load only once when userId becomes available
+  // Load whenever the active account changes so cached chats cannot bleed between users.
   useEffect(() => {
-    if (!userId || isInitialized.current) return
+    if (!userId) {
+      initializedUserId.current = null
+      setRecentConversations([])
+      setUnreadMessages({})
+      return
+    }
+
+    if (initializedUserId.current === userId) return
 
     const saved = localStorage.getItem(`recentConversations-${userId}`)
+    let nextConversations = []
+    let nextUnreads = {}
     if (saved) {
       try {
         const parsed = JSON.parse(saved)
-        setRecentConversations(parsed)
+        if (Array.isArray(parsed)) {
+          nextConversations = parsed
 
-        const unreads = {}
-        parsed.forEach((conv) => {
-          const count = Number(localStorage.getItem(`unread-${userId}-${conv.id}`)) || 0
-          unreads[conv.id] = count
-        })
-        setUnreadMessages(unreads)
+          nextUnreads = {}
+          parsed.forEach((conv) => {
+            const count = Number(localStorage.getItem(`unread-${userId}-${conv.id}`)) || 0
+            nextUnreads[conv.id] = count
+          })
+        }
       } catch (e) {
         console.error('Failed to parse localStorage conversations', e)
       }
     }
 
-    isInitialized.current = true
+    skipNextSave.current = true
+    setRecentConversations(nextConversations)
+    setUnreadMessages(nextUnreads)
+    initializedUserId.current = userId
   }, [userId])
 
   // Save to localStorage **only after initial load**
   useEffect(() => {
-    if (!userId || !isInitialized.current) return
+    if (!userId || initializedUserId.current !== userId) return
+    if (skipNextSave.current) {
+      skipNextSave.current = false
+      return
+    }
     localStorage.setItem(`recentConversations-${userId}`, JSON.stringify(recentConversations))
   }, [recentConversations, userId])
 

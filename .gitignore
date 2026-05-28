@@ -7,6 +7,10 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Playwright
+playwright-report/
+test-results/
+
 # Dependencies
 node_modules
 
@@ -16,9 +20,12 @@ dist-ssr
 *.local
 
 # Env files — NEVER commit secrets
+# Only .env.*.example files (templates) should be tracked
 .env
 .env.local
 .env.*.local
+.env.development
+.env.production
 
 # Editor directories and files
 .vscode/*

@@ -46,7 +46,7 @@ const DisplayText = ({ messages = [], currentUserId }) => {
                   {message.userId === currentUserId && (
                     <svg
                       className={`ml-2 h-4 w-4 ${
-                        message.seenStatus ? 'text-green-400' : 'text-gray-400'
+                        message.seenStatus ? 'text-sky-400' : 'text-gray-400'
                       }`}
                       viewBox='0 0 122.88 74.46'
                       fill='currentColor'

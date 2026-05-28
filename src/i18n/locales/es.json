@@ -1,4 +1,4 @@
-﻿{
+{
   "nav": {
     "product": "Producto",
     "docs": "Documentación",
@@ -907,5 +907,98 @@
         "body": "API y WebSocket actualizados. ~4 min de inactividad a las 03:00 UTC."
       }
     ]
+  },
+  "common": {
+    "back": "Atrás",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "loading": "Cargando...",
+    "error": "Error",
+    "success": "Éxito"
+  },
+  "settings": {
+    "title": "Tu bóveda",
+    "subtitle": "Configura ECHO a tu gusto — todo se queda en este dispositivo.",
+    "notifications": "Notificaciones",
+    "notifications.desc": "Sonidos de la app, banners, insignias.",
+    "privacy": "Privacidad",
+    "privacy.desc": "Confirmaciones de lectura, última vez, escritura.",
+    "security": "Seguridad y llaves",
+    "security.desc": "Llaves de identidad, respaldos, sesiones.",
+    "devices": "Dispositivos vinculados",
+    "devices.desc": "Gestiona los dispositivos que usan tu identidad.",
+    "appearance": "Apariencia",
+    "appearance.desc": "Tema, densidad, acento.",
+    "language": "Idioma",
+    "language.desc": "EN · ES · DE · FR · PT · 38 más.",
+    "export": "Exportar datos",
+    "export.desc": "Exportación JSON sellada de tu bóveda local.",
+    "search": "Buscar...",
+    "noMatch": "No se encontraron coincidencias.",
+    "backToOverview": "Volver a la vista general",
+    "appearance": {
+      "themes": "Temas",
+      "themesHint": "Selecciona un ajuste de tema curado",
+      "customize": "Personalizar",
+      "chatColor": "Color del Chat",
+      "wallpaper": "Fondo de Pantalla",
+      "preview": "Vista Previa en Vivo"
+    },
+    "language": {
+      "search": "Buscar idiomas..."
+    },
+    "notifications": {
+      "allow": "Permitir notificaciones",
+      "allowDesc": "Recibe banners de nuevos mensajes en este dispositivo.",
+      "sound": "Sonido",
+      "soundDesc": "Reproduce un tono con nuevos mensajes.",
+      "preview": "Vista previa del mensaje",
+      "previewDesc": "Muestra el nombre del remitente y un fragmento en los banners.",
+      "mentions": "Solo menciones (grupos)",
+      "mentionsDesc": "Silencia grupos excepto cuando seas @mencionado.",
+      "vibrate": "Vibrar",
+      "vibrateDesc": "Vibrar el dispositivo al recibir mensajes."
+    },
+    "privacy": {
+      "readReceipts": "Confirmaciones de lectura",
+      "readReceiptsDesc": "Informa a tus contactos cuando hayas leído sus mensajes.",
+      "lastSeen": "Mostrar última vez",
+      "lastSeenDesc": "Muestra cuándo estuviste activo por última vez.",
+      "typing": "Indicador de escritura",
+      "typingDesc": "Muestra 'escribiendo...' a tus contactos cuando estés redactando.",
+      "blockScreenshots": "Bloquear capturas de pantalla",
+      "blockScreenshotsDesc": "Evita capturas de pantalla dentro de los chats.",
+      "disappearing": "Mensajes temporales",
+      "disappearingDesc": "Auto-eliminación por defecto de 24h en nuevos chats.",
+      "metadata": "Eliminar metadatos al compartir",
+      "metadataDesc": "Elimina EXIF/ubicación de los archivos adjuntos."
+    },
+    "security": {
+      "identity": "Identidad criptográfica",
+      "verified": "verificado",
+      "keysDesc": "Las llaves viven solo en este dispositivo. Argon2id · X25519 · Ed25519.",
+      "showQr": "Mostrar QR",
+      "rotateKeys": "Rotar llaves de sesión",
+      "appLock": "Bloqueo de app",
+      "appLockDesc": "Requiere biométricos o código para abrir ECHO.",
+      "safetyChange": "Cambios en número de seguridad",
+      "safetyChangeDesc": "Alértame cuando cambie el número de seguridad de un contacto.",
+      "lockOnSleep": "Auto-bloqueo al suspender",
+      "lockOnSleepDesc": "Bloquea la app cuando la pantalla se apaga."
+    },
+    "devices": {
+      "thisDevice": "este dispositivo",
+      "revoke": "Revocar",
+      "desc": "Cada dispositivo tiene una llave de identidad independiente. Revocar obliga a volver a emparejar."
+    },
+    "export": {
+      "title": "Exportación JSON sellada",
+      "desc": "Genera un JSON portátil de los metadatos de tu bóveda. Tus llaves privadas permanecen en este dispositivo y nunca se incluyen.",
+      "btn": "Exportar bóveda",
+      "exported": "Exportado",
+      "info": "·  ~ 1 KB, .json"
+    }
   }
 }
+

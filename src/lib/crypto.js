@@ -1,11 +1,7 @@
 /**
- * Centralized wrapper for all WASM cryptographic modules.
- *
- * Modules are lazily initialized on first use — WASM is loaded only when needed.
+ * Modules are lazily initialized on first use WASM is loaded only when needed.
  * Never import WASM modules directly in components; always go through this file.
  */
-
-// ─── Module singletons ───────────────────────────────────────────────────────
 
 let _aes = null
 let _dh = null
@@ -38,7 +34,7 @@ async function getXeddsa() {
   return _xeddsa
 }
 
-// ─── AES-256-GCM ─────────────────────────────────────────────────────────────
+// AES-256-GCM
 
 /**
  * Encrypts plaintext using AES-256-GCM via WASM.
@@ -64,7 +60,7 @@ export async function aesDecrypt(ciphertext, key, nonce) {
   return aes.decrypt(ciphertext, key, nonce)
 }
 
-// ─── Diffie-Hellman / HKDF ───────────────────────────────────────────────────
+// Diffie-Hellman / HKDF
 
 /**
  * Generates a private ephemeral Curve25519 key.
@@ -89,7 +85,7 @@ export async function hkdfDerive(ikm, salt, info, outputLen) {
   return dh.hkdf_derive(ikm, salt, info, outputLen)
 }
 
-// ─── XEdDSA Signatures ───────────────────────────────────────────────────────
+// XEdDSA Signatures
 
 /**
  * Computes an XEdDSA signature.

@@ -1,0 +1,134 @@
+import { useState, useEffect, useRef } from 'react'
+
+export const useGroups = (userId) => {
+  const [groups, setGroups] = useState([])
+  const initializedUserId = useRef(null) // prevents overwrite before the active user loads
+  const skipNextSave = useRef(false)
+
+  const resolveGroupName = (incomingName, existingName) => {
+    if (typeof incomingName === 'string' && incomingName.trim() && incomingName !== 'Group') {
+      return incomingName
+    }
+    if (typeof existingName === 'string' && existingName.trim()) {
+      return existingName
+    }
+    return incomingName || existingName || 'Group'
+  }
+
+  // Load whenever the active account changes. This prevents one user's group list
+  // from being persisted under the next synced/logged-in account.
+  useEffect(() => {
+    if (!userId) {
+      initializedUserId.current = null
+      setGroups([])
+      return
+    }
+
+    if (initializedUserId.current === userId) return
+
+    const saved = localStorage.getItem(`groups-${userId}`)
+    let nextGroups = []
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed)) nextGroups = parsed
+      } catch (e) {
+        console.error('Failed to parse localStorage groups', e)
+      }
+    }
+
+    skipNextSave.current = true
+    setGroups(nextGroups)
+    initializedUserId.current = userId
+  }, [userId])
+
+  // Save to localStorage **only after initial load**
+  useEffect(() => {
+    if (!userId || initializedUserId.current !== userId) return
+    if (skipNextSave.current) {
+      skipNextSave.current = false
+      return
+    }
+    localStorage.setItem(`groups-${userId}`, JSON.stringify(groups))
+  }, [groups, userId])
+
+  const setAllGroups = (serverGroups) => {
+    if (!Array.isArray(serverGroups)) return
+    setGroups((prev) => {
+      const previousById = new Map(
+        prev.map((group) => [String(group?.groupId ?? group?.id ?? ''), group])
+      )
+      const normalized = []
+      const seen = new Set()
+
+      for (const g of serverGroups) {
+        const groupId = String(g?.groupId ?? g?.id ?? '')
+        if (!groupId || seen.has(groupId)) continue
+        seen.add(groupId)
+
+        const existing = previousById.get(groupId)
+        normalized.push({
+          ...existing,
+          ...g,
+          groupId,
+          name: resolveGroupName(g?.name ?? g?.groupName, existing?.name),
+          lastActivityText: g?.lastActivityText ?? existing?.lastActivityText ?? '',
+          lastActivityAt:
+            g?.lastActivityAt ?? existing?.lastActivityAt ?? g?.createdAt ?? existing?.createdAt,
+        })
+      }
+
+      return normalized
+    })
+  }
+
+  // Upsert group by groupId; optionally move to top when activity is provided.
+  const upsertGroup = (groupData, activity = null) => {
+    const groupId = String(groupData?.groupId ?? groupData?.id ?? '')
+    if (!groupId) return
+
+    setGroups((prev) => {
+      const existingIndex = prev.findIndex((g) => String(g?.groupId ?? g?.id ?? '') === groupId)
+      const updated = [...prev]
+
+      if (existingIndex >= 0) {
+        const existing = updated[existingIndex]
+        const merged = {
+          ...existing,
+          ...groupData,
+          groupId,
+          name: resolveGroupName(groupData?.name ?? groupData?.groupName, existing?.name),
+        }
+
+        // Optional: track last activity for ordering (message/notification timestamps).
+        if (activity?.timestamp) merged.lastActivityAt = activity.timestamp
+        if (activity?.text != null) merged.lastActivityText = activity.text
+
+        updated[existingIndex] = merged
+
+        if (activity) {
+          const [moved] = updated.splice(existingIndex, 1)
+          updated.unshift(moved)
+        }
+      } else {
+        updated.unshift({
+          ...groupData,
+          groupId,
+          name: resolveGroupName(groupData?.name ?? groupData?.groupName, null),
+          lastActivityAt: activity?.timestamp || new Date().toISOString(),
+          lastActivityText: activity?.text ?? '',
+        })
+      }
+
+      return updated.slice(0, 50) // Keep recent 50 groups
+    })
+  }
+
+  const removeGroup = (groupId) => {
+    const gid = String(groupId ?? '')
+    if (!gid) return
+    setGroups((prev) => prev.filter((g) => String(g?.groupId ?? g?.id ?? '') !== gid))
+  }
+
+  return { groups, setAllGroups, upsertGroup, removeGroup }
+}
