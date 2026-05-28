@@ -35,18 +35,12 @@ const COLS = [
 
 export default function Footer() {
   return (
-    <footer
-      data-testid='footer'
-      id='download'
-      className='relative pt-20 pb-8 overflow-hidden section-fade'
-    >
-      {/* Same bg system as the rest of the landing */}
-      <div className='aurora-bg opacity-60' />
-      <div className='grid-overlay' />
-      <div className='absolute inset-0 opacity-40'>
+    <footer data-testid='footer' id='download' className='relative pt-20 pb-8 overflow-hidden'>
+      {/* Keep the footer clean so the text stays readable */}
+      <div className='grid-overlay footer-grid' />
+      <div className='absolute inset-0 opacity-10 pointer-events-none'>
         <ParticlesBackground />
       </div>
-      <div className='noise-overlay' />
 
       <div className='relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8'>
         {/* Top horizontal row: brand · sections · social */}
@@ -57,11 +51,10 @@ export default function Footer() {
               <img src='/echo-logo.svg' alt='ECHO Logo' className='h-9 w-9 object-contain' />
               <span className='text-lg font-semibold tracking-tight text-white'>ECHO</span>
             </Link>
-            <p className='mt-5 text-sm leading-relaxed text-[#d4d4e0]'>
-              Secure messaging. Built on battle-tested cryptographic protocols. No
-              backdoors.
+            <p className='mt-5 text-sm leading-relaxed text-white/85'>
+              Secure messaging. Built on battle-tested cryptographic protocols. No backdoors.
             </p>
-            <div className='mt-5 flex gap-4 text-[#cfcfdc]'>
+            <div className='mt-5 flex gap-4 text-white/80'>
               {[
                 { icon: FaGithub, label: 'github' },
                 { icon: FaLinkedinIn, label: 'linkedin' },
@@ -96,7 +89,7 @@ export default function Footer() {
                     <li key={l.label}>
                       <Link
                         to={l.to}
-                        className='inline-flex items-center gap-1.5 text-[#d4d4e0] transition-colors hover:text-white group'
+                        className='inline-flex items-center gap-1.5 text-white/80 transition-colors hover:text-white group'
                       >
                         {l.label}
                         <FiArrowUpRight className='h-3.5 w-3.5 opacity-0 -translate-x-1 transition-all group-hover:opacity-100 group-hover:translate-x-0' />
@@ -109,11 +102,11 @@ export default function Footer() {
           </nav>
         </div>
 
-        <div className='mt-14 h-px w-full bg-white/10' />
+        <div className='mt-14 h-px w-full bg-white/20' />
 
         {/* Bottom horizontal strip */}
-        <div className='mt-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between text-[13px] text-[#b0b0be]'>
-          <p>© {new Date().getFullYear()} Echo. All rights reserved.</p>
+        <div className='mt-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between text-[13px] text-white/70'>
+          <p className='text-white/70'>© {new Date().getFullYear()} Echo. All rights reserved.</p>
           <div className='flex flex-wrap gap-x-6 gap-y-2'>
             {[
               { label: 'Privacy', to: '/privacy' },
@@ -127,7 +120,7 @@ export default function Footer() {
               </Link>
             ))}
           </div>
-          <span className='font-mono text-[12px] text-[#8a8a9a]'>
+          <span className='font-mono text-[12px] text-white/60'>
             v{__APP_VERSION__} · sha 7f9a1c
           </span>
         </div>
