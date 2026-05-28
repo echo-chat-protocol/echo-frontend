@@ -112,6 +112,15 @@ code,
   border-radius: 8px;
 }
 
+.echo-scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.echo-scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
 /* =====================================================
    Gradient text utility
    ===================================================== */
