@@ -5,7 +5,18 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 
 export default [
-  { ignores: ['dist'] },
+  {
+    ignores: [
+      'dist',
+      'node_modules',
+      'playwright-report',
+      'test-results',
+      'coverage',
+      'playwright.config.js',
+      'playwright.ui.config.ts',
+      'tailwind.config.js',
+    ],
+  },
   {
     files: ['**/__tests__/**/*.{js,jsx}', '**/*.test.{js,jsx}', '**/*.spec.{js,jsx}'],
     languageOptions: {
