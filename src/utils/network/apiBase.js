@@ -89,8 +89,9 @@ export function resolveApiBase(rawBase = import.meta.env.VITE_SOCKET_URL || DEFA
 }
 
 export function resolvePairingServerUrl() {
-  const configured = import.meta.env.VITE_PAIRING_SERVER_URL || import.meta.env.VITE_PUBLIC_APP_URL
-
+  // In local dev on loopback, prefer a detected LAN origin so a phone on the
+  // same Wi‑Fi can reach the Vite dev server (which proxies /pairing and /sync
+  // to the backend).
   if (
     import.meta.env.DEV &&
     typeof window !== 'undefined' &&
@@ -101,14 +102,25 @@ export function resolvePairingServerUrl() {
     return __DEV_LAN_ORIGIN__.replace(/\/$/, '')
   }
 
-  if (configured) return configured.replace(/\/$/, '')
+  // Explicit override points directly at the pairing/sync backend.
+  const configured = import.meta.env.VITE_PAIRING_SERVER_URL
+  if (configured && String(configured).trim()) {
+    return String(configured).trim().replace(/\/$/, '')
+  }
 
-  if (typeof window !== 'undefined' && window.location?.origin) {
+  // In development the Vite dev server proxies /pairing and /sync to the
+  // backend, so the app origin (or LAN origin for phones) is reachable.
+  if (import.meta.env.DEV && typeof window !== 'undefined' && window.location?.origin) {
     if (isLoopbackHost(window.location.hostname) && typeof __DEV_LAN_ORIGIN__ === 'string') {
       return __DEV_LAN_ORIGIN__.replace(/\/$/, '')
     }
     return window.location.origin.replace(/\/$/, '')
   }
 
+  // Production: the /pairing and /sync endpoints live on the API backend, NOT
+  // on the static frontend host (e.g. Vercel). Falling back to
+  // window.location.origin or VITE_PUBLIC_APP_URL here points the phone at the
+  // frontend, which has no such routes → "Request failed". resolveApiBase()
+  // (VITE_SOCKET_URL) is the backend.
   return resolveApiBase()
 }
