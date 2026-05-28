@@ -8,6 +8,7 @@
     "aboutUs": "About",
     "login": "Log in",
     "register": "Get Started",
+    "signup": "Sign up",
     "language": "Language",
     "blog": "Blog"
   },
@@ -971,4 +972,3 @@
     }
   }
 }
-

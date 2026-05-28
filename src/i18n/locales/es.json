@@ -8,6 +8,7 @@
     "aboutUs": "Nosotros",
     "login": "Iniciar Sesión",
     "register": "Empezar",
+    "signup": "Registrarse",
     "language": "Idioma",
     "blog": "Blog"
   },
@@ -1001,4 +1002,3 @@
     }
   }
 }
-
