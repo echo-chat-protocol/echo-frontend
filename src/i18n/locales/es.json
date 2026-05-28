@@ -51,9 +51,9 @@
     "decentralized": "Descentralizado",
     "decentralizedDesc": "Sin servidores centrales. Tú controlas tus datos.",
     "decentralizedDetails": "Arquitectura peer-to-peer opcional que elimina puntos únicos de fallo y garantiza que tus comunicaciones no dependan de ninguna entidad central.",
-    "openSource": "Código Abierto",
+    "openSource": "Auditable",
     "openSourceDesc": "Código auditable.",
-    "openSourceDetails": "Todo nuestro código es de código abierto y disponible para auditoría.",
+    "openSourceDetails": "Nuestro código criptográfico está disponible para auditoría independiente.",
     "incognito": "Modo Incógnito",
     "learnMore": "Saber más",
     "showLess": "Ver menos"
@@ -107,7 +107,7 @@
     "stats": {
       "languages": "Lenguajes Soportados",
       "setup": "Tiempo de Configuración",
-      "openSource": "Código Abierto",
+      "openSource": "Auditable",
       "support": "Soporte Comunitario"
     }
   },
@@ -870,7 +870,7 @@
         "Cifrado de extremo a extremo \u2014 nadie puede leer tus mensajes, ni siquiera nosotros",
         "Las operaciones criptogr\u00e1ficas se ejecutan completamente en tu dispositivo",
         "Sin telemetr\u00eda, sin anuncios, sin rastreo de ning\u00fan tipo",
-        "100 % de c\u00f3digo abierto \u2014 verifica cada afirmaci\u00f3n t\u00fa mismo"
+        "Verificable de forma independiente \u2014 verifica cada afirmaci\u00f3n t\u00fa mismo"
       ]
     },
     "buildFromSource": "\u00bfPrefieres compilar desde el c\u00f3digo fuente?",

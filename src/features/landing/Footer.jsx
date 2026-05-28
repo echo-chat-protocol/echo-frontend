@@ -58,7 +58,7 @@ export default function Footer() {
               <span className='text-lg font-semibold tracking-tight text-white'>ECHO</span>
             </Link>
             <p className='mt-5 text-sm leading-relaxed text-[#d4d4e0]'>
-              Open source secure messaging. Built on battle-tested cryptographic protocols. No
+              Secure messaging. Built on battle-tested cryptographic protocols. No
               backdoors.
             </p>
             <div className='mt-5 flex gap-4 text-[#cfcfdc]'>

@@ -12,7 +12,7 @@
   "hero": {
     "title_1": "El mensajero que tus",
     "title_2": "conversaciones merecen.",
-    "subtitle": "ECHO es una capa de comunicación priorizando la privacidad con <1>E2EE</1>, generación de claves en el dispositivo y una pila criptográfica transparente de código abierto. Sin metadatos. Sin puertas traseras. Sin concesiones.",
+    "subtitle": "ECHO es una capa de comunicación priorizando la privacidad con <1>E2EE</1>, generación de claves en el dispositivo y una pila criptográfica transparente. Sin metadatos. Sin puertas traseras. Sin concesiones.",
     "download": "Descargar Echo",
     "start": "Comienza gratis"
   }

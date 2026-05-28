@@ -327,7 +327,7 @@ Our mission is to provide uncompromising security without sacrificing usability.
 Key principles:
 - No backdoors. No exceptions.
 - Zero-knowledge architecture - we never have access to your data
-- Open source and auditable
+- Auditable
 - Standards-based cryptography
 - Developer-friendly APIs`,
     },

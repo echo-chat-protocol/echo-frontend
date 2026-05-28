@@ -51,9 +51,9 @@
     "decentralized": "Decentralized",
     "decentralizedDesc": "No central servers. You control your data.",
     "decentralizedDetails": "Optional peer-to-peer architecture that eliminates single points of failure and ensures your communications don't depend on any central entity.",
-    "openSource": "Open Source",
+    "openSource": "Auditable",
     "openSourceDesc": "Auditable codebase.",
-    "openSourceDetails": "Our entire codebase is open source and available for audit.",
+    "openSourceDetails": "Our cryptographic code is available for independent audit.",
     "incognito": "Incognito Mode",
     "learnMore": "Learn more",
     "showLess": "Show less"
@@ -107,7 +107,7 @@
     "stats": {
       "languages": "Languages Supported",
       "setup": "Setup Time",
-      "openSource": "Open Source",
+      "openSource": "Auditable",
       "support": "Community Support"
     }
   },
@@ -254,7 +254,7 @@
   "footer": {
     "description": "Military-grade encryption for everyone. No backdoors. No exceptions.",
     "rights": "All rights reserved.",
-    "tagline": "Open source secure messaging. Built on battle-tested cryptographic protocols. No backdoors.",
+    "tagline": "Secure messaging. Built on battle-tested cryptographic protocols. No backdoors.",
     "product": {
       "title": "Product",
       "features": "Features",
@@ -840,7 +840,7 @@
         "End-to-end encrypted \u2014 no one can read your messages, not even us",
         "Cryptographic operations run entirely on your device",
         "No telemetry, no ads, no tracking of any kind",
-        "100 % open source \u2014 verify every claim yourself"
+        "Independently verifiable \u2014 verify every claim yourself"
       ]
     },
     "buildFromSource": "Prefer to build from source?",

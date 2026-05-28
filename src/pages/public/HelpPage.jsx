@@ -8,8 +8,8 @@ const FAQ = [
     a: "No — and that's by design. We never see your keys, so we cannot reset them. Use Shamir 3-of-5 across trusted devices/people to avoid this scenario.",
   },
   {
-    q: "Is ECHO actually open source?",
-    a: "Yes. The clients, server and protocol are AGPL. Builds are reproducible — you can compile the exact binary we ship.",
+    q: "Is ECHO open source?",
+    a: "No — ECHO is not open source. The codebase is proprietary.",
   },
   {
     q: "Why no phone number?",
