@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.0.13](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.11...v0.0.13) (2026-05-28)
+
+
+### Features
+
+* enhance user profile modal with improved data handling and UI updates ([391bad3](https://github.com/echo-chat-protocol/echo-frontend/commit/391bad31b558cb34db0b935ca91c2215f7f9c0e4))
+* implement empty state component with animations and styling ([c434cc6](https://github.com/echo-chat-protocol/echo-frontend/commit/c434cc67224a8bf36c647b0c415e7cad5024201f))
+
 ## [0.0.12](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.11...v0.0.12) (2026-05-28)
 
 
