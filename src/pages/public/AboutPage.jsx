@@ -16,7 +16,7 @@ const VALUES = [
   {
     icon: Users,
     title: "Open, audited, owned",
-    desc: "Every line of crypto code is open source. Eventually we'll transition into a foundation.",
+    desc: "Every line of crypto code is independently audited. Eventually we'll transition into a foundation.",
   },
 ];
 
@@ -82,7 +82,7 @@ export default function AboutPage() {
           { k: "0", v: "data breaches" },
           { k: "12", v: "countries · staff" },
           { k: "8", v: "independent audits" },
-          { k: "100%", v: "open source" },
+          { k: "100%", v: "audited" },
           { k: "$0", v: "ad revenue" },
         ].map((s) => (
           <div key={s.v} className="glass rounded-2xl p-5 text-center">

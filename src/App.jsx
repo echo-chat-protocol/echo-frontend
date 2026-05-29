@@ -31,13 +31,10 @@ const RegisterPage = lazy(() => import('@/pages/public/RegisterPage'))
 const FeaturesPage = lazy(() => import('@/pages/public/FeaturesPage'))
 const SecurityPage = lazy(() => import('@/pages/public/SecurityPage'))
 const DownloadPage = lazy(() => import('@/pages/public/DownloadPage'))
-const RoadmapPage = lazy(() => import('@/pages/public/RoadmapPage'))
 const DocsPage = lazy(() => import('@/pages/public/DocsPage'))
 const CommunityPage = lazy(() => import('@/pages/public/CommunityPage'))
 const HelpPage = lazy(() => import('@/pages/public/HelpPage'))
-const StatusPage = lazy(() => import('@/pages/public/StatusPage'))
 const AboutPage = lazy(() => import('@/pages/public/AboutPage'))
-const CareersPage = lazy(() => import('@/pages/public/CareersPage'))
 const BlogPage = lazy(() => import('@/pages/public/BlogPage'))
 const ContactPage = lazy(() => import('@/pages/public/ContactPage'))
 const PrivacyPage = lazy(() => import('@/pages/public/PrivacyPage'))
@@ -186,17 +183,17 @@ function App() {
             <Route path='/features' element={<FeaturesPage />} />
             <Route path='/security' element={<SecurityPage />} />
             <Route path='/download' element={<DownloadPage />} />
-            <Route path='/roadmap' element={<RoadmapPage />} />
+            <Route path='/roadmap' element={<Navigate to='/' replace />} />
 
             {/* Resources */}
             <Route path='/docs' element={<DocsPage />} />
             <Route path='/community' element={<CommunityPage />} />
             <Route path='/help' element={<HelpPage />} />
-            <Route path='/status' element={<StatusPage />} />
+            <Route path='/status' element={<Navigate to='/' replace />} />
 
             {/* Company */}
             <Route path='/about' element={<AboutPage />} />
-            <Route path='/careers' element={<CareersPage />} />
+            <Route path='/careers' element={<Navigate to='/' replace />} />
             <Route path='/blog' element={<BlogPage />} />
             <Route path='/contact' element={<ContactPage />} />
 

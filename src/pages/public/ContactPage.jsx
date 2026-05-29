@@ -1,5 +1,6 @@
-import React, { useState } from "react";
-import { Mail, MessageCircle, Building2, Lock } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Mail, MessageCircle, Building2 } from "lucide-react";
 import PageShell from "@/components/layout/PageShell";
 
 const REASONS = [
@@ -11,11 +12,21 @@ const REASONS = [
 ];
 
 export default function ContactPage() {
+  const [searchParams] = useSearchParams();
   const [reason, setReason] = useState("general");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const [sent, setSent] = useState(false);
+
+  useEffect(() => {
+    if (searchParams.get("reason") !== "sales") return;
+
+    setReason("sales");
+    setMessage(
+      "Hi, I’m interested in ECHO Enterprise. Could you share pricing, deployment options, and what is included in the custom plan?"
+    );
+  }, [searchParams]);
 
   const submit = (e) => {
     e.preventDefault();
@@ -41,21 +52,15 @@ export default function ContactPage() {
           {[
             {
               icon: Mail,
-              title: "Email",
-              v: "hello@echo.io",
-              sub: "General · 4h SLA",
+              title: "Support",
+              v: "support@echo.com",
+              sub: "General · issues & questions",
             },
             {
               icon: Building2,
               title: "Sales",
-              v: "sales@echo.io",
+              v: "sales@echo.com",
               sub: "Enterprise & self-hosted",
-            },
-            {
-              icon: Lock,
-              title: "Security",
-              v: "security@echo.io",
-              sub: "PGP: 0xECHO320SEC",
             },
           ].map((c) => (
             <article key={c.title} className="glass cyber-border rounded-2xl p-5">
@@ -78,7 +83,7 @@ export default function ContactPage() {
               </span>
               <h2 className="mt-5 text-2xl font-semibold">Sealed and sent.</h2>
               <p className="mt-2 text-[#b9b9c4]">
-                We'll reply to <span className="text-white">{email}</span>{" "}
+                We&apos;ll reply to <span className="text-white">{email}</span>{" "}
                 shortly — usually within 4 hours during European working days.
               </p>
             </div>
@@ -86,7 +91,7 @@ export default function ContactPage() {
             <form onSubmit={submit} className="space-y-5">
               <div>
                 <label className="block text-[12px] font-medium text-[#cfcfdc] mb-2">
-                  What's it about?
+                  What&apos;s it about?
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {REASONS.map((r) => (

@@ -38,8 +38,8 @@ const PRIMARY = [
   },
   {
     icon: GitBranch,
-    title: "Open & Auditable",
-    desc: "Every line of crypto code is open source. Independent firms run quarterly audits — published in full.",
+    title: "Auditable",
+    desc: "Independent firms run quarterly audits — published in full.",
   },
   {
     icon: Network,

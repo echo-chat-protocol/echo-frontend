@@ -8,6 +8,7 @@
     "aboutUs": "About",
     "login": "Log in",
     "register": "Get Started",
+    "signup": "Sign up",
     "language": "Language",
     "blog": "Blog"
   },
@@ -50,9 +51,9 @@
     "decentralized": "Decentralized",
     "decentralizedDesc": "No central servers. You control your data.",
     "decentralizedDetails": "Optional peer-to-peer architecture that eliminates single points of failure and ensures your communications don't depend on any central entity.",
-    "openSource": "Open Source",
+    "openSource": "Auditable",
     "openSourceDesc": "Auditable codebase.",
-    "openSourceDetails": "Our entire codebase is open source and available for audit.",
+    "openSourceDetails": "Our cryptographic code is available for independent audit.",
     "incognito": "Incognito Mode",
     "learnMore": "Learn more",
     "showLess": "Show less"
@@ -106,7 +107,7 @@
     "stats": {
       "languages": "Languages Supported",
       "setup": "Setup Time",
-      "openSource": "Open Source",
+      "openSource": "Auditable",
       "support": "Community Support"
     }
   },
@@ -253,7 +254,7 @@
   "footer": {
     "description": "Military-grade encryption for everyone. No backdoors. No exceptions.",
     "rights": "All rights reserved.",
-    "tagline": "Open source secure messaging. Built on battle-tested cryptographic protocols. No backdoors.",
+    "tagline": "Secure messaging. Built on battle-tested cryptographic protocols. No backdoors.",
     "product": {
       "title": "Product",
       "features": "Features",
@@ -839,44 +840,11 @@
         "End-to-end encrypted \u2014 no one can read your messages, not even us",
         "Cryptographic operations run entirely on your device",
         "No telemetry, no ads, no tracking of any kind",
-        "100 % open source \u2014 verify every claim yourself"
+        "Independently verifiable \u2014 verify every claim yourself"
       ]
     },
     "buildFromSource": "Prefer to build from source?",
     "viewOnGithub": "View on GitHub"
-  },
-  "statusPage": {
-    "pageTitle": "System Status",
-    "lastChecked": "Last checked",
-    "allOperational": "All systems operational",
-    "disruption": "Service disruption detected",
-    "operational": "Operational",
-    "degraded": "Degraded",
-    "outage": "Outage",
-    "maintenance": "Maintenance",
-    "incidentHistory": "Incident history",
-    "services": [
-      { "label": "REST API", "desc": "Auth, users, profiles" },
-      { "label": "WebSocket", "desc": "Live messaging & presence" },
-      { "label": "AES-256 module", "desc": "Client-side encryption" },
-      { "label": "DH key exchange", "desc": "X25519 Diffie-Hellman" },
-      { "label": "XEdDSA signatures", "desc": "Signature verification" },
-      { "label": "CDN / Static assets", "desc": "Web app delivery" }
-    ],
-    "incidents": [
-      {
-        "date": "Feb 20, 2026",
-        "title": "All systems operational",
-        "type": "operational",
-        "body": "No incidents recorded."
-      },
-      {
-        "date": "Feb 10, 2026",
-        "title": "Scheduled backend maintenance",
-        "type": "maintenance",
-        "body": "API & WebSocket updated. ~4 min downtime at 03:00 UTC."
-      }
-    ]
   },
   "common": {
     "back": "Back",
@@ -971,4 +939,3 @@
     }
   }
 }
-
