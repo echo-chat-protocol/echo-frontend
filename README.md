@@ -92,21 +92,6 @@ cd echo-frontend
 npm install
 ```
 
-### Building WASM Modules
-
-Each Rust module must be compiled to WASM before running the app:
-
-```bash
-# AES-256 encryption
-cd aes-wasm && wasm-pack build --target web && cd ..
-
-# X25519 / Diffie-Hellman
-cd dh-wasm && wasm-pack build --target web && cd ..
-
-# XEdDSA signatures
-cd xeddsa-wasm && wasm-pack build --target web && cd ..
-```
-
 ### Running
 
 ```bash
@@ -119,6 +104,9 @@ npm run preview
 
 # Desktop app (Tauri)
 npm run tauri dev
+
+# Mobile Tauri
+npm run tauri -- android dev --host
 ```
 
 ---
