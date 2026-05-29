@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next'
 
 const NAV = [
   { key: 'features', href: '#features' },
-  { key: 'playground', href: '#playground' },
   { key: 'security', href: '#security' },
   { key: 'pricing', href: '#pricing' },
   { key: 'docs', href: '#docs' },
@@ -36,7 +35,7 @@ export default function Navbar() {
       }`}
     >
       <div
-        className={`mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 transition-all duration-300 ${
+        className={`relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 transition-all duration-300 ${
           scrolled
             ? 'rounded-full glass-strong'
             : 'rounded-2xl bg-transparent border border-transparent'
@@ -55,7 +54,7 @@ export default function Navbar() {
           </Link>
 
           {/* Desktop nav */}
-          <ul className='hidden md:flex items-center gap-8 text-sm text-[#cfcfcf]'>
+          <ul className='hidden md:flex md:absolute md:left-1/2 md:-translate-x-1/2 items-center gap-8 text-sm text-[#cfcfcf]'>
             {NAV.map((item) => (
               <li key={item.href}>
                 <a

@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { useState } from 'react'
 import { Check, Building2 } from 'lucide-react'
 
@@ -163,13 +164,13 @@ export default function Pricing() {
                 ))}
               </ul>
 
-              <a
+              <Link
                 data-testid={`pricing-cta-${p.name.toLowerCase()}`}
-                href='#'
+                to={p.name === 'Enterprise' ? '/contact?reason=sales' : '/pricing'}
                 className={`mt-7 ${p.highlight ? 'btn-primary' : 'btn-ghost'}`}
               >
-                {p.cta}
-              </a>
+                {p.name === 'Enterprise' ? 'Enterprise sales' : p.cta}
+              </Link>
             </article>
           ))}
         </div>
