@@ -1,117 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import PropTypes from 'prop-types'
 import { CheckCheck, Check, Download, FileImage } from 'lucide-react'
 import { format, isSameDay } from 'date-fns'
 import { es } from 'date-fns/locale'
 import CallEventMessage from './CallEventMessage'
+import ImageLightbox from './ImageLightbox'
 
-const KLIPY_KEY_PLACEHOLDERS = new Set(['your_klipy_api_key_here', 'your_kliply_api_key_here'])
-
-const getKlipyApiKey = () => {
-  const apiKey = String(
-    import.meta.env.VITE_KLIPY_API_KEY || import.meta.env.VITE_KLIPLY_API_KEY || ''
-  ).trim()
-
-  return KLIPY_KEY_PLACEHOLDERS.has(apiKey) ? '' : apiKey
-}
-
-const getGifUrl = (result) =>
-  result?.media_formats?.gif?.url ||
-  result?.media_formats?.mediumgif?.url ||
-  result?.media_formats?.tinygif?.url ||
-  result?.media_formats?.nanogif?.url ||
-  result?.media_formats?.preview?.url ||
-  null
-
-const extractGifPostId = (text) => {
-  if (!text) return null
-
-  // Match data-postid from embed code
-  const embedMatch = text.match(/data-postid="([\w-]+)"/)
-  if (embedMatch) return embedMatch[1]
-
-  // Match direct tenor.com/view links
-  const linkMatch = text.match(/tenor\.com\/view\/[^"'\s]+-(\d+)/)
-  if (linkMatch) return linkMatch[1]
-
-  // Match direct klipy.com/gifs links
-  const klipyLinkMatch = text.match(/klipy\.com\/gifs\/([^"'\s/?#]+)/)
-  if (klipyLinkMatch) return klipyLinkMatch[1]
-
-  return null
-}
-
-// Component for GIFs backed by KLIPY's Tenor-compatible endpoint.
-const KlipyGif = ({ postId, fallbackText }) => {
-  const [gifUrl, setGifUrl] = useState(null)
-  const [failed, setFailed] = useState(false)
-
-  useEffect(() => {
-    const apiKey = getKlipyApiKey()
-    if (!apiKey) {
-      setFailed(true)
-      return undefined
-    }
-
-    const controller = new AbortController()
-    const params = new URLSearchParams({
-      ids: postId,
-      key: apiKey,
-    })
-
-    setGifUrl(null)
-    setFailed(false)
-
-    fetch(`https://api.klipy.com/v2/posts?${params.toString()}`, {
-      signal: controller.signal,
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(`KLIPY GIF request failed: ${res.status}`)
-        return res.json()
-      })
-      .then((data) => {
-        const nextGifUrl = getGifUrl(data.results?.[0])
-        if (!nextGifUrl) throw new Error('KLIPY GIF response did not include a GIF URL')
-        setGifUrl(nextGifUrl)
-      })
-      .catch((err) => {
-        if (err?.name !== 'AbortError') {
-          console.error(err)
-          setFailed(true)
-        }
-      })
-
-    return () => controller.abort()
-  }, [postId])
-
-  if (failed) return <p>{fallbackText}</p>
-  if (!gifUrl) return <p>Loading GIF...</p>
-
-  return (
-    <img
-      src={gifUrl}
-      alt='GIF'
-      className='max-w-full rounded-lg cursor-pointer'
-      onClick={() => window.open(gifUrl, '_blank', 'noopener,noreferrer')}
-    />
-  )
-}
-
-KlipyGif.propTypes = {
-  postId: PropTypes.string.isRequired,
-  fallbackText: PropTypes.string.isRequired,
-}
-
-// Render message content with KLIPY-backed GIF support
+// Plain text rendering. GIFs are now sent as animated images (message.image,
+// via the KLIPY picker), so message text no longer embeds GIF links or ids.
 const renderMessageContent = (text) => {
   if (!text) return null
-
-  const postId = extractGifPostId(text)
-
-  if (postId) {
-    return <KlipyGif postId={postId} fallbackText={text} />
-  }
-
   return <p>{text}</p>
 }
 
@@ -133,6 +31,17 @@ function MessageBubble({ message, currentUserId, contact }) {
   const senderName = message.username || contact?.name || 'Member'
   const avatar = !isSelf ? contact?.avatar || message.profileImage || null : null
   const time = message.createdAt ? format(new Date(message.createdAt), 'HH:mm') : ''
+  const [lightboxOpen, setLightboxOpen] = useState(false)
+
+  const handleDownload = (e) => {
+    e.stopPropagation()
+    const a = document.createElement('a')
+    a.href = message.image
+    a.download = ''
+    a.target = '_blank'
+    a.rel = 'noopener noreferrer'
+    a.click()
+  }
 
   return (
     <div
@@ -170,10 +79,14 @@ function MessageBubble({ message, currentUserId, contact }) {
             <img
               src={message.image}
               alt='Shared image'
-              className='block max-h-52 w-full cursor-pointer object-cover'
-              onClick={() => window.open(message.image, '_blank')}
+              className='block max-h-52 w-full cursor-zoom-in object-cover'
+              onClick={() => setLightboxOpen(true)}
             />
-            <button className='absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/60 opacity-0 backdrop-blur transition hover:bg-violet-500/40 group-hover:opacity-100'>
+            <button
+              onClick={handleDownload}
+              title='Download'
+              className='absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/60 opacity-0 backdrop-blur transition hover:bg-violet-500/40 group-hover:opacity-100'
+            >
               <Download size={14} className='text-white' />
             </button>
             <div className='flex items-center justify-end gap-1 border-t border-white/[0.06] bg-black/50 px-3 py-2'>
@@ -190,6 +103,13 @@ function MessageBubble({ message, currentUserId, contact }) {
                 {isSelf && <State seen={message.seenStatus} />}
               </span>
             </div>
+            {lightboxOpen && (
+              <ImageLightbox
+                src={message.image}
+                alt='Shared image'
+                onClose={() => setLightboxOpen(false)}
+              />
+            )}
           </div>
         ) : (
           <div

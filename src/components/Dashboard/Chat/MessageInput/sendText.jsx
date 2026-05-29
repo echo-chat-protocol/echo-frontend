@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import PropTypes from 'prop-types'
-import { Plus, Smile, Image as ImgIcon, Paperclip, Send, Mic, X } from 'lucide-react'
+import { Plus, Smile, Keyboard, Send, X } from 'lucide-react'
 import { compressImage } from '../utils/imageUtils'
 import { getSocket } from '../../../../socket'
+import MediaPanel from './MediaPanel'
 
 /**
  * Premium MessageInput — keeps all existing send/image logic,
@@ -16,7 +17,11 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
   const [imagePreview, setImagePreview] = useState(null)
   const [showImageModal, setShowImageModal] = useState(false)
   const [imageText, setImageText] = useState('')
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [panelTab, setPanelTab] = useState('emoji')
   const fileInputRef = useRef(null)
+  const inputRef = useRef(null)
+  const caretRef = useRef(null)
   const typingTimeoutRef = useRef(null)
   const isTypingRef = useRef(false)
 
@@ -111,6 +116,52 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
     setImageText('')
   }
 
+  // ── Emoji / GIF / sticker panel ───────────────────────────────────────────────
+  // The panel docks below the composer, taking the keyboard's place on mobile.
+  // Opening it blurs the text field so the soft keyboard hides; focusing the
+  // field again closes the panel — same dance as WhatsApp.
+  const togglePanel = (tab) => {
+    if (disabled) return
+    setPanelTab(tab)
+    setPanelOpen((prev) => {
+      const next = !(prev && panelTab === tab) // same tab toggles closed; other tab switches
+      if (next) inputRef.current?.blur()
+      else inputRef.current?.focus()
+      return next
+    })
+  }
+
+  const handleInputFocus = () => {
+    setFocused(true)
+    if (panelOpen) setPanelOpen(false)
+  }
+
+  // Insert an emoji at the caret (falls back to append) without stealing focus,
+  // so the soft keyboard stays hidden while the panel is open.
+  const handleEmoji = (emoji) => {
+    setValue((prev) => {
+      const pos = caretRef.current ?? prev.length
+      const at = Math.max(0, Math.min(pos, prev.length))
+      const next = prev.slice(0, at) + emoji + prev.slice(at)
+      caretRef.current = at + emoji.length
+      return next
+    })
+  }
+
+  // A GIF or sticker is just a remote animated image: send its URL through the
+  // existing image field so it renders (and zooms) exactly like any other image.
+  const handleMediaSelect = (media) => {
+    if (disabled || !media?.fullUrl) return
+    setPanelOpen(false)
+    Promise.resolve(sendMessage('', media.fullUrl)).catch((err) =>
+      console.error('[SendText] Failed to send media:', err)
+    )
+  }
+
+  const trackCaret = (e) => {
+    caretRef.current = e.target.selectionStart
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className='shrink-0 border-t border-white/[0.05] bg-black/70 px-2 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur md:bg-transparent md:px-6 md:py-4 md:pb-4'>
@@ -189,35 +240,32 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
           <Plus size={17} />
         </button>
 
+        <button
+          data-testid='msg-emoji'
+          type='button'
+          title={panelOpen ? 'Keyboard' : 'Emoji, GIFs & stickers'}
+          onClick={() => togglePanel('emoji')}
+          disabled={disabled}
+          className={`grid h-11 w-11 shrink-0 place-items-center rounded-full transition hover:bg-white/[0.04] hover:text-white disabled:opacity-40 md:h-9 md:w-9 ${
+            panelOpen ? 'text-violet-300' : 'text-white/55'
+          }`}
+        >
+          {panelOpen ? <Keyboard size={18} /> : <Smile size={18} />}
+        </button>
+
         <input
+          ref={inputRef}
           data-testid='chat-input'
           value={value}
           onChange={handleChange}
-          onFocus={() => setFocused(true)}
+          onFocus={handleInputFocus}
           onBlur={() => setFocused(false)}
+          onSelect={trackCaret}
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), submit())}
           placeholder={disabled ? disabledReason || 'Sending is disabled...' : 'Message...'}
           disabled={disabled}
           className='min-w-0 flex-1 bg-transparent px-1 py-2.5 text-[16px] text-white placeholder:text-white/30 focus:outline-none md:px-1.5 md:py-2 md:text-[13.5px]'
         />
-
-        <div className='hidden min-w-0 items-center gap-0.5 pr-1 sm:flex'>
-          <IconBtn title='Emoji' testid='msg-emoji'>
-            <Smile size={16} />
-          </IconBtn>
-          <IconBtn title='GIFs' testid='msg-gifs'>
-            <span className='mono text-[10px] font-bold tracking-tight'>GIF</span>
-          </IconBtn>
-          <IconBtn title='Image' testid='msg-image' onClick={handleImageClick}>
-            <ImgIcon size={16} />
-          </IconBtn>
-          <IconBtn title='File' testid='msg-file'>
-            <Paperclip size={15} />
-          </IconBtn>
-          <IconBtn title='Voice' testid='msg-voice'>
-            <Mic size={15} />
-          </IconBtn>
-        </div>
 
         <button
           data-testid='chat-send'
@@ -231,25 +279,25 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
         </button>
       </div>
 
-      <div className='mt-2 hidden items-center justify-between px-1 text-[10px] text-white/30 mono md:flex md:px-2'>
-        <span>Argon2id · X25519 · ChaCha20-Poly1305</span>
-        <span>Press ⏎ to send · ⇧⏎ new line</span>
-      </div>
-    </div>
-  )
-}
+      {!panelOpen && (
+        <div className='mt-2 hidden items-center justify-between px-1 text-[10px] text-white/30 mono md:flex md:px-2'>
+          <span>Argon2id · X25519 · ChaCha20-Poly1305</span>
+          <span>Press ⏎ to send · ⇧⏎ new line</span>
+        </div>
+      )}
 
-function IconBtn({ children, title, testid, onClick }) {
-  return (
-    <button
-      type='button'
-      title={title}
-      data-testid={testid}
-      onClick={onClick}
-      className='grid h-8 w-8 place-items-center rounded-full text-white/45 hover:bg-white/[0.04] hover:text-white transition-all'
-    >
-      {children}
-    </button>
+      {/* Emoji / GIF / sticker panel — docks here, in the keyboard's place */}
+      <MediaPanel
+        open={panelOpen}
+        initialTab={panelTab}
+        onClose={() => {
+          setPanelOpen(false)
+          inputRef.current?.focus()
+        }}
+        onEmoji={handleEmoji}
+        onMediaSelect={handleMediaSelect}
+      />
+    </div>
   )
 }
 
