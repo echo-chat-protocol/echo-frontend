@@ -189,7 +189,7 @@ const DisplayText = ({ messages = [], currentUserId, contact = null }) => {
               <CallEventMessage callData={message.callData} currentUserId={currentUserId} />
             ) : message.messageType === 'system' ? (
               <div className='flex justify-center'>
-                <div className='rounded-full border border-white/[0.06] bg-white/[0.02] px-3 py-1 text-[10.5px] text-white/40 mono'>
+                <div className='rounded-full border border-yellow-400/25 bg-yellow-400/[0.08] px-3 py-1 text-[10.5px] text-yellow-300/90 mono'>
                   {message.text}
                 </div>
               </div>

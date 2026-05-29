@@ -30,7 +30,9 @@ vi.mock('./MessageDisplay/displayText', () => ({
   ),
 }))
 
-vi.mock('./MessageInput/GroupSendText', () => ({
+// GroupChat now reuses the DM composer (./MessageInput/sendText) so groups get
+// image/GIF support. Mock that module (keeping the same testid the tests query).
+vi.mock('./MessageInput/sendText', () => ({
   default: ({ sendMessage, disabled, disabledReason }) => (
     <button
       data-testid='group-send-text'

@@ -649,23 +649,24 @@ export async function prepareGroupMlsForSend({ socket, groupId, userId, currentS
     (Number.isInteger(serverEpoch) && state.epoch < serverEpoch)
 
   if (Number.isInteger(serverEpoch)) {
-    // Always replay server commits before sending when we know the live epoch.
-    const caught = needsBootstrap
-      ? await bootstrapGroupMlsOnDevice({
-          socket,
-          groupId: gid,
-          userId,
-          targetEpoch: serverEpoch,
-        })
-      : await catchUpGroupMlsFromServer({
-          socket,
-          groupId: gid,
-          userId,
-          targetEpoch: serverEpoch,
-        })
-    if (caught?.applicationSecretB64) {
-      state = await finalizeLocalMlsState(gid, caught, userId)
-      await saveGroupState(gid, state)
+    // Fast path: when we already hold usable epoch secrets and are not behind
+    // the server, there is nothing to replay. `needsBootstrap` is true whenever
+    // secrets are missing OR state.epoch < serverEpoch, so `!needsBootstrap`
+    // here means we are current (epoch >= serverEpoch with full secrets). The
+    // old code unconditionally ran catchUpGroupMlsFromServer in this case, which
+    // re-fetched the entire group history and re-ran the multi-pass replay on
+    // EVERY send — pure overhead that scales with total message count.
+    if (needsBootstrap) {
+      const caught = await bootstrapGroupMlsOnDevice({
+        socket,
+        groupId: gid,
+        userId,
+        targetEpoch: serverEpoch,
+      })
+      if (caught?.applicationSecretB64) {
+        state = await finalizeLocalMlsState(gid, caught, userId)
+        await saveGroupState(gid, state)
+      }
     }
   } else {
     // Server epoch unknown (slow mobile openGroup) — still attempt catch-up from history.

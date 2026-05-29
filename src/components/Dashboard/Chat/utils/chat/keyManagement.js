@@ -53,6 +53,7 @@ export const setPendingOutgoingGroupMessage = ({
   headerB64,
   ciphertextB64,
   text,
+  image = null,
 }) => {
   prunePendingGroupPlaintexts()
   const cacheKey = getPendingGroupPlaintextKey({
@@ -65,10 +66,13 @@ export const setPendingOutgoingGroupMessage = ({
 
   pendingGroupPlaintextCache.set(cacheKey, {
     text,
+    image: image ?? null,
     createdAt: Date.now(),
   })
 }
 
+// Returns the cached self-echo payload `{ text, image }` (so an outgoing image
+// renders immediately without re-decrypting), or null when nothing is cached.
 export const consumePendingOutgoingGroupMessage = ({
   groupId,
   encryptedSenderDataB64,
@@ -86,7 +90,8 @@ export const consumePendingOutgoingGroupMessage = ({
 
   const entry = pendingGroupPlaintextCache.get(cacheKey)
   pendingGroupPlaintextCache.delete(cacheKey)
-  return typeof entry?.text === 'string' ? entry.text : null
+  if (typeof entry?.text !== 'string') return null
+  return { text: entry.text, image: entry.image ?? null }
 }
 
 export const deletePendingOutgoingGroupMessage = ({
@@ -460,6 +465,44 @@ export const updateSavedMessages = async (userId, targetUserId, message, setMess
         message,
         latestMessage: message.text,
         timestamp: message.timestamp || message.createdAt,
+      },
+    })
+  )
+}
+
+// Persist many already-known messages at once (e.g. a group history replay on
+// open). Writes run in parallel instead of one awaited IndexedDB transaction
+// per message, and a single `localStorageUpdated` event is dispatched for the
+// newest row instead of one per message. Does not call setMessages — callers
+// that replay history set the rendered list explicitly afterwards.
+export const storeSavedMessagesBatch = async (userId, targetUserId, messages) => {
+  const list = (Array.isArray(messages) ? messages : []).filter((m) => m?._id)
+  if (list.length === 0) return
+
+  if (eld.isUnlocked()) {
+    await Promise.all(
+      list.map((message) =>
+        eld.storeMessage(targetUserId, message).catch((err) => {
+          console.error('[KeyMgmt] Failed to store message in batch:', err)
+        })
+      )
+    )
+  }
+
+  const latest = list.reduce((newest, message) => {
+    const t = new Date(message.timestamp || message.createdAt || 0).getTime()
+    const nt = new Date(newest?.timestamp || newest?.createdAt || 0).getTime()
+    return t >= nt ? message : newest
+  }, list[0])
+
+  window.dispatchEvent(
+    new CustomEvent('localStorageUpdated', {
+      detail: {
+        userId,
+        targetUserId,
+        message: latest,
+        latestMessage: latest?.text,
+        timestamp: latest?.timestamp || latest?.createdAt,
       },
     })
   )

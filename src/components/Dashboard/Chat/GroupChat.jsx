@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PropTypes from 'prop-types'
 import { getSocket } from '../../../socket'
 import DisplayText from './MessageDisplay/displayText'
-import GroupSendText from './MessageInput/GroupSendText'
+import SendText from './MessageInput/sendText'
 import { formatProfileImage } from '../DashboardComponents/utils/helpers'
 
 import {
@@ -20,9 +20,14 @@ import {
   getIdentityKeys,
   getSavedMessages,
   setPendingOutgoingGroupMessage,
+  storeSavedMessagesBatch,
   updateSavedMessages,
 } from './utils/chat/keyManagement'
-import { decryptIncomingGroupMessage } from './utils/chat/groupMessageDecryption'
+import {
+  decryptIncomingGroupMessage,
+  decodeGroupMessagePayload,
+  encodeGroupMessagePayload,
+} from './utils/chat/groupMessageDecryption'
 import {
   forwardGroupStateToPairedDevices,
   processIncomingEnvelopes,
@@ -43,7 +48,6 @@ import {
 } from './utils/crypto/groupCrypto/groupMlsReplay'
 import { mergeAccountRosterIntoMlsRoster } from './utils/crypto/groupCrypto/rosterMerge'
 
-const TEXT_ENCODER = new TextEncoder()
 const TEXT_DECODER = new TextDecoder()
 const MLS_UNAVAILABLE_TEXT = '[Unable to decrypt message]'
 const MLS_KEY_MISSING_REASON = 'MLS state is not ready on this device yet'
@@ -294,9 +298,28 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         findMemberByUserId(commit?.roster, commit?.targetUserId)?.username ||
         'a member'
 
+      const targetUserIdStr = String(commit?.targetUserId ?? '')
+      const targetIsSelf = targetUserIdStr !== '' && targetUserIdStr === String(userId)
+      // A sibling-device add re-adds a userId that already holds a leaf — it is
+      // device management, not a membership change, so it gets no system row.
+      // Detect it two ways so a stale priorState can't let it slip through:
+      //   1. the target userId is already present in priorState.roster, or
+      //   2. the target userId owns more than one leaf in the post-add roster
+      //      (i.e. it had at least one leaf before this Add).
+      const targetAlreadyMember =
+        targetUserIdStr !== '' &&
+        Array.isArray(priorState?.roster) &&
+        priorState.roster.some((member) => String(member?.userId ?? '') === targetUserIdStr)
+      const targetLeafCountAfter = Array.isArray(commit?.roster)
+        ? commit.roster.filter((member) => String(member?.userId ?? '') === targetUserIdStr).length
+        : 0
+      const isDeviceAdd =
+        targetUserIdStr !== '' && (targetAlreadyMember || targetLeafCountAfter > 1)
+
       let text = `${actorName} updated the group`
       if (commit?.type === 'add') {
-        text = `${actorName} added ${targetName} to the group`
+        if (isDeviceAdd) return null
+        text = targetIsSelf ? `${actorName} added you` : `${actorName} added ${targetName}`
       } else if (commit?.type === 'remove') {
         const actorWasTarget =
           String(commit?.targetUserId ?? '') ===
@@ -320,7 +343,30 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         messageType: 'system',
       }
     },
-    [activeGroupId, findMemberByLeafIndex, findMemberByUserId]
+    [activeGroupId, findMemberByLeafIndex, findMemberByUserId, userId]
+  )
+
+  // Synthetic "X created <group>" row shown as the first message of every group.
+  // Derived locally from the openGroup response (createdBy + members + name), so
+  // every member renders it without it having to be sent over the wire. Stable
+  // _id keeps it de-duplicated across reopens.
+  const buildGroupCreatedSystemMessage = useCallback(
+    ({ createdBy, members, groupName, createdAt }) => {
+      const creatorName =
+        (Array.isArray(members) ? members : []).find(
+          (member) => String(member?.userId ?? member?.id ?? '') === String(createdBy ?? '')
+        )?.username || 'Someone'
+      return {
+        _id: `created:${String(activeGroupId)}`,
+        userId: '',
+        username: '',
+        text: `${creatorName} created ${groupName || 'the group'}`,
+        createdAt: createdAt || new Date(0).toISOString(),
+        seenStatus: true,
+        messageType: 'system',
+      }
+    },
+    [activeGroupId]
   )
 
   const mergeCachedMessages = (cachedMessages, incomingMessages) => {
@@ -427,6 +473,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         message?.username || (String(message?.userId) === String(userId) ? username : 'Member')
 
       let text = ''
+      let image = null
       let nextState = cryptoState
 
       const hasAppMessage =
@@ -453,7 +500,9 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             })
             const plaintextBytes = decrypted?.plaintextBytes ?? decrypted
             nextState = decrypted?.newState ?? cryptoState
-            text = TEXT_DECODER.decode(plaintextBytes)
+            const payload = decodeGroupMessagePayload(plaintextBytes)
+            text = payload.text
+            image = payload.image
           } catch (err) {
             console.error('[GroupChat] Failed to decrypt MLS message:', err)
             text = MLS_UNAVAILABLE_TEXT
@@ -471,6 +520,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           userId: String(message?.userId ?? ''),
           username: fromUsername,
           text,
+          image,
           createdAt,
           seenStatus: true,
         },
@@ -777,17 +827,25 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       const persistedReplayState = replayed.replayState
         ? await saveGroupState(activeGroupId, replayed.replayState)
         : replayed.replayState
-      const mergedMessages = mergeCachedMessages(cachedMessages, replayed.formattedMessages)
+      const createdSystemMessage = buildGroupCreatedSystemMessage({
+        createdBy: res?.group?.createdBy ?? nextMeta.createdBy,
+        members: res.members,
+        groupName: res?.group?.name,
+        createdAt: res?.group?.createdAt,
+      })
+      const mergedMessages = mergeCachedMessages(cachedMessages, [
+        createdSystemMessage,
+        ...replayed.formattedMessages,
+      ])
       // Drop any decryption-failure rows (e.g. cached UNAVAILABLE text from
       // older versions) so they neither render nor get re-persisted.
       const visibleMessages = mergedMessages.filter((m) => m?.text !== MLS_UNAVAILABLE_TEXT)
 
       // Save using mergedMessages so cached plaintext is never overwritten by a
-      // decryption failure text from the replay pass.
-      for (const message of visibleMessages) {
-        if (!message?._id) continue
-        await updateSavedMessages(userId, getGroupCacheId(activeGroupId), message)
-      }
+      // decryption failure text from the replay pass. Batched (parallel writes,
+      // one event) instead of an awaited write + event per message — the old
+      // per-message loop was an O(messages) serial IndexedDB cost on every open.
+      await storeSavedMessagesBatch(userId, getGroupCacheId(activeGroupId), visibleMessages)
 
       if (!cancelled) {
         setMessages(visibleMessages)
@@ -1059,11 +1117,19 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
 
           // Let Dashboard update the sidebar preview without touching crypto state.
           if (formattedMessage) {
+            const previewImg = formattedMessage.image ?? null
+            const previewText =
+              formattedMessage.text ||
+              (previewImg
+                ? /\.gif($|\?)/i.test(previewImg) || previewImg.startsWith('data:image/gif')
+                  ? '🎞️ GIF'
+                  : '📷 Photo'
+                : '')
             window.dispatchEvent(
               new CustomEvent('groupMessagePreview', {
                 detail: {
                   groupId,
-                  text: formattedMessage.text ?? '',
+                  text: previewText,
                   timestamp: formattedMessage.createdAt ?? new Date().toISOString(),
                 },
               })
@@ -1367,6 +1433,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
   }, [
     activeGroupId,
     buildCommitSystemMessage,
+    buildGroupCreatedSystemMessage,
     buildRoster,
     formatMessage,
     getGroupCacheId,
@@ -1398,7 +1465,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     }
   }, [groupMeta?.mlsEnabled, groupCryptoState, userId])
 
-  const sendMessageNow = async (text) => {
+  const sendMessageNow = async (text, imageData = null) => {
     if (removedInfoRef.current) {
       throw new Error('You are no longer a member of this group')
     }
@@ -1519,7 +1586,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
 
       const encrypted = await encryptApplicationMessage({
         state: currentState,
-        plaintextBytes: TEXT_ENCODER.encode(text),
+        plaintextBytes: encodeGroupMessagePayload({ text, image: imageData }),
       })
       const pendingOutgoingMessage = {
         groupId: activeGroupId,
@@ -1530,6 +1597,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       setPendingOutgoingGroupMessage({
         ...pendingOutgoingMessage,
         text,
+        image: imageData ?? null,
       })
 
       return new Promise((resolve, reject) => {
@@ -1538,7 +1606,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           {
             groupId: activeGroupId,
             nonce: encrypted.nonceB64,
-            messageType: 'text',
+            messageType: imageData ? 'image' : 'text',
             contentType: 'application',
             encryptedSenderDataB64: encrypted.encryptedSenderDataB64 ?? null,
             headerB64: encrypted.headerB64,
@@ -1586,7 +1654,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                   }
                   const retried = await encryptApplicationMessage({
                     state: retryState,
-                    plaintextBytes: TEXT_ENCODER.encode(text),
+                    plaintextBytes: encodeGroupMessagePayload({ text, image: imageData }),
                   })
                   const retryPendingOutgoingMessage = {
                     groupId: activeGroupId,
@@ -1598,13 +1666,14 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                   setPendingOutgoingGroupMessage({
                     ...retryPendingOutgoingMessage,
                     text,
+                    image: imageData ?? null,
                   })
                   socket.emit(
                     'sendGroupMessage',
                     {
                       groupId: activeGroupId,
                       nonce: retried.nonceB64,
-                      messageType: 'text',
+                      messageType: imageData ? 'image' : 'text',
                       contentType: 'application',
                       encryptedSenderDataB64: retried.encryptedSenderDataB64 ?? null,
                       headerB64: retried.headerB64,
@@ -1677,8 +1746,10 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     })
   }
 
-  const sendMessage = (text) => {
-    const queuedSend = sendQueueRef.current.catch(() => {}).then(() => sendMessageNow(text))
+  const sendMessage = (text, imageData = null) => {
+    const queuedSend = sendQueueRef.current
+      .catch(() => {})
+      .then(() => sendMessageNow(text, imageData))
 
     sendQueueRef.current = queuedSend.catch(() => {})
     return queuedSend
@@ -1705,7 +1776,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       </div>
 
       <div className='shrink-0'>
-        <GroupSendText
+        <SendText
           sendMessage={sendMessage}
           disabled={sendDisabled}
           disabledReason={sendDisabledReason}

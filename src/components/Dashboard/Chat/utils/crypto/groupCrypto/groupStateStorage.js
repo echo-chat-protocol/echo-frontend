@@ -53,8 +53,18 @@ export async function createNewGroupState({
   }
 
   const normalizedRoster = normalizeRoster(roster).map((member) => {
-    const kp = memberInitKeys?.find(
-      (entry) => String(entry.userId) === String(member.userId)
+    // Prefer a leafIndex-scoped lookup so each device leaf gets its OWN signing
+    // key/credential. A userId-only `find` returns the first device's KeyPackage
+    // for every leaf sharing that userId, so sibling-device leaves would be
+    // written into leafData with the wrong leafSigningPubKeyB64. That mismatch
+    // makes the device-leaf sweep treat each real device as "missing" and re-add
+    // it as a phantom leaf — one bogus Add commit (and one "X added Y" system
+    // row) per device right after the group is created. Fall back to userId for
+    // entries that don't carry a leafIndex.
+    const kp = (
+      memberInitKeys?.find(
+        (entry) => entry.leafIndex != null && entry.leafIndex === member.leafIndex
+      ) ?? memberInitKeys?.find((entry) => String(entry.userId) === String(member.userId))
     )?.keyPackage
     const identity = resolveRosterIdentityFromKeyPackage(kp)
     return identity

@@ -6,9 +6,46 @@ import {
 import { consumePendingOutgoingGroupMessage, updateSavedMessages } from './keyManagement'
 
 const TEXT_DECODER = new TextDecoder()
+const TEXT_ENCODER = new TextEncoder()
 const GROUP_CACHE_PREFIX = 'group:'
 
 const getGroupCacheId = (groupId) => `${GROUP_CACHE_PREFIX}${groupId}`
+
+/**
+ * Encode a group application-message plaintext. Text-only messages stay raw
+ * bytes (the historical format, so older clients keep working both ways);
+ * messages carrying an image are wrapped as JSON `{ text, image }` — mirroring
+ * the DM payload shape. `image` is a data URL (compressed upload) or a remote
+ * GIF/sticker URL.
+ */
+export function encodeGroupMessagePayload({ text, image = null }) {
+  if (image) {
+    return TEXT_ENCODER.encode(JSON.stringify({ text: text || '', image }))
+  }
+  return TEXT_ENCODER.encode(text || '')
+}
+
+/** Inverse of encodeGroupMessagePayload; tolerant of legacy raw-text payloads. */
+export function decodeGroupMessagePayload(plaintextBytes) {
+  const raw = TEXT_DECODER.decode(plaintextBytes)
+  try {
+    const parsed = JSON.parse(raw)
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      ('text' in parsed || 'image' in parsed)
+    ) {
+      return {
+        text: typeof parsed.text === 'string' ? parsed.text : '',
+        image: parsed.image ?? null,
+      }
+    }
+  } catch {
+    /* legacy raw-text message — fall through */
+  }
+  return { text: raw, image: null }
+}
 
 export async function decryptIncomingGroupMessage({
   message,
@@ -32,6 +69,7 @@ export async function decryptIncomingGroupMessage({
       : typeof message?.text === 'string'
         ? message.text
         : ''
+  let image = null
   let nextState = currentState
 
   // Item #3: accept messages framed with encrypted sender data (preferred) or legacy
@@ -51,8 +89,9 @@ export async function decryptIncomingGroupMessage({
         })
       : null
 
-    if (typeof pendingPlaintext === 'string') {
-      text = pendingPlaintext
+    if (pendingPlaintext) {
+      text = pendingPlaintext.text
+      image = pendingPlaintext.image ?? null
     } else {
       const localState = currentState ?? (await loadGroupState(groupId))
       if (!localState) {
@@ -70,7 +109,9 @@ export async function decryptIncomingGroupMessage({
       })
       const plaintextBytes = decrypted?.plaintextBytes ?? decrypted
       nextState = decrypted?.newState ?? localState
-      text = TEXT_DECODER.decode(plaintextBytes)
+      const payload = decodeGroupMessagePayload(plaintextBytes)
+      text = payload.text
+      image = payload.image
 
       if (nextState && nextState !== localState) {
         nextState = await saveGroupState(groupId, nextState)
@@ -83,6 +124,7 @@ export async function decryptIncomingGroupMessage({
     userId: String(message?.userId ?? ''),
     username: fromUsername,
     text,
+    image,
     createdAt,
     seenStatus: true,
   }

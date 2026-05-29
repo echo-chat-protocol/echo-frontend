@@ -41,7 +41,11 @@ import {
   saveGroupState,
   processWelcome,
 } from './Chat/utils/crypto/groupCryptoProvider'
-import { resolveMyInitPrivKeyB64 } from './Chat/utils/crypto/groupCrypto/groupMlsReplay'
+import {
+  resolveMyInitPrivKeyB64,
+  fetchAndApplyPendingWelcomes,
+  catchUpGroupMlsFromServer,
+} from './Chat/utils/crypto/groupCrypto/groupMlsReplay'
 import { decryptIncomingMessage } from './Chat/utils/chat/messageDecryption'
 import { base64ToArrayBuffer } from './Chat/utils/helpers'
 import { generateOneTimePreKeys } from './Chat/utils/crypto/opk'
@@ -132,6 +136,10 @@ const Dashboard = () => {
   // When navigating to Settings, this lets us open a specific section (e.g., 'devices') once
   const [settingsInitialSection, setSettingsInitialSection] = useState(null)
   const GROUP_CACHE_PREFIX = 'group:'
+  // Neutral sidebar preview shown while a group message can't be decrypted yet
+  // (Welcome/commit not applied on this device). Replaced with the real
+  // plaintext once handleGroupStateSynced re-decrypts the buffered message.
+  const GROUP_PREVIEW_PENDING_TEXT = 'New message'
   // Hooks personalizados - must be before useEffects that use them
   const { recentConversations, updateRecentConversations } = useConversations(userId)
   const { groups, setAllGroups, upsertGroup, removeGroup } = useGroups(userId)
@@ -516,18 +524,31 @@ const Dashboard = () => {
       if (!g) return
       const groupId = String(g.groupId ?? g.id ?? '')
       if (!groupId) return
+      // Seed the sidebar preview so a brand-new group reads "You created the
+      // group" (creator's own copy: addedByUserId is self) or
+      // "<adder> added you to the group" (invited / re-added). The first real
+      // message preview overwrites this once one arrives.
+      const addedById = String(g.addedByUserId ?? '')
+      const isSelfActor = addedById !== '' && addedById === String(userIdRef.current ?? '')
+      const adderName = g.addedByUsername || 'Someone'
+      const activityText = isSelfActor
+        ? 'You created the group'
+        : `${adderName} added you to the group`
       // Clearing the removed flag is essential when this is a re-add after a
       // prior removal: the merged group entry would otherwise inherit
       // `removedFromGroup: true` from the previous handleGroupRemoved call,
       // which gates message notifications at handleNewGroupMessageNotification.
-      upsertGroupRef.current?.({
-        ...g,
-        groupId,
-        name: g.name || g.groupName || 'Group',
-        joinedAt: g.joinedAt || g.at,
-        removedFromGroup: false,
-        removedInfo: null,
-      })
+      upsertGroupRef.current?.(
+        {
+          ...g,
+          groupId,
+          name: g.name || g.groupName || 'Group',
+          joinedAt: g.joinedAt || g.at,
+          removedFromGroup: false,
+          removedInfo: null,
+        },
+        { text: activityText, timestamp: g.at || g.joinedAt || new Date().toISOString() }
+      )
       clearRemovalForGroup(groupId)
     }
 
@@ -658,6 +679,39 @@ const Dashboard = () => {
       clearRemovalForGroup(payload?.groupId)
     }
 
+    // Bring a group's MLS state up to date in the BACKGROUND so the sidebar
+    // preview can decrypt the first incoming message without the user opening
+    // the group. The live `groupWelcome` event can be missed (room-join timing),
+    // and nothing else fetches *pending* welcomes off the server outside of
+    // group-open — so a brand-new group's first message would otherwise stay
+    // "[New message]" until opened. Deduped per group; pending welcomes (cheap)
+    // first, commit catch-up only if still not ready. `fetchAndApplyPendingWelcomes`
+    // and our own dispatch fire `groupStateSynced`, which drives the buffered
+    // re-decrypt + preview refresh in handleGroupStateSynced.
+    const groupCatchUpInFlight = new Set()
+    const ensureGroupMlsReadyInBackground = async (gid) => {
+      if (!gid || groupCatchUpInFlight.has(gid)) return
+      groupCatchUpInFlight.add(gid)
+      try {
+        await fetchAndApplyPendingWelcomes({
+          socket: sharedSocket,
+          userId: userIdRef.current,
+          groupId: gid,
+        }).catch(() => {})
+        const state = await loadGroupState(gid).catch(() => null)
+        if (!state?.applicationSecretB64) {
+          await catchUpGroupMlsFromServer({
+            socket: sharedSocket,
+            groupId: gid,
+            userId: userIdRef.current,
+          }).catch(() => {})
+        }
+        window.dispatchEvent(new CustomEvent('groupStateSynced', { detail: { groupId: gid } }))
+      } finally {
+        groupCatchUpInFlight.delete(gid)
+      }
+    }
+
     const handleNewGroupMessageNotification = async (message) => {
       if (!message?.groupId) return
       const gid = String(message.groupId)
@@ -686,13 +740,35 @@ const Dashboard = () => {
             userId: userIdRef.current,
             username,
           })
-          msgText = result?.formattedMessage?.text ?? msgText
+          const decryptedText = result?.formattedMessage?.text ?? ''
+          const decryptedImage = result?.formattedMessage?.image ?? null
+          if (decryptedText) {
+            msgText = decryptedText
+          } else if (decryptedImage) {
+            const isGif =
+              /\.gif($|\?)/i.test(decryptedImage) || decryptedImage.startsWith('data:image/gif')
+            msgText = isGif ? '🎞️ GIF' : '📷 Photo'
+          } else {
+            msgText = decryptedText
+          }
         } catch {
           console.warn('[Dashboard] Failed to decrypt incoming group message')
           // Do not persist placeholder into storage — background state may not be ready yet
-          // (e.g., Welcome not processed). The GroupChat replay will fetch and decrypt
-          // properly on first open. For the sidebar preview, show a generic placeholder.
-          msgText = '[Unable to decrypt message]'
+          // (e.g., Welcome not processed). Buffer the ciphertext so handleGroupStateSynced
+          // re-decrypts it once epoch secrets land (that path calls updateSavedMessages,
+          // which fires localStorageUpdated and refreshes this preview with the real
+          // plaintext). Meanwhile show a neutral preview instead of a scary
+          // "[Unable to decrypt message]" that flashes before recovery.
+          const buffered = pendingEncryptedGroupMessagesRef.current.get(gid) || []
+          if (!buffered.some((m) => String(m?._id ?? '') === String(message?._id ?? ''))) {
+            buffered.push(message)
+            pendingEncryptedGroupMessagesRef.current.set(gid, buffered)
+          }
+          msgText = GROUP_PREVIEW_PENDING_TEXT
+          // Pull the (possibly pending) Welcome + commits in the background so the
+          // buffered message re-decrypts and the preview updates without a manual
+          // group open.
+          void ensureGroupMlsReadyInBackground(gid)
         }
 
         upsertGroupRef.current?.(
@@ -714,7 +790,7 @@ const Dashboard = () => {
           // Only notify when we actually decrypted the message — skip rather than
           // posting a generic placeholder when decryption isn't ready yet.
           try {
-            const hasPreview = msgText && msgText !== '[Unable to decrypt message]'
+            const hasPreview = msgText && msgText !== GROUP_PREVIEW_PENDING_TEXT
             if (hasPreview) {
               const sender = message.username ? `${message.username}: ` : ''
               // Prefer the group's profile picture for group notifications; fall
@@ -948,21 +1024,75 @@ const Dashboard = () => {
       }
     }
 
-    // Retry buffered encrypted group messages after group state lands on this device
-    const handleGroupStateSynced = async (event) => {
-      const gid = String(event?.detail?.groupId ?? '')
-      if (!gid) return
+    // Retry buffered encrypted group messages after group state lands on this
+    // device. Serialized per group with a coalescing flag: the same
+    // `groupStateSynced` is dispatched by several paths (Welcome bg handler,
+    // background catch-up, GroupHeader) and can overlap — running two retries on
+    // the same buffer concurrently double-advances the message ratchet and makes
+    // the second attempt fail and re-buffer a message that already decrypted.
+    const groupSyncRetryInFlight = new Set()
+    const groupSyncRetryPending = new Set()
+    const runGroupSyncRetry = async (gid) => {
       const pending = pendingEncryptedGroupMessagesRef.current.get(gid) || []
       if (pending.length === 0) return
       const stillPending = []
+      let latest = null
       for (const m of pending) {
         try {
-          await decryptIncomingGroupMessage({ message: m, userId: userIdRef.current, username })
+          const res = await decryptIncomingGroupMessage({
+            message: m,
+            userId: userIdRef.current,
+            username,
+          })
+          const fm = res?.formattedMessage
+          if (fm) {
+            const ts = fm.createdAt || m.createdAt || m.timestamp || new Date().toISOString()
+            if (!latest || new Date(ts).getTime() >= new Date(latest.timestamp).getTime()) {
+              latest = { fm, timestamp: ts }
+            }
+          }
         } catch {
           stillPending.push(m)
         }
       }
       pendingEncryptedGroupMessagesRef.current.set(gid, stillPending)
+      // Refresh the sidebar preview with the now-decrypted newest message. We set
+      // it explicitly (rather than relying on the localStorageUpdated event) so an
+      // image-only message shows a media placeholder instead of an empty preview.
+      if (latest) {
+        const img = latest.fm.image ?? null
+        const previewText =
+          latest.fm.text ||
+          (img
+            ? /\.gif($|\?)/i.test(img) || img.startsWith('data:image/gif')
+              ? '🎞️ GIF'
+              : '📷 Photo'
+            : '')
+        upsertGroupRef.current?.(
+          { groupId: gid },
+          { text: previewText, timestamp: latest.timestamp }
+        )
+      }
+    }
+
+    const handleGroupStateSynced = async (event) => {
+      const gid = String(event?.detail?.groupId ?? '')
+      if (!gid) return
+      if (groupSyncRetryInFlight.has(gid)) {
+        // A retry is already running for this group; mark that the buffer should
+        // be swept again afterwards so a late-arriving message isn't stranded.
+        groupSyncRetryPending.add(gid)
+        return
+      }
+      groupSyncRetryInFlight.add(gid)
+      try {
+        do {
+          groupSyncRetryPending.delete(gid)
+          await runGroupSyncRetry(gid)
+        } while (groupSyncRetryPending.has(gid))
+      } finally {
+        groupSyncRetryInFlight.delete(gid)
+      }
     }
 
     sharedSocket.on('newMessage', handleNewMessageNotification)

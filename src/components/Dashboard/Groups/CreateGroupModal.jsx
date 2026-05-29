@@ -293,13 +293,18 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
               roster: expandedRoster,
               memberInitKeys: memberInitKeysWithLeaf,
             })
-            for (const welcome of welcomes) {
-              await emitWithAck('sendGroupWelcome', {
-                groupId: ack.group.groupId,
-                recipientUserId: welcome.recipientUserId,
-                welcome,
-              })
-            }
+            // Welcomes go to distinct recipients and are independent, so fan
+            // them out in parallel instead of awaiting each round-trip serially
+            // (creation latency was O(members × devices) round-trips).
+            await Promise.all(
+              welcomes.map((welcome) =>
+                emitWithAck('sendGroupWelcome', {
+                  groupId: ack.group.groupId,
+                  recipientUserId: welcome.recipientUserId,
+                  welcome,
+                })
+              )
+            )
             await saveGroupState(ack.group.groupId, {
               ...creatorState,
               secrets: {
