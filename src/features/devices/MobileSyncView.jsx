@@ -607,7 +607,8 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
 
         {/* Decrypting */}
         {phase === 'decrypting' && (
-          <div className='flex flex-col items-center gap-4'>
+          <div className='flex flex-col items-center gap-3'>
+            <img src='/echo-logo.svg' alt='ECHO' className='h-[72px] w-[72px] opacity-90' />
             <Loader2 className='h-10 w-10 text-[#a855f7] animate-spin' />
             <p className='text-sm text-[#b9b9c4]'>Decrypting…</p>
           </div>

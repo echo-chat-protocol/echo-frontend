@@ -15,7 +15,7 @@ export default function DeviceSyncPage() {
   useEffect(() => {
     getOrCreateDeviceIK().catch(() => {})
   }, [])
-  const { isMobile } = useTauri()
+  const { isMobile, isTauri } = useTauri()
   const [view, setView] = useState('landing') // 'landing' | 'sync'
   const [debugCreating, setDebugCreating] = useState(false)
   const [debugUser, setDebugUser] = useState(null)
@@ -125,14 +125,16 @@ export default function DeviceSyncPage() {
           </button>
         </div>
 
-        <p className='mt-8 text-xs text-white/35'>
-          <button
-            onClick={() => navigate('/login')}
-            className='text-white/55 hover:text-white transition-colors'
-          >
-            Sign in
-          </button>
-        </p>
+        {!(isTauri && isMobile) && (
+          <p className='mt-8 text-xs text-white/35'>
+            <button
+              onClick={() => navigate('/login')}
+              className='text-white/55 hover:text-white transition-colors'
+            >
+              Sign in
+            </button>
+          </p>
+        )}
       </div>
     </div>
   )

@@ -141,7 +141,8 @@ export default function QRGenerator({ onDeviceLinked = null }) {
       width: 260,
       margin: 1,
       color: { dark: '#050507', light: '#ffffff' },
-      errorCorrectionLevel: 'M',
+      // High recovery (30%) so the centered ECHO logo doesn't break scanning.
+      errorCorrectionLevel: 'H',
     })
       .then((url) => {
         if (!cancelled) setSetupQr(url)
@@ -399,8 +400,19 @@ export default function QRGenerator({ onDeviceLinked = null }) {
         </div>
       ) : setupQr ? (
         <div className='flex flex-col items-center gap-3'>
-          <div className='rounded-[32px] border border-white/10 bg-white p-4 shadow-[0_28px_90px_-48px_rgba(255,255,255,0.75)]'>
+          <div className='relative rounded-[32px] border border-white/10 bg-white p-4 shadow-[0_28px_90px_-48px_rgba(255,255,255,0.75)]'>
+            {/* QR image */}
             <img src={setupQr} alt='Ephemeral key pairing QR' className='h-64 w-64 max-w-full' />
+            {/* Centered ECHO logo overlay — no chip, no margin, 4x larger */}
+            <div className='pointer-events-none absolute inset-0 flex items-center justify-center'>
+              <img
+                src='/echo-logo.svg'
+                alt=''
+                aria-hidden='true'
+                draggable='false'
+                className='h-[128px] w-[128px] object-contain select-none'
+              />
+            </div>
           </div>
           <p className='text-xs text-white/45 text-center'>Scan with the mobile app</p>
           {secondsUntilReset !== null && (

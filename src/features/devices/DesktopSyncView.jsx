@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ArrowLeft, Monitor, Laptop, MapPin, RefreshCw, Wifi, Trash2 } from 'lucide-react'
+import ParticlesBackground from '@/components/animations/ParticlesBackground'
 import QRGenerator from './QRGenerator'
 import { deviceService } from './deviceService'
 
@@ -240,6 +241,9 @@ export default function DesktopSyncView({ onBack, embedded = false }) {
       style={{ background: '#000' }}
     >
       <div className='absolute inset-0 bg-[radial-gradient(circle_at_50%_-10%,rgba(255,255,255,0.1),transparent_34%),linear-gradient(180deg,#09090a_0%,#000_62%)]' />
+      <div className='absolute inset-0 opacity-15'>
+        <ParticlesBackground />
+      </div>
       <div className='noise-overlay' />
       {content}
     </div>

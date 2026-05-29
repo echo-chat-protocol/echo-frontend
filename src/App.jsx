@@ -53,7 +53,12 @@ function TauriGate() {
 }
 
 function GuestOnlyRoute({ children }) {
+  const location = useLocation()
+  const { isTauri, isMobile } = useTauri()
   if (tokenStorage.getAccess()) return <Navigate to='/dashboard' replace />
+  // On Tauri mobile, disallow the traditional sign-in page; keep /device-sync and /register
+  if (isTauri && isMobile && location.pathname === '/login')
+    return <Navigate to='/device-sync' replace />
   return children
 }
 

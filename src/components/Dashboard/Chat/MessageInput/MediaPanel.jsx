@@ -159,13 +159,13 @@ export default function MediaPanel({
       {tab === 'emoji' ? (
         <div className='flex min-h-0 flex-1 flex-col'>
           <div className='min-h-0 flex-1 overflow-y-auto px-2 py-2'>
-            <div className='grid grid-cols-7 gap-0.5 sm:grid-cols-9'>
+            <div className='grid grid-cols-[repeat(9,minmax(0,1fr))] gap-0.5 sm:grid-cols-[repeat(15,minmax(0,1fr))]'>
               {activeEmojis.map((emoji, i) => (
                 <button
                   key={`${emoji}-${i}`}
                   type='button'
                   onClick={() => onEmoji(emoji)}
-                  className='grid aspect-square place-items-center rounded-lg text-[22px] leading-none hover:bg-white/[0.06]'
+                  className='grid aspect-square place-items-center rounded-md text-[26px] leading-none hover:bg-white/[0.06]'
                 >
                   {emoji}
                 </button>
