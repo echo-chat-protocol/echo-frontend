@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.0.13](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.12...v0.0.13) (2026-05-29)
+
+
+### Bug Fixes
+
+* ds+mls interoperability ([d4b06d9](https://github.com/echo-chat-protocol/echo-frontend/commit/d4b06d91d214cb5413950da2e0358389f0a259a5))
+* fix group user search for prod ([201db7f](https://github.com/echo-chat-protocol/echo-frontend/commit/201db7fb8ac4ef469ba7fd199cfef3a066a4fddd))
+* fix user search ([77cb44c](https://github.com/echo-chat-protocol/echo-frontend/commit/77cb44c2a09cd5735ba107b0d8d0904a5142ccf3))
+* **landing:** remove "Learn more" text from Features component ([19d1b76](https://github.com/echo-chat-protocol/echo-frontend/commit/19d1b768f992e643fca6ad6acee6eb3b7f7e219e))
+* **landing:** stabilize typing section and clean footer ([05aeda8](https://github.com/echo-chat-protocol/echo-frontend/commit/05aeda8f16c6f4770ea47dec126a83615eeea35e))
+* **navbar:** replace Download with Sign Up and add translations ([9d45867](https://github.com/echo-chat-protocol/echo-frontend/commit/9d458673d8e4f932705ac928b8725ef0cd618c36))
+
 ## [0.0.12](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.11...v0.0.12) (2026-05-28)
 
 
