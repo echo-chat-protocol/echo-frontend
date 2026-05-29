@@ -93,12 +93,12 @@ const CONVERSATIONS = [
     history: [
       { from: 'them', text: 'The drop is ready. Sending the keyshare now.' },
       { from: 'me', text: 'Got it. AES-256-GCM nonce ready.' },
-      { from: 'them', text: '✅ Keyshare encrypted with your pub: ed25519:7HK…' },
+      { from: 'them', text: ' Keyshare encrypted with your pub: ed25519:7HK…' },
     ],
-    newMsg: 'Sealed and stored. Rotating ephemeral RAM. 🔐',
+    newMsg: 'Sealed and stored. Rotating ephemeral RAM. ',
     sidebar: [
       { name: '🛡 Crypto Council', last: 'Key rotation scheduled', active: false },
-      { name: 'Aïsha', last: 'ok 🔐', active: true },
+      { name: 'Aïsha', last: 'ok ', active: true },
       { name: 'Ops • Red Team', last: 'Missed video call', active: false },
     ],
   },
@@ -112,7 +112,7 @@ const CONVERSATIONS = [
     newMsg: 'Video call ended · 12:42',
     sidebar: [
       { name: '🛡 Crypto Council', last: 'Key rotation scheduled', active: false },
-      { name: 'Aïsha', last: 'ok 🔐', active: false },
+      { name: 'Aïsha', last: 'ok ', active: false },
       { name: 'Ops • Red Team', last: 'Video call ended', active: true },
     ],
   },
@@ -123,10 +123,10 @@ const CONVERSATIONS = [
       { from: 'me', text: 'Confirmed. Hardware key ready.' },
       { from: 'them', text: 'Threshold: 3-of-5. Standby for signal.' },
     ],
-    newMsg: 'All 3 keys rotated. Channel secured. 🔐',
+    newMsg: 'All 3 keys rotated. Channel secured. ',
     sidebar: [
       { name: '🛡 Crypto Council', last: 'All 3 keys rotated', active: true },
-      { name: 'Aïsha', last: 'ok 🔐', active: false },
+      { name: 'Aïsha', last: 'ok ', active: false },
       { name: 'Ops • Red Team', last: 'Video call ended', active: false },
     ],
   },
@@ -198,7 +198,7 @@ function HeroAppPreview() {
           </div>
           <span className='font-mono text-xs text-white/90'>echo://chat/zero-knowledge</span>
           <span className='rounded-full border border-[#a855f7]/30 bg-[#a855f7]/10 px-2 py-0.5 text-[10px] text-[#e9d5ff]'>
-            🔒 256-bit
+            256-bit
           </span>
         </div>
 
@@ -263,7 +263,7 @@ function HeroAppPreview() {
 
             {/* Input bar */}
             <div className='mt-5 flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.06] px-4 py-2.5'>
-              <span className='text-[#a855f7] text-sm'>🔐</span>
+              <span className='text-[#a855f7] text-sm'></span>
               <div className='flex-1 text-sm min-h-[20px]'>
                 {phase === 'typing' ? (
                   <span className='text-white/90'>
