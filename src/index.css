@@ -327,6 +327,15 @@ code,
   pointer-events: none;
 }
 
+/* Footer-specific grid overlay: much more subtle and no mask to avoid darkening */
+.footer-grid {
+  background-image:
+    linear-gradient(rgba(168, 85, 247, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(168, 85, 247, 0.02) 1px, transparent 1px);
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
 .noise-overlay {
   position: absolute;
   inset: 0;

@@ -67,7 +67,7 @@ export default function AuthLayout({
           </div>
 
           <div className='text-xs text-[#7a7a8a] flex items-center gap-4'>
-            <span>SOC 2 · GDPR · Open source</span>
+            <span>SOC 2 · GDPR</span>
             <span className='font-mono'>v{__APP_VERSION__}</span>
           </div>
         </aside>

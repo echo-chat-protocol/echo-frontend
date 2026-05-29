@@ -98,11 +98,7 @@ export default function Features() {
               </div>
               <h3 className='mt-5 text-lg font-semibold tracking-tight'>{title}</h3>
               <p className='mt-2 text-sm text-[#a8a8b8] leading-relaxed'>{desc}</p>
-              <div className='mt-5 flex items-center text-xs text-[#cfcfdc]'>
-                <span className='opacity-0 group-hover:opacity-100 transition-opacity'>
-                  Learn more →
-                </span>
-              </div>
+              <div className='mt-5 flex items-center text-xs text-[#cfcfdc]'></div>
             </article>
           ))}
         </div>
