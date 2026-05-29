@@ -5,7 +5,10 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 
 export default [
-  { ignores: ['dist'] },
+  {
+    // Ignore build output and vendored/compiled plugin JS (minified IIFEs)
+    ignores: ['dist', 'src-tauri/plugins/**'],
+  },
   {
     files: ['**/__tests__/**/*.{js,jsx}', '**/*.test.{js,jsx}', '**/*.spec.{js,jsx}'],
     languageOptions: {

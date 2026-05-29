@@ -1,10 +1,8 @@
 import {
   MessageSquareText,
-  Users,
   UsersRound,
   Settings,
   LogOut,
-  Plus,
   ChevronLeft,
   Smartphone,
 } from 'lucide-react'
@@ -12,7 +10,6 @@ import PropTypes from 'prop-types'
 
 const NAV = [
   { id: 'chats', label: 'Chats', icon: MessageSquareText },
-  { id: 'contacts', label: 'Contacts', icon: Users },
   { id: 'groups', label: 'Groups', icon: UsersRound },
   { id: 'settings', label: 'Settings', icon: Settings },
 ]
@@ -49,7 +46,6 @@ export default function Sidebar({
   onOpenDeviceSync,
   onLogout,
   unreadMessages = {},
-  onNewChat,
 }) {
   const totalUnread = Object.values(unreadMessages).reduce((a, b) => a + b, 0)
 
@@ -59,9 +55,13 @@ export default function Sidebar({
       className={`echo-floating relative flex h-full shrink-0 flex-col items-stretch transition-[width] duration-300 ease-out border-r border-white/[0.06] ${
         collapsed ? 'w-[78px]' : 'w-[230px]'
       }`}
+      style={{
+        paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)',
+        paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)',
+      }}
     >
       {/* Brand — matches landing nav style */}
-      <div className='flex items-center gap-2.5 px-5 pt-6 pb-5'>
+      <div className='flex items-center gap-2.5 px-5 pt-4 pb-5'>
         <EchoMark size={28} />
         {!collapsed && (
           <div className='leading-tight animate-fade-in'>
@@ -75,17 +75,7 @@ export default function Sidebar({
 
       <div className='mx-5 mb-4 h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent' />
 
-      {/* New chat CTA — landing pill style */}
-      <div className='px-3.5'>
-        <button
-          data-testid='sidebar-compose-btn'
-          onClick={onNewChat}
-          className='echo-cta group inline-flex w-full items-center justify-center gap-2 rounded-full px-3.5 py-2.5 text-[12.5px] font-medium'
-        >
-          <Plus size={15} strokeWidth={2.4} />
-          {!collapsed && <span className='animate-fade-in'>New chat</span>}
-        </button>
-      </div>
+      {/* New chat CTA removed — unified under Conversations plus */}
 
       {/* Nav — left accent bar, no pill bg */}
       <nav className='mt-5 flex flex-col px-2.5 gap-1'>
@@ -238,5 +228,4 @@ Sidebar.propTypes = {
   onOpenDeviceSync: PropTypes.func.isRequired,
   onLogout: PropTypes.func.isRequired,
   unreadMessages: PropTypes.object,
-  onNewChat: PropTypes.func,
 }

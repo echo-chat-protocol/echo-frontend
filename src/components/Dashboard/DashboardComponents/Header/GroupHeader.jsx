@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import PropTypes from 'prop-types'
-import { Camera, MoreHorizontal, Plus, Search, X } from 'lucide-react'
+import { Camera, Plus, Search, X, ArrowLeft } from 'lucide-react'
 import { getSocket } from '../../../../socket'
 import { formatProfileImage } from '../utils/helpers'
 import { searchUsersByUsername } from '@/utils/userSearch'
@@ -35,11 +35,17 @@ const blobToDataUrl = (blob) =>
     reader.readAsDataURL(blob)
   })
 
-const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture, userId }) => {
+const GroupHeader = ({
+  groupId,
+  groupName,
+  groupDescription,
+  groupProfilePicture,
+  userId,
+  onBack,
+}) => {
   const socket = useMemo(() => getSocket(), [])
   const [members, setMembers] = useState([])
   const [role, setRole] = useState(null)
-  const [menuOpen, setMenuOpen] = useState(false)
   const [membersOpen, setMembersOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
 
@@ -140,7 +146,6 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
 
   useEffect(() => {
     refresh()
-    setMenuOpen(false)
     setMembersOpen(false)
     setProfileOpen(false)
     setPendingRemovals(new Set())
@@ -201,12 +206,7 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
   const canAdd = role === 'admin'
   const canEditProfile = Boolean(role)
 
-  const openProfileModal = useCallback(() => {
-    setDescriptionDraft(groupMeta.description ?? '')
-    setProfilePictureDraft(groupMeta.profilePicture ?? '')
-    setProfileError('')
-    setProfileOpen(true)
-  }, [groupMeta.description, groupMeta.profilePicture])
+  // openProfileModal removed as unused — profile panel can be toggled by future UI controls
 
   const handleProfilePictureChange = async (event) => {
     const file = event.target.files?.[0]
@@ -643,8 +643,20 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
   }
 
   return (
-    <div className='p-4 flex justify-between items-center transition-all border-b bg-black border-gray-800'>
-      <div className='flex items-center gap-4 min-w-0'>
+    <div
+      className='p-3 md:p-4 flex justify-between items-center transition-all border-b bg-black border-gray-800'
+      style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 12px)' }}
+    >
+      <div className='flex items-center gap-2 md:gap-4 min-w-0'>
+        {onBack && (
+          <button
+            className='md:hidden grid h-9 w-9 place-items-center rounded-full border border-transparent text-white/65 transition-all hover:border-white/[0.08] hover:bg-white/[0.04] hover:text-white'
+            aria-label='Back'
+            onClick={onBack}
+          >
+            <ArrowLeft className='w-4 h-4' />
+          </button>
+        )}
         <img
           src={avatarSrc}
           alt={displayName}
@@ -661,47 +673,7 @@ const GroupHeader = ({ groupId, groupName, groupDescription, groupProfilePicture
         </div>
       </div>
 
-      <div className='flex gap-4 relative'>
-        <button
-          className='p-2 rounded-full hover:bg-gray-700 transition-colors'
-          aria-label='Group options'
-          onClick={() => setMenuOpen((o) => !o)}
-        >
-          <MoreHorizontal className='w-5 h-5 text-gray-400' />
-        </button>
-
-        {menuOpen && (
-          <div className='absolute right-0 mt-12 w-56 bg-black border border-gray-700 rounded-lg shadow-lg z-50 overflow-hidden'>
-            <button
-              className='w-full text-left px-4 py-2 hover:bg-gray-700 text-white'
-              onClick={() => {
-                setMenuOpen(false)
-                openProfileModal()
-              }}
-            >
-              Group profile
-            </button>
-            <button
-              className='w-full text-left px-4 py-2 hover:bg-gray-700 text-white'
-              onClick={() => {
-                setMenuOpen(false)
-                setMembersOpen(true)
-              }}
-            >
-              Members
-            </button>
-            <button
-              className='w-full text-left px-4 py-2 hover:bg-gray-700 text-red-400'
-              onClick={() => {
-                setMenuOpen(false)
-                handleRemove(String(userId))
-              }}
-            >
-              Leave group
-            </button>
-          </div>
-        )}
-      </div>
+      <div className='flex gap-2 md:gap-4 relative items-center' />
 
       {profileOpen && (
         <div className='fixed inset-0 bg-black/70 flex items-center justify-center z-50'>

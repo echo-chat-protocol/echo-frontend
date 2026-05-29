@@ -6,6 +6,7 @@ import PropTypes from 'prop-types'
 import SendText from './MessageInput/sendText'
 import DisplayText from './MessageDisplay/displayText'
 import { getWallpaperComponent, getWallpaperClasses } from '../DashboardComponents/utils/wallpaper'
+import { formatProfileImage } from '../DashboardComponents/utils/helpers'
 import { base64ToArrayBuffer } from './utils/helpers'
 
 import { fetchLatestMessageNumber } from './utils/api'
@@ -88,6 +89,27 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
       window.removeEventListener('verifySafetyNumber', onVerifySafetyNumber)
     }
   }, [targetUserId])
+
+  // Live-update peer avatar in this DM when they change their profile picture
+  useEffect(() => {
+    const s = socket
+    const onUserProfileUpdated = ({ userId: updatedUserId, username, profilePicture }) => {
+      if (String(updatedUserId ?? '') !== String(targetUserId ?? '')) return
+      const base = formatProfileImage(profilePicture, username || 'User')
+      const busted = base ? `${base}${base.includes('?') ? '&' : '?'}v=${Date.now()}` : null
+      setMessages((prev) =>
+        Array.isArray(prev)
+          ? prev.map((m) =>
+              String(m?.userId ?? '') === String(updatedUserId)
+                ? { ...m, profileImage: busted || base }
+                : m
+            )
+          : prev
+      )
+    }
+    s.on('userProfileUpdated', onUserProfileUpdated)
+    return () => s.off('userProfileUpdated', onUserProfileUpdated)
+  }, [socket, targetUserId])
 
   useEffect(() => {
     const loadPrivateKey = async () => {

@@ -114,7 +114,11 @@ export default function UserInfoPanel({ contact, onClose }) {
     <aside
       data-testid='user-info-panel'
       className='echo-floating relative h-full w-full max-w-[390px] shrink-0 overflow-y-auto animate-slide-in-right border-l border-white/[0.05] rounded-none'
-      style={{ borderRadius: 0 }}
+      style={{
+        borderRadius: 0,
+        paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)',
+        paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)',
+      }}
     >
       {/* Sticky header */}
       <div className='sticky top-0 z-10 flex items-center justify-between border-b border-white/[0.05] px-5 py-3 backdrop-blur bg-black/40'>

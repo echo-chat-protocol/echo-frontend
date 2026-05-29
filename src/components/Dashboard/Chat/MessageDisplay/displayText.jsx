@@ -26,7 +26,7 @@ function AvatarFallback({ name }) {
   )
 }
 
-function MessageBubble({ message, currentUserId, contact }) {
+function MessageBubble({ message, currentUserId, contact, showName = true, showAvatar = true }) {
   const isSelf = String(message.userId) === String(currentUserId)
   const senderName = message.username || contact?.name || 'Member'
   const avatar = !isSelf ? contact?.avatar || message.profileImage || null : null
@@ -47,26 +47,30 @@ function MessageBubble({ message, currentUserId, contact }) {
     <div
       className={`flex min-w-0 gap-2.5 ${isSelf ? 'justify-end' : 'justify-start'} animate-fade-up`}
     >
-      {!isSelf && (
-        <div className='mt-auto shrink-0'>
-          {avatar ? (
-            <img
-              src={avatar}
-              alt=''
-              className='h-7 w-7 rounded-full object-cover ring-1 ring-white/10'
-            />
-          ) : (
-            <AvatarFallback name={senderName} />
-          )}
-        </div>
-      )}
+      {!isSelf &&
+        (showAvatar ? (
+          <div className='mt-auto shrink-0'>
+            {avatar ? (
+              <img
+                src={avatar}
+                alt=''
+                className='h-7 w-7 rounded-full object-cover ring-1 ring-white/10'
+              />
+            ) : (
+              <AvatarFallback name={senderName} />
+            )}
+          </div>
+        ) : (
+          // Spacer keeps grouped continuation bubbles aligned under the avatar.
+          <div className='w-7 shrink-0' aria-hidden='true' />
+        ))}
 
       <div
         className={`flex min-w-0 max-w-[82%] flex-col gap-1 sm:max-w-[70%] ${
           isSelf ? 'items-end' : 'items-start'
         }`}
       >
-        {!isSelf && message.username ? (
+        {!isSelf && showName && message.username ? (
           <span className='px-1 text-[10.5px] font-medium text-violet-200/75'>{senderName}</span>
         ) : null}
 
@@ -132,6 +136,13 @@ function MessageBubble({ message, currentUserId, contact }) {
   )
 }
 
+// Messages from the same sender are "grouped": consecutive bubbles only repeat
+// the username/avatar on the first/last bubble of the run. A run is broken by a
+// different sender, a non-chat message (call/system), a new day, or a gap > 5min.
+const GROUP_GAP_MS = 5 * 60 * 1000
+
+const isChatMessage = (m) => m && m.messageType !== 'call_event' && m.messageType !== 'system'
+
 const DisplayText = ({ messages = [], currentUserId, contact = null }) => {
   const shouldShowDate = (index) => {
     if (index === 0) return true
@@ -140,32 +151,60 @@ const DisplayText = ({ messages = [], currentUserId, contact = null }) => {
     return !isSameDay(currentDate, prevDate)
   }
 
-  return (
-    <div className='min-h-full space-y-3 p-3 md:space-y-4 md:p-4'>
-      {messages.map((message, index) => (
-        <div key={message._id} className='space-y-2'>
-          {shouldShowDate(index) && (
-            <div className='my-4 flex justify-center'>
-              <span className='rounded-full border border-white/[0.06] bg-white/[0.02] px-3 py-1 text-[10.5px] uppercase tracking-[0.18em] text-white/40 mono'>
-                {format(new Date(message.createdAt), 'PPPP', { locale: es })}
-              </span>
-            </div>
-          )}
+  // Whether `b` continues the same grouped run started by `a` (a precedes b).
+  const isSameRun = (a, b) => {
+    if (!isChatMessage(a) || !isChatMessage(b)) return false
+    if (String(a.userId) !== String(b.userId)) return false
+    const aDate = new Date(a.createdAt)
+    const bDate = new Date(b.createdAt)
+    if (!isSameDay(aDate, bDate)) return false
+    return Math.abs(bDate - aDate) <= GROUP_GAP_MS
+  }
 
-          {/* Render call event messages */}
-          {message.messageType === 'call_event' ? (
-            <CallEventMessage callData={message.callData} currentUserId={currentUserId} />
-          ) : message.messageType === 'system' ? (
-            <div className='flex justify-center'>
-              <div className='rounded-full border border-white/[0.06] bg-white/[0.02] px-3 py-1 text-[10.5px] text-white/40 mono'>
-                {message.text}
+  return (
+    <div className='min-h-full p-3 md:p-4'>
+      {messages.map((message, index) => {
+        const prev = messages[index - 1]
+        const next = messages[index + 1]
+        const newDay = shouldShowDate(index)
+        // First bubble of a run → show name; last bubble of a run → show avatar.
+        const isRunStart = newDay || !isSameRun(prev, message)
+        const isRunEnd = !isSameRun(message, next)
+
+        return (
+          <div
+            key={message._id}
+            className={index === 0 || newDay ? '' : isRunStart ? 'mt-3 md:mt-4' : 'mt-0.5'}
+          >
+            {newDay && (
+              <div className='my-4 flex justify-center'>
+                <span className='rounded-full border border-white/[0.06] bg-white/[0.02] px-3 py-1 text-[10.5px] uppercase tracking-[0.18em] text-white/40 mono'>
+                  {format(new Date(message.createdAt), 'PPPP', { locale: es })}
+                </span>
               </div>
-            </div>
-          ) : (
-            <MessageBubble message={message} currentUserId={currentUserId} contact={contact} />
-          )}
-        </div>
-      ))}
+            )}
+
+            {/* Render call event messages */}
+            {message.messageType === 'call_event' ? (
+              <CallEventMessage callData={message.callData} currentUserId={currentUserId} />
+            ) : message.messageType === 'system' ? (
+              <div className='flex justify-center'>
+                <div className='rounded-full border border-white/[0.06] bg-white/[0.02] px-3 py-1 text-[10.5px] text-white/40 mono'>
+                  {message.text}
+                </div>
+              </div>
+            ) : (
+              <MessageBubble
+                message={message}
+                currentUserId={currentUserId}
+                contact={contact}
+                showName={isRunStart}
+                showAvatar={isRunEnd}
+              />
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

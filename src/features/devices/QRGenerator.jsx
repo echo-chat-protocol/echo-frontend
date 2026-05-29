@@ -138,11 +138,17 @@ export default function QRGenerator({ onDeviceLinked = null }) {
 
     let cancelled = false
     QRCode.toDataURL(setupPayload, {
-      width: 260,
-      margin: 1,
-      color: { dark: '#050507', light: '#ffffff' },
-      // High recovery (30%) so the centered ECHO logo doesn't break scanning.
-      errorCorrectionLevel: 'H',
+      // Render at high resolution (downscaled by CSS) for crisp modules.
+      width: 512,
+      // Wider quiet zone helps the detector locate the code.
+      margin: 2,
+      // Pure black/white for maximum contrast.
+      color: { dark: '#000000', light: '#ffffff' },
+      // 'Q' (25% recovery) instead of 'H' (30%): with the smaller centered logo
+      // (~14% of the area) this still covers the overlay, but produces a
+      // lower-version, less dense code with bigger modules that scans far more
+      // reliably from a phone camera.
+      errorCorrectionLevel: 'Q',
     })
       .then((url) => {
         if (!cancelled) setSetupQr(url)
@@ -402,15 +408,16 @@ export default function QRGenerator({ onDeviceLinked = null }) {
         <div className='flex flex-col items-center gap-3'>
           <div className='relative rounded-[32px] border border-white/10 bg-white p-4 shadow-[0_28px_90px_-48px_rgba(255,255,255,0.75)]'>
             {/* QR image */}
-            <img src={setupQr} alt='Ephemeral key pairing QR' className='h-64 w-64 max-w-full' />
-            {/* Centered ECHO logo overlay — no chip, no margin, 4x larger */}
+            <img src={setupQr} alt='Ephemeral key pairing QR' className='h-72 w-72 max-w-full' />
+            {/* Centered ECHO logo overlay — 25% smaller (128→96px) so it covers
+                less of the QR and scans more reliably. */}
             <div className='pointer-events-none absolute inset-0 flex items-center justify-center'>
               <img
                 src='/echo-logo.svg'
                 alt=''
                 aria-hidden='true'
                 draggable='false'
-                className='h-[128px] w-[128px] object-contain select-none'
+                className='h-[96px] w-[96px] object-contain select-none'
               />
             </div>
           </div>

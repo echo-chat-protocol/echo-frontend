@@ -113,11 +113,23 @@ export default defineConfig({
       'aes-wasm': path.resolve(__dirname, './aes-wasm/pkg/aes_wasm.js'),
       'xeddsa-wasm': path.resolve(__dirname, './xeddsa-wasm/pkg/xeddsa_wasm.js'),
       'dh-wasm': path.resolve(__dirname, './dh-wasm/pkg/dh_wasm.js'),
+      // Force a single React/DOM instance (prevents invalid hook call)
+      react: path.resolve(__dirname, './node_modules/react'),
+      'react-dom': path.resolve(__dirname, './node_modules/react-dom'),
+      'react/jsx-runtime': path.resolve(__dirname, './node_modules/react/jsx-runtime.js'),
+      'react/jsx-dev-runtime': path.resolve(__dirname, './node_modules/react/jsx-dev-runtime.js'),
     },
+    // Ensure a single React copy across linked/local packages (prevents invalid hook call)
+    dedupe: ['react', 'react-dom'],
     // Allow Vite to resolve .js files that export JSX
     extensions: ['.jsx', '.js', '.tsx', '.ts', '.json'],
   },
   optimizeDeps: {
+    // Pre-bundle these on startup. They sit in the eager (non-lazy) DeviceSyncPage
+    // boot graph used on Tauri mobile, so a mid-session re-optimize that invalidates
+    // them returns "504 Outdated Optimize Dep" and blanks the whole app. Forcing them
+    // into the initial optimize pass keeps the boot-critical graph stable.
+    include: ['qrcode', 'html5-qrcode'],
     exclude: ['@mascaro101/echo-protocol', 'aes-wasm', 'xeddsa-wasm', 'dh-wasm'],
     esbuildOptions: {
       // Treat .js files in src/ as jsx so pre-bundling doesn't choke on them

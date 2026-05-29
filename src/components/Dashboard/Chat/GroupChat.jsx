@@ -3,6 +3,7 @@ import PropTypes from 'prop-types'
 import { getSocket } from '../../../socket'
 import DisplayText from './MessageDisplay/displayText'
 import GroupSendText from './MessageInput/GroupSendText'
+import { formatProfileImage } from '../DashboardComponents/utils/helpers'
 
 import {
   applyCommit,
@@ -181,6 +182,27 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       }
     })()
   }, [activeGroupId, removedInfo])
+
+  // Update in-view avatars when any user updates their profile picture
+  useEffect(() => {
+    const socket = getSocket()
+    const onUserProfileUpdated = ({ userId: updatedUserId, username, profilePicture }) => {
+      if (!updatedUserId) return
+      const base = formatProfileImage(profilePicture, username || 'User')
+      const busted = base ? `${base}${base.includes('?') ? '&' : '?'}v=${Date.now()}` : null
+      setMessages((prev) =>
+        Array.isArray(prev)
+          ? prev.map((m) =>
+              String(m?.userId ?? '') === String(updatedUserId)
+                ? { ...m, profileImage: busted || base }
+                : m
+            )
+          : prev
+      )
+    }
+    socket.on('userProfileUpdated', onUserProfileUpdated)
+    return () => socket.off('userProfileUpdated', onUserProfileUpdated)
+  }, [])
 
   const buildRoster = useCallback(
     (serverMembers) =>

@@ -30,6 +30,7 @@ import { importHistoryPackage } from './historyPackage'
 import { generateAndUploadDeviceKeyBundle } from './deviceKeyBundle'
 import { getDeviceMetadata, resetDeviceId } from './deviceMetadata'
 import ParticlesBackground from '@/components/animations/ParticlesBackground'
+import { PageLoader } from '@/components/common/Spinner'
 
 function Row({ label, value, mono = true }) {
   return (
@@ -547,7 +548,7 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
         embedded ? 'flex w-full flex-col' : 'relative z-10 flex min-h-screen flex-col px-5 py-6'
       }
     >
-      {!embedded && (
+      {!embedded && phase !== 'decrypting' && (
         <button
           onClick={onBack}
           className='flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] text-white/60 hover:text-white mb-6 transition-colors self-start'
@@ -561,7 +562,9 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
         className={
           embedded
             ? 'flex flex-col items-center justify-start gap-5'
-            : 'flex flex-1 flex-col items-center justify-start gap-5 py-2 sm:justify-center'
+            : `flex flex-1 flex-col items-center gap-5 py-2 ${
+                phase === 'decrypting' ? 'justify-center' : 'justify-start sm:justify-center'
+              }`
         }
       >
         {/* Scanning */}
@@ -606,13 +609,7 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
         )}
 
         {/* Decrypting */}
-        {phase === 'decrypting' && (
-          <div className='flex flex-col items-center gap-3'>
-            <img src='/echo-logo.svg' alt='ECHO' className='h-[72px] w-[72px] opacity-90' />
-            <Loader2 className='h-10 w-10 text-[#a855f7] animate-spin' />
-            <p className='text-sm text-[#b9b9c4]'>Decrypting…</p>
-          </div>
-        )}
+        {phase === 'decrypting' && <PageLoader label='Decrypting…' />}
 
         {/* Pairing code */}
         {phase === 'code' && (

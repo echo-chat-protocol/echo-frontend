@@ -2,14 +2,29 @@
  * Reusable spinner.
  *
  * Variants:
- *   - page: full-screen loading overlay (default for Suspense)
- *   - inline: small inline spinner
+ *   - page: full-screen loading overlay (default for Suspense) — a big pulsating
+ *           ECHO logo centred on screen with a label underneath. No wheel.
+ *   - inline: small inline spinner wheel
  *
  * Usage:
- *   <Spinner />                  ← full-page
- *   <Spinner variant="inline" /> ← small
+ *   <Spinner />                       ← full-page, "Loading…"
+ *   <Spinner label="Decrypting…" />   ← full-page, custom label
+ *   <Spinner variant="inline" />      ← small
  */
-export default function Spinner({ variant = 'page', className = '' }) {
+export function PageLoader({ label = 'Loading…' }) {
+  return (
+    <div className='flex flex-col items-center gap-6'>
+      <img
+        src='/echo-logo.svg'
+        alt='ECHO'
+        className='h-40 w-40 object-contain animate-pulse drop-shadow-[0_0_45px_rgba(168,85,247,0.55)]'
+      />
+      <p className='animate-pulse text-base tracking-wide text-zinc-400'>{label}</p>
+    </div>
+  )
+}
+
+export default function Spinner({ variant = 'page', className = '', label = 'Loading…' }) {
   if (variant === 'inline') {
     return (
       <span
@@ -24,15 +39,7 @@ export default function Spinner({ variant = 'page', className = '' }) {
       className='min-h-screen bg-black flex items-center justify-center'
       aria-label='Loading page'
     >
-      <div className='flex flex-col items-center gap-5'>
-        <img
-          src='/echo-logo.svg'
-          alt='ECHO'
-          className='h-24 w-24 object-contain animate-pulse drop-shadow-[0_0_18px_rgba(168,85,247,0.45)]'
-        />
-        <div className='w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin' />
-        <p className='text-zinc-600 text-sm'>Loading…</p>
-      </div>
+      <PageLoader label={label} />
     </div>
   )
 }

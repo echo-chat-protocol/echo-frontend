@@ -61,17 +61,17 @@ export default function DeviceSyncPage() {
           <h1 className='text-4xl sm:text-5xl font-semibold tracking-tight leading-tight'>ECHO</h1>
         </div>
 
-        <div className='w-full max-w-sm rounded-[34px] border border-white/10 bg-white/[0.045] p-3 shadow-[0_40px_140px_-80px_rgba(255,255,255,0.9)] backdrop-blur-2xl'>
+        <div className='w-full max-w-sm rounded-[34px] border border-white/10 bg-white/[0.04] p-3 shadow-[0_40px_140px_-80px_rgba(168,85,247,0.55)] backdrop-blur-2xl'>
           <button
             onClick={() => setView('sync')}
-            className='group flex w-full items-center gap-4 rounded-[26px] bg-white px-5 py-5 text-left text-black transition-transform hover:scale-[1.01] active:scale-[0.99]'
+            className='btn-primary w-full justify-start !rounded-[26px] !px-5 !py-5'
           >
-            <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-black text-white'>
+            <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/20 bg-white/10 text-white'>
               {isMobile ? <QrCode className='h-6 w-6' /> : <Monitor className='h-6 w-6' />}
             </div>
             <div className='min-w-0 flex-1'>
               <p className='font-semibold'>Sync device</p>
-              <p className='mt-0.5 text-xs text-black/45'>
+              <p className='mt-0.5 text-xs text-white/70'>
                 {isMobile ? 'Open scanner' : 'Show QR'}
               </p>
             </div>
@@ -80,7 +80,7 @@ export default function DeviceSyncPage() {
           <button
             onClick={handleCreateDebugUser}
             disabled={debugCreating}
-            className='mt-2 flex w-full items-center gap-4 rounded-[26px] px-5 py-4 text-left text-white/75 transition-colors hover:bg-white/[0.04] hover:text-white disabled:cursor-not-allowed disabled:opacity-60'
+            className='btn-ghost mt-2 w-full justify-start !rounded-[26px] !px-5 !py-4 disabled:cursor-not-allowed disabled:opacity-60'
           >
             <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03]'>
               {debugCreating ? (
@@ -113,7 +113,7 @@ export default function DeviceSyncPage() {
 
           <button
             onClick={() => navigate('/register')}
-            className='mt-2 flex w-full items-center gap-4 rounded-[26px] px-5 py-4 text-left text-white/75 transition-colors hover:bg-white/[0.04] hover:text-white'
+            className='btn-ghost mt-2 w-full justify-start !rounded-[26px] !px-5 !py-4'
           >
             <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03]'>
               <UserPlus className='h-5 w-5' />

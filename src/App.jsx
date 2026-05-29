@@ -42,7 +42,9 @@ const TermsPage = lazy(() => import('@/pages/public/TermsPage'))
 const CookiesPage = lazy(() => import('@/pages/public/CookiesPage'))
 const GdprPage = lazy(() => import('@/pages/public/GdprPage'))
 const LicensesPage = lazy(() => import('@/pages/public/LicensesPage'))
-const DeviceSyncPage = lazy(() => import('@/pages/DeviceSyncPage'))
+// DeviceSyncPage is eagerly imported to avoid dynamic import issues on mobile
+import DeviceSyncPage from '@/pages/DeviceSyncPage'
+import { initPullToRefresh } from '@/utils/pullToRefresh'
 
 // ─── Tauri gate: redirect to /device-sync when running inside Tauri ──────────
 function TauriGate() {
@@ -55,7 +57,9 @@ function TauriGate() {
 function GuestOnlyRoute({ children }) {
   const location = useLocation()
   const { isTauri, isMobile } = useTauri()
-  if (tokenStorage.getAccess()) return <Navigate to='/dashboard' replace />
+  const token = tokenStorage.getAccess()
+  // If already authenticated, allow /device-sync specifically (Tauri may use it post-auth)
+  if (token && location.pathname !== '/device-sync') return <Navigate to='/dashboard' replace />
   // On Tauri mobile, disallow the traditional sign-in page; keep /device-sync and /register
   if (isTauri && isMobile && location.pathname === '/login')
     return <Navigate to='/device-sync' replace />
@@ -78,6 +82,12 @@ function AuthenticatedBackGuard() {
     if (!token) return
 
     if (GUEST_ENTRY_PATHS.has(location.pathname)) {
+      // Allow /device-sync for Tauri/mobile even if authenticated to avoid loops
+      const isTauriMobile =
+        typeof window !== 'undefined' &&
+        Boolean(window.__TAURI_INTERNALS__) &&
+        /android|iphone|ipad|ipod/i.test(navigator.userAgent)
+      if (location.pathname === '/device-sync' && isTauriMobile) return
       navigate('/dashboard', { replace: true })
     }
   }, [location.pathname, navigate])
@@ -146,6 +156,10 @@ function UserProfileRoute() {
 }
 
 function App() {
+  useEffect(() => {
+    const dispose = initPullToRefresh()
+    return () => dispose?.()
+  }, [])
   return (
     <ErrorBoundary>
       <Router>

@@ -3,9 +3,7 @@ import { useState, useRef, useEffect, useMemo, lazy, Suspense } from 'react'
 const DeviceSyncModal = lazy(() => import('../../features/devices/DeviceSyncModal'))
 const DebugPanel = lazy(() => import('./Debug/DebugPanel'))
 import { useNavigate } from 'react-router-dom'
-import { Menu, ArrowLeft } from 'lucide-react'
 import DebugToggleButton from './Debug/DebugToggleButton'
-import Friends from './Friends/Friends'
 import Chat from './Chat/Chat'
 import Sidebar from './DashboardComponents/Sidebar/Sidebar'
 import ChatHeader from './DashboardComponents/Header/ChatHeader'
@@ -78,7 +76,11 @@ const Dashboard = () => {
   // Estados
   const [activeChat, setActiveChat] = useState(null)
   const [activeView, setActiveView] = useState(() => {
-    return localStorage.getItem('dashboardView') || 'chats'
+    const saved = localStorage.getItem('dashboardView')
+    // 'friends' (the old "Your circle" view) was removed — fall back to the
+    // conversations list, which is now the main view.
+    const allowed = ['chats', 'groups', 'settings']
+    return allowed.includes(saved) ? saved : 'chats'
   })
   const [conversationsSearchTerm, setConversationsSearchTerm] = useState('')
 
@@ -152,6 +154,13 @@ const Dashboard = () => {
   const upsertGroupRef = useRef(upsertGroup)
   const removeGroupRef = useRef(removeGroup)
 
+  // Prepare notifications (request permission once per mount)
+  useEffect(() => {
+    import('../../utils/notifications')
+      .then((m) => m.ensureNotificationPermission?.())
+      .catch(() => {})
+  }, [])
+
   const enqueueGroupMessageTask = (groupId, task) => {
     const queue = pendingGroupMessageTasksRef.current
     const previousTask = queue.get(groupId) ?? Promise.resolve()
@@ -190,6 +199,10 @@ const Dashboard = () => {
       if (!mobileChatHistoryPushedRef.current || !showMobileChatRef.current) return
       mobileChatHistoryPushedRef.current = false
       setShowMobileChat(false)
+      // Leaving the chat on mobile closes it: clearing activeChat unmounts Chat
+      // so the background handler (and thus notifications + unread) take over for
+      // that peer — "in the app but not in the chat" should alert.
+      setActiveChat(null)
     }
 
     window.addEventListener('popstate', handlePopState)
@@ -361,8 +374,9 @@ const Dashboard = () => {
       fetchUserProfileFromSocket(sharedSocket, userId)
         .then((profileData) => {
           if (profileData.profilePicture) {
-            const formattedImage = formatProfileImage(profileData.profilePicture, username)
-            setUserProfileImage(formattedImage)
+            const base = formatProfileImage(profileData.profilePicture, username)
+            const busted = base ? `${base}${base.includes('?') ? '&' : '?'}v=${Date.now()}` : null
+            setUserProfileImage(busted || base)
           }
         })
         .catch((error) => {
@@ -423,6 +437,15 @@ const Dashboard = () => {
 
     sharedSocket.on('incomingCall', (callData) => {
       setIncomingCall(callData)
+      const caller = callData?.fromUsername || callData?.from || 'Unknown'
+      // Notify if app is not visibly focused (typical on mobile Tauri)
+      try {
+        if (typeof document === 'undefined' || document.hidden) {
+          void import('../../utils/notifications').then((m) =>
+            m.notify?.({ title: 'Incoming call', body: `From ${caller}`, icon: '/echo-logo.svg' })
+          )
+        }
+      } catch {}
     })
 
     sharedSocket.on('callEnded', ({ callId }) => {
@@ -443,11 +466,12 @@ const Dashboard = () => {
       updateRecentConversations((prevConversations) => {
         return prevConversations.map((conv) => {
           if (conv.id === updatedUserId || conv.targetUserId === updatedUserId) {
-            const formattedImage = formatProfileImage(profilePicture, username)
+            const base = formatProfileImage(profilePicture, username)
+            const busted = base ? `${base}${base.includes('?') ? '&' : '?'}v=${Date.now()}` : null
             return {
               ...conv,
               username: username || conv.username,
-              profileImage: formattedImage,
+              profileImage: busted || base,
             }
           }
           return conv
@@ -459,11 +483,12 @@ const Dashboard = () => {
           prevActiveChat &&
           (prevActiveChat.id === updatedUserId || prevActiveChat.targetUserId === updatedUserId)
         ) {
-          const formattedImage = formatProfileImage(profilePicture, username)
+          const base = formatProfileImage(profilePicture, username)
+          const busted = base ? `${base}${base.includes('?') ? '&' : '?'}v=${Date.now()}` : null
           return {
             ...prevActiveChat,
             username: username || prevActiveChat.username,
-            profileImage: formattedImage,
+            profileImage: busted || base,
           }
         }
         return prevActiveChat
@@ -513,8 +538,15 @@ const Dashboard = () => {
       const groupId = String(group.groupId ?? group.id ?? '')
       if (!groupId) return
 
+      let profilePicture = group.profilePicture || null
+      if (profilePicture) {
+        const base = formatProfileImage(profilePicture, group.name || 'Group')
+        profilePicture = `${base}${base.includes('?') ? '&' : '?'}v=${Date.now()}`
+      }
+
       upsertGroupRef.current?.({
         ...group,
+        profilePicture: profilePicture || group.profilePicture || '',
         groupId,
         name: group.name || 'Group',
       })
@@ -527,6 +559,7 @@ const Dashboard = () => {
         return {
           ...prevActiveChat,
           ...group,
+          profilePicture: profilePicture || group.profilePicture || prevActiveChat.profilePicture,
           type: 'group',
           groupId,
           name: group.name || prevActiveChat.name || 'Group',
@@ -674,6 +707,53 @@ const Dashboard = () => {
             localStorage.setItem(`unreadGroup-${userIdRef.current}-${gid}`, String(nextCount))
             return next
           })
+          // The early `if (isActiveGroup) return` above already excludes the
+          // group the user is viewing, so reaching here means "in the app but
+          // not in this chat" (or app backgrounded) — both should notify.
+          // `msgText` is the decrypted plaintext.
+          // Only notify when we actually decrypted the message — skip rather than
+          // posting a generic placeholder when decryption isn't ready yet.
+          try {
+            const hasPreview = msgText && msgText !== '[Unable to decrypt message]'
+            if (hasPreview) {
+              const sender = message.username ? `${message.username}: ` : ''
+              // Prefer the group's profile picture for group notifications; fall
+              // back to the sender's avatar if the group has none.
+              const senderId = String(message?.userId ?? '')
+              let avatar = null
+              // Find group metadata from state if available
+              try {
+                const grp = (Array.isArray(groups) ? groups : []).find(
+                  (g) => String(g.groupId) === gid
+                )
+                if (grp?.profilePicture) {
+                  avatar = formatProfileImage(grp.profilePicture, message.groupName || 'Group')
+                }
+              } catch {}
+              if (!avatar && senderId) {
+                const conv = recentConversationsRef.current.find((c) => String(c.id) === senderId)
+                if (conv?.profileImage) avatar = conv.profileImage
+                if (!avatar) {
+                  let cachedPic = null
+                  try {
+                    cachedPic = JSON.parse(
+                      localStorage.getItem(`profile-${senderId}`) || 'null'
+                    )?.profilePicture
+                  } catch {
+                    cachedPic = null
+                  }
+                  avatar = formatProfileImage(cachedPic, message.username || `User ${senderId}`)
+                }
+              }
+              const mod = await import('../../utils/notifications')
+              await mod.notifyMessage?.({
+                conversationKey: `group:${gid}`,
+                title: message.groupName || 'Group',
+                body: `${sender}${msgText}`,
+                avatar,
+              })
+            }
+          } catch {}
         }
       })
     }
@@ -689,13 +769,29 @@ const Dashboard = () => {
 
       const privateKeyArray = base64ToArrayBuffer(identityKeys.privateKeyX25519)
 
+      const ownDeviceId = localStorage.getItem('echo-device-id') || null
+
       for (const message of messages) {
         const currentUserId = String(userIdRef.current)
         const messageSenderId = String(message.userId)
         const activeChatId = activeChatRef.current?.id ? String(activeChatRef.current.id) : null
 
+        // Per-device fan-out: each of the recipient's devices receives a copy of
+        // every message via the user-id room, but only the copy addressed to THIS
+        // device (matching peerDeviceId) can be decrypted. Skip the rest so we
+        // don't run a doomed decrypt and emit a bogus "New message" notification
+        // for copies meant for sibling devices. (Mirrors the filter in Chat.jsx.)
+        if (
+          message.peerDeviceId &&
+          ownDeviceId &&
+          String(message.peerDeviceId) !== String(ownDeviceId)
+        ) {
+          continue
+        }
+
         if (message.userId && messageSenderId !== currentUserId) {
           const senderId = messageSenderId
+          let decrypted = null
 
           if (senderId === activeChatId) {
             continue
@@ -718,14 +814,34 @@ const Dashboard = () => {
             }
 
             const nonce = base64ToArrayBuffer(message.nonce || '')
-            await decryptIncomingMessage(
+            // Use the SAME per-device session scoping as the in-chat decryptor
+            // (Chat.jsx). Per-device messages key their Double Ratchet session
+            // under the sender's DEVICE user id, not the user-level id. Decrypting
+            // with the user-level id derives the wrong message key and throws
+            // "Decryption failed" — which is exactly why the first message (chat
+            // closed, so handled here) notified as a bare "New message".
+            const senderDeviceUserIdRaw = message.senderDeviceUserId
+            const senderDeviceUserId =
+              senderDeviceUserIdRaw && String(senderDeviceUserIdRaw) !== senderId
+                ? String(senderDeviceUserIdRaw)
+                : null
+            const cryptoPeerUserId = senderDeviceUserId || senderId
+            const sessionTargetId = senderDeviceUserId || null
+            const decryptOptions = {
+              ...(sessionTargetId ? { sessionTargetId, peerUserId: cryptoPeerUserId } : {}),
+              // Always store under the user-level conversation so all of a peer's
+              // devices roll up into one thread.
+              conversationKeyOverride: senderId,
+            }
+            decrypted = await decryptIncomingMessage(
               message,
               nonce,
               userIdRef.current,
-              senderId,
+              cryptoPeerUserId,
               privateKeyArray,
               sharedSocket,
-              null
+              null,
+              decryptOptions
             )
           } catch (error) {
             console.error('❌ [Dashboard] Failed to decrypt message in background:', error)
@@ -743,6 +859,50 @@ const Dashboard = () => {
                 [senderId]: newCount,
               }
             })
+
+          // Reaching here means the message is NOT from the conversation the
+          // user currently has open — the `senderId === activeChatId` check
+          // above already `continue`s that case. So notify whether the app is
+          // backgrounded OR just on a different screen ("in the app but not in
+          // this chat" must still alert). Body is the DECRYPTED plaintext, never
+          // the ciphertext payload.
+          // Only notify when we actually have something to show. If decryption
+          // failed (decrypted == null) we skip rather than spamming the tray with
+          // generic "New message" placeholders — the unread badge already flags
+          // that something arrived, and the real text shows once the chat opens.
+          try {
+            const img = typeof decrypted?.image === 'string' ? decrypted.image : null
+            const text = typeof decrypted?.text === 'string' ? decrypted.text.trim() : ''
+            if (text || img) {
+              const title = message.username || decrypted?.username || `User ${senderId}`
+              const isGif = img && (/\.gif($|\?)/i.test(img) || img.startsWith('data:image/gif'))
+              const preview = text || (isGif ? '🎞️ GIF' : '📷 Photo')
+              // Sender's profile picture as the notification avatar. Prefer the
+              // conversation's stored image; otherwise derive from the cached
+              // profile (falls back to a generated initials avatar).
+              const conv = recentConversationsRef.current.find((c) => String(c.id) === senderId)
+              let avatar = conv?.profileImage ? formatProfileImage(conv.profileImage, title) : null
+              if (!avatar) {
+                let cachedPic = null
+                try {
+                  cachedPic = JSON.parse(
+                    localStorage.getItem(`profile-${senderId}`) || 'null'
+                  )?.profilePicture
+                } catch {
+                  cachedPic = null
+                }
+                avatar = formatProfileImage(cachedPic, title)
+              }
+              const mod = await import('../../utils/notifications')
+              await mod.notifyMessage?.({
+                conversationKey: `dm:${senderId}`,
+                title,
+                body: preview,
+                image: img,
+                avatar,
+              })
+            }
+          } catch {}
 
           const conversationExists = recentConversationsRef.current.some(
             (conv) => String(conv.id) === senderId
@@ -1415,6 +1575,52 @@ const Dashboard = () => {
       [conversationId]: 0,
     }))
     localStorage.setItem(`unread-${userId}-${conversationId}`, 0)
+    // Reset this conversation's notification stack + dismiss its system notification.
+    import('../../utils/notifications')
+      .then((m) => m.clearMessageNotif?.(`dm:${conversationId}`))
+      .catch(() => {})
+
+    // Proactively refresh this peer's latest profile so header + bubbles pick it up
+    try {
+      const s = getSocket()
+      s.emit('getUserInfo', { userId: conversationId }, (response) => {
+        try {
+          if (response?.success && response?.user) {
+            const base = formatProfileImage(response.user.profilePicture, response.user.username)
+            const busted = base ? `${base}${base.includes('?') ? '&' : '?'}v=${Date.now()}` : null
+            // Update active chat immediately
+            setActiveChat((prev) =>
+              prev &&
+              (String(prev.id) === conversationId || String(prev.targetUserId) === conversationId)
+                ? {
+                    ...prev,
+                    username: response.user.username || prev.username,
+                    profileImage: busted || base,
+                  }
+                : prev
+            )
+            // Update recent conversations entry
+            updateRecentConversations(
+              {
+                id: conversationId,
+                username: response.user.username,
+                profileImage: busted || base,
+                targetUserId: conversationId,
+              },
+              null
+            )
+            // Update local cache for fallback lookups
+            localStorage.setItem(
+              `profile-${conversationId}`,
+              JSON.stringify({
+                username: response.user.username,
+                profilePicture: response.user.profilePicture,
+              })
+            )
+          }
+        } catch {}
+      })
+    } catch {}
   }
 
   const handleGroupSelect = (group) => {
@@ -1434,14 +1640,20 @@ const Dashboard = () => {
       localStorage.setItem(`unreadGroup-${userId}-${gid}`, '0')
       return next
     })
+    // Reset this group's notification stack + dismiss its system notification.
+    import('../../utils/notifications')
+      .then((m) => m.clearMessageNotif?.(`group:${gid}`))
+      .catch(() => {})
   }
 
   const handleMobileBack = () => {
     if (mobileChatHistoryPushedRef.current) {
+      // history.back() fires popstate → handlePopState clears activeChat.
       window.history.back()
       return
     }
     setShowMobileChat(false)
+    setActiveChat(null)
   }
 
   const handleActiveChatChange = (friendData) => {
@@ -1624,15 +1836,7 @@ const Dashboard = () => {
           />
         )}
 
-        {/* Mobile hamburger visible on small screens when chat is not shown */}
-        {!showMobileChat && (
-          <button
-            className='md:hidden fixed top-4 left-4 z-40 p-2 text-gray-400 hover:text-white'
-            onClick={() => setIsMobileMenuOpen(true)}
-          >
-            <Menu className='h-6 w-6' />
-          </button>
-        )}
+        {/* Global hamburger removed — per-view headers own their menu buttons */}
 
         {/* Sidebar - Hidden on mobile, shown via menu */}
         <div
@@ -1643,12 +1847,11 @@ const Dashboard = () => {
         `}
         >
           <Sidebar
-            active={activeView === 'friends' ? 'contacts' : activeView}
+            active={activeView}
             onChange={(view) => {
-              const mappedView = view === 'contacts' ? 'friends' : view
-              handleViewChange(mappedView)
+              handleViewChange(view)
               // If opening settings via nav, show the top-level grid
-              if (mappedView === 'settings') setSettingsInitialSection(null)
+              if (view === 'settings') setSettingsInitialSection(null)
               setIsMobileMenuOpen(false)
             }}
             user={{
@@ -1671,26 +1874,25 @@ const Dashboard = () => {
             }}
             onLogout={handleLogout}
             unreadMessages={unreadMessages}
-            onNewChat={() => setNewChatOpen(true)}
           />
         </div>
 
         {/* Navigation Panel — Premium ChatList (left panel) */}
         <div
           className={`
-          ${showMobileChat || activeView === 'settings' || activeView === 'friends' || activeView === 'groups' ? 'hidden' : 'flex'} 
-          ${activeView === 'settings' || activeView === 'friends' || activeView === 'groups' ? 'md:hidden' : 'md:flex'}
-          shrink-0
+          ${showMobileChat || activeView === 'settings' || activeView === 'groups' ? 'hidden' : 'flex'}
+          ${activeView === 'settings' || activeView === 'groups' ? 'md:hidden' : 'md:flex'}
+          w-full md:w-auto shrink-0
         `}
         >
-          {activeView === 'settings' ||
-          activeView === 'friends' ||
-          activeView === 'groups' ? null : (
+          {activeView === 'settings' || activeView === 'groups' ? null : (
             <ChatList
               items={chatListItems}
               activeId={activeChat?.type === 'group' ? activeChat?.groupId : activeChat?.id}
               searchTerm={conversationsSearchTerm}
               onSearchChange={setConversationsSearchTerm}
+              onCreatePeer={() => setNewChatOpen(true)}
+              onCreateGroup={() => setCreateGroupOpen(true)}
               onSelect={(id) => {
                 // Try group first
                 const group = filteredGroups.find((g) => String(g.groupId) === String(id))
@@ -1705,7 +1907,6 @@ const Dashboard = () => {
                   return
                 }
               }}
-              onCreateGroup={() => setCreateGroupOpen(true)}
             />
           )}
         </div>
@@ -1713,7 +1914,7 @@ const Dashboard = () => {
         {/* Main Content Area - Full screen on mobile when chat shown */}
         <div
           className={`
-          ${showMobileChat || activeView === 'settings' || activeView === 'friends' || activeView === 'groups' ? 'flex' : 'hidden'} md:flex
+          ${showMobileChat || activeView === 'settings' || activeView === 'groups' ? 'flex' : 'hidden'} md:flex
           flex-1 min-h-0 min-w-0 flex-col bg-transparent
         `}
         >
@@ -1722,53 +1923,38 @@ const Dashboard = () => {
               key={settingsInitialSection || 'root'}
               initialSection={settingsInitialSection}
             />
-          ) : activeView === 'friends' ? (
-            <div className='echo-floating relative flex h-full flex-1 flex-col overflow-hidden'>
-              <Friends
-                token={token}
-                onActiveChatChange={handleActiveChatChange}
-                onAddContact={() => setNewChatOpen(true)}
-              />
-            </div>
           ) : activeView === 'groups' ? (
             <GroupsView onCreate={() => setCreateGroupOpen(true)} groups={filteredGroups} />
           ) : activeChat ? (
             <div className='echo-floating relative flex h-full min-h-0 flex-1 overflow-hidden rounded-none md:rounded-[20px]'>
               <div className='flex min-h-0 min-w-0 flex-1 flex-col'>
-                {/* Mobile back button */}
-                <div className='flex shrink-0 items-center md:block'>
-                  <button
-                    className='md:hidden p-3 text-gray-400 hover:text-white'
-                    onClick={handleMobileBack}
-                  >
-                    <ArrowLeft className='h-6 w-6' />
-                  </button>
-                  <div className='flex-1'>
-                    {activeChat?.type === 'group' ? (
-                      <GroupHeader
-                        groupId={activeChat.groupId}
-                        groupName={activeChat.name}
-                        groupDescription={activeChat.description}
-                        groupProfilePicture={activeChat.profilePicture}
-                        userId={userId}
-                      />
-                    ) : (
-                      <ChatHeader
-                        activeChat={activeChat}
-                        userId={userId}
-                        token={token}
-                        onOpenInfo={() => setShowInfoPanel((v) => !v)}
-                        onCompareNumbers={() => {
-                          window.dispatchEvent(
-                            new CustomEvent('verifySafetyNumber', {
-                              detail: { peerId: String(activeChat.id) },
-                            })
-                          )
-                        }}
-                      />
-                    )}
-                  </div>
-                </div>
+                {activeChat?.type === 'group' ? (
+                  <GroupHeader
+                    groupId={activeChat.groupId}
+                    groupName={activeChat.name}
+                    groupDescription={activeChat.description}
+                    groupProfilePicture={activeChat.profilePicture}
+                    userId={userId}
+                    onOpenMenu={() => setIsMobileMenuOpen(true)}
+                    onBack={handleMobileBack}
+                  />
+                ) : (
+                  <ChatHeader
+                    activeChat={activeChat}
+                    userId={userId}
+                    token={token}
+                    onOpenInfo={() => setShowInfoPanel((v) => !v)}
+                    onOpenMenu={() => setIsMobileMenuOpen(true)}
+                    onBack={handleMobileBack}
+                    onCompareNumbers={() => {
+                      window.dispatchEvent(
+                        new CustomEvent('verifySafetyNumber', {
+                          detail: { peerId: String(activeChat.id) },
+                        })
+                      )
+                    }}
+                  />
+                )}
                 <div className='min-h-0 flex-1 overflow-hidden'>
                   {activeChat?.type === 'group' ? (
                     <GroupChat

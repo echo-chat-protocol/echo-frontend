@@ -447,7 +447,9 @@ export default function UserProfileModal({ user = {}, open, onClose = () => {} }
                     </button>
                     <button
                       onClick={handleSave}
-                      disabled={!isOwnProfile || loading || saving}
+                      // Allow saving even if initial profile load is still pending
+                      // so users aren't blocked when they already know changes.
+                      disabled={!isOwnProfile || saving}
                       data-testid='profile-save-btn'
                       className='echo-cta rounded-full px-6 py-2.5 text-[12.5px] font-medium disabled:cursor-not-allowed disabled:opacity-60'
                     >
