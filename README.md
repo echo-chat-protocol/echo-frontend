@@ -131,10 +131,11 @@ Copy `.env.development` and fill in your values:
 cp .env.development .env.local
 ```
 
-| Variable          | Description               |
-| ----------------- | ------------------------- |
-| `VITE_API_URL`    | Backend REST API base URL |
-| `VITE_SOCKET_URL` | Socket.io server URL      |
+| Variable             | Description                         |
+| -------------------- | ----------------------------------- |
+| `VITE_API_URL`       | Backend REST API base URL           |
+| `VITE_SOCKET_URL`    | Socket.io server URL                |
+| `VITE_KLIPY_API_KEY` | KLIPY API key for GIF link previews |
 
 ---
 
@@ -235,7 +236,7 @@ git push --follow-tags
 
 The cryptographic primitives are built in Rust and compiled into javascript using WASM. [Echo-Protocol](https://github.com/Pringles505/Echo-Protocol) can be installed using:
 
-``` npm install @mascaro101/echo-protocol ```
+`npm install @mascaro101/echo-protocol`
 
 ## **AEAD AES-256 (Authenticated Encryption with Associated Data)**
 
@@ -247,18 +248,19 @@ encrypt each message using a **unique message key (`MK`)** derived from
 the ratchet chain.
 
 ## **Core Components**
-  `AES‑256`                      Symmetric block cipher using a 256‑bit key
-  `Nonce`                        Unique value used once per encryption operation
-  `Ciphertext`                   Encrypted output of the plaintext
-  `Authentication Tag`           Integrity check generated during encryption
-  `AAD`                          Associated data authenticated but not encrypted (e.g., message headers)
+
+`AES‑256` Symmetric block cipher using a 256‑bit key
+`Nonce` Unique value used once per encryption operation
+`Ciphertext` Encrypted output of the plaintext
+`Authentication Tag` Integrity check generated during encryption
+`AAD` Associated data authenticated but not encrypted (e.g., message headers)
 
 ## **Encryption Process**
 
--   `MK`  message key (256‑bit)
--   `Nonce`   unique 96‑bit value
--   `Plaintext`   message content
--   `AAD`   optional associated data
+- `MK` message key (256‑bit)
+- `Nonce` unique 96‑bit value
+- `Plaintext` message content
+- `AAD` optional associated data
 
 Encryption is performed as:
 
@@ -283,8 +285,8 @@ Upon receiving a message:
 
 If authentication fails:
 
--   the message is **rejected**
--   no plaintext is returned
+- the message is **rejected**
+- no plaintext is returned
 
 This ensures that any tampering with the ciphertext or associated data
 is detected.
@@ -422,31 +424,33 @@ The Double Ratchet Algorithm is a **stateful key evolution protocol**
 used to provide secure messaging after an initial shared secret has been
 established (through **X3DH**). It ensures:
 
--   **Forward Secrecy** -- past messages remain secure if current keys
-    are compromised.
--   **Post-Compromise Security** -- security can recover after a
-    compromise once a new Diffie-Hellman exchange occurs.
--   **Message Confidentiality and Integrity** through continuously
-    evolving keys.
+- **Forward Secrecy** -- past messages remain secure if current keys
+  are compromised.
+- **Post-Compromise Security** -- security can recover after a
+  compromise once a new Diffie-Hellman exchange occurs.
+- **Message Confidentiality and Integrity** through continuously
+  evolving keys.
 
-------------------------------------------------------------------------
+---
 
 ### **Ratchet State**
 
 Each participant maintains a ratchet state containing:
 
-  Variable   Description
-  ---------- --------------------------------------------------------
-  `RK`       Root Key -- master key used to derive chain keys
-  `CKs`      Sending Chain Key
-  `CKr`      Receiving Chain Key
-  `DHs`      Local Diffie-Hellman key pair
-  `DHr`      Remote Diffie-Hellman public key
-  `Ns`       Number of messages sent in current sending chain
-  `Nr`       Number of messages received in current receiving chain
-  `PN`       Number of messages in the previous sending chain
+Variable Description
 
-------------------------------------------------------------------------
+---
+
+`RK` Root Key -- master key used to derive chain keys
+`CKs` Sending Chain Key
+`CKr` Receiving Chain Key
+`DHs` Local Diffie-Hellman key pair
+`DHr` Remote Diffie-Hellman public key
+`Ns` Number of messages sent in current sending chain
+`Nr` Number of messages received in current receiving chain
+`PN` Number of messages in the previous sending chain
+
+---
 
 ## **Key Derivation**
 
@@ -462,10 +466,10 @@ When a new Diffie-Hellman exchange occurs:
 
 Where:
 
--   `RK` becomes the updated root key
--   `CK` becomes a new chain key
+- `RK` becomes the updated root key
+- `CK` becomes a new chain key
 
-------------------------------------------------------------------------
+---
 
 ### **Message Key Derivation**
 
@@ -475,10 +479,10 @@ For every message sent or received:
 
 Where:
 
--   `CK` becomes the next chain key
--   `MK` is the message encryption key
+- `CK` becomes the next chain key
+- `MK` is the message encryption key
 
-------------------------------------------------------------------------
+---
 
 ## **Algorithm Workflow**
 
@@ -498,7 +502,7 @@ The first sending chain is derived:
 
     RK, CKs = KDF_RK(RK, DH(DHs, DHr))
 
-------------------------------------------------------------------------
+---
 
 ## **Sending a Message**
 
@@ -526,7 +530,7 @@ The message header contains:
 
     Ns += 1
 
-------------------------------------------------------------------------
+---
 
 ## **Receiving a Message**
 
@@ -536,7 +540,7 @@ When Bob receives a message:
 
 If the received `dh` differs from `DHr`, perform a **DH Ratchet Step**.
 
-------------------------------------------------------------------------
+---
 
 ## **Diffie-Hellman Ratchet Step**
 
@@ -563,7 +567,7 @@ When a new public key appears:
 
 This step **re-establishes cryptographic freshness**.
 
-------------------------------------------------------------------------
+---
 
 ## **Decrypting Messages**
 
@@ -581,7 +585,7 @@ Once the correct receiving chain key is established:
 
     Nr += 1
 
-------------------------------------------------------------------------
+---
 
 ## **Handling Out-of-Order Messages**
 
@@ -594,7 +598,7 @@ To handle this, the algorithm stores **skipped message keys**:
 If a delayed message arrives later, the stored key can decrypt it
 without breaking the ratchet state.
 
-------------------------------------------------------------------------
+---
 
 ## References
 

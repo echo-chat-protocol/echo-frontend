@@ -5,56 +5,111 @@ import { format, isSameDay } from 'date-fns'
 import { es } from 'date-fns/locale'
 import CallEventMessage from './CallEventMessage'
 
-const extractTenorPostId = (text) => {
+const KLIPY_KEY_PLACEHOLDERS = new Set(['your_klipy_api_key_here', 'your_kliply_api_key_here'])
+
+const getKlipyApiKey = () => {
+  const apiKey = String(
+    import.meta.env.VITE_KLIPY_API_KEY || import.meta.env.VITE_KLIPLY_API_KEY || ''
+  ).trim()
+
+  return KLIPY_KEY_PLACEHOLDERS.has(apiKey) ? '' : apiKey
+}
+
+const getGifUrl = (result) =>
+  result?.media_formats?.gif?.url ||
+  result?.media_formats?.mediumgif?.url ||
+  result?.media_formats?.tinygif?.url ||
+  result?.media_formats?.nanogif?.url ||
+  result?.media_formats?.preview?.url ||
+  null
+
+const extractGifPostId = (text) => {
   if (!text) return null
 
   // Match data-postid from embed code
-  const embedMatch = text.match(/data-postid="(\d+)"/)
+  const embedMatch = text.match(/data-postid="([\w-]+)"/)
   if (embedMatch) return embedMatch[1]
 
   // Match direct tenor.com/view links
   const linkMatch = text.match(/tenor\.com\/view\/[^"'\s]+-(\d+)/)
   if (linkMatch) return linkMatch[1]
 
+  // Match direct klipy.com/gifs links
+  const klipyLinkMatch = text.match(/klipy\.com\/gifs\/([^"'\s/?#]+)/)
+  if (klipyLinkMatch) return klipyLinkMatch[1]
+
   return null
 }
 
-// Component for Tenor GIF
-const TenorGif = ({ postId }) => {
+// Component for GIFs backed by KLIPY's Tenor-compatible endpoint.
+const KlipyGif = ({ postId, fallbackText }) => {
   const [gifUrl, setGifUrl] = useState(null)
+  const [failed, setFailed] = useState(false)
 
   useEffect(() => {
-    const API_KEY = import.meta.env.VITE_TENOR_API_KEY
-    fetch(`https://tenor.googleapis.com/v2/posts?ids=${postId}&key=${API_KEY}`)
-      .then((res) => res.json())
+    const apiKey = getKlipyApiKey()
+    if (!apiKey) {
+      setFailed(true)
+      return undefined
+    }
+
+    const controller = new AbortController()
+    const params = new URLSearchParams({
+      ids: postId,
+      key: apiKey,
+    })
+
+    setGifUrl(null)
+    setFailed(false)
+
+    fetch(`https://api.klipy.com/v2/posts?${params.toString()}`, {
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`KLIPY GIF request failed: ${res.status}`)
+        return res.json()
+      })
       .then((data) => {
-        if (data.results?.[0]?.media_formats?.gif?.url) {
-          setGifUrl(data.results[0].media_formats.gif.url)
+        const nextGifUrl = getGifUrl(data.results?.[0])
+        if (!nextGifUrl) throw new Error('KLIPY GIF response did not include a GIF URL')
+        setGifUrl(nextGifUrl)
+      })
+      .catch((err) => {
+        if (err?.name !== 'AbortError') {
+          console.error(err)
+          setFailed(true)
         }
       })
-      .catch(console.error)
+
+    return () => controller.abort()
   }, [postId])
 
+  if (failed) return <p>{fallbackText}</p>
   if (!gifUrl) return <p>Loading GIF...</p>
 
   return (
     <img
       src={gifUrl}
-      alt='Tenor GIF'
+      alt='GIF'
       className='max-w-full rounded-lg cursor-pointer'
-      onClick={() => window.open(`https://tenor.com/view/-${postId}`, '_blank')}
+      onClick={() => window.open(gifUrl, '_blank', 'noopener,noreferrer')}
     />
   )
 }
 
-// Render message content with Tenor GIF support
+KlipyGif.propTypes = {
+  postId: PropTypes.string.isRequired,
+  fallbackText: PropTypes.string.isRequired,
+}
+
+// Render message content with KLIPY-backed GIF support
 const renderMessageContent = (text) => {
   if (!text) return null
 
-  const postId = extractTenorPostId(text)
+  const postId = extractGifPostId(text)
 
   if (postId) {
-    return <TenorGif postId={postId} />
+    return <KlipyGif postId={postId} fallbackText={text} />
   }
 
   return <p>{text}</p>

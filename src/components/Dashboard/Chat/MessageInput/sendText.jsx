@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import PropTypes from 'prop-types'
 import { Plus, Smile, Image as ImgIcon, Paperclip, Send, Mic, X } from 'lucide-react'
 import { compressImage } from '../utils/imageUtils'
@@ -113,38 +114,52 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className='shrink-0 border-t border-white/[0.05] bg-black/70 px-2 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur md:bg-transparent md:px-6 md:py-4 md:pb-4'>
-      {/* Image preview modal */}
-      {showImageModal && (
-        <div className='fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm'>
-          <div className='relative mx-3 w-full max-w-md overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0a0a0e] p-5'>
-            <button
-              onClick={handleCloseModal}
-              className='absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-lg text-white/55 hover:bg-white/[0.04] hover:text-white'
+      {/* Image preview modal — portaled to <body> so it escapes the composer's
+          `backdrop-blur` container. A backdrop-filter ancestor establishes a
+          containing block for `position: fixed`, which would otherwise anchor
+          this overlay to the short composer bar instead of the viewport
+          (rendering it half off-screen with an unreachable close button). */}
+      {showImageModal &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className='fixed inset-0 z-[80] grid place-items-center bg-black/70 backdrop-blur-sm'
+            onClick={handleCloseModal}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className='relative mx-3 w-full max-w-md overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0a0a0e] p-5'
             >
-              <X size={14} />
-            </button>
-            <img
-              src={imagePreview}
-              alt='Preview'
-              className='mx-auto mb-4 max-h-64 rounded-xl object-contain'
-            />
-            <input
-              type='text'
-              value={imageText}
-              onChange={(e) => setImageText(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleImageSend()}
-              placeholder='Add a caption…'
-              className='echo-input mb-3 w-full rounded-xl px-3.5 py-2.5 text-[13px] echo-focus-ring'
-            />
-            <button
-              onClick={handleImageSend}
-              className='echo-cta w-full rounded-full py-2.5 text-[13px] font-medium'
-            >
-              Send Image
-            </button>
-          </div>
-        </div>
-      )}
+              <button
+                onClick={handleCloseModal}
+                aria-label='Close'
+                className='absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-lg text-white/55 hover:bg-white/[0.04] hover:text-white'
+              >
+                <X size={14} />
+              </button>
+              <img
+                src={imagePreview}
+                alt='Preview'
+                className='mx-auto mb-4 max-h-64 rounded-xl object-contain'
+              />
+              <input
+                type='text'
+                value={imageText}
+                onChange={(e) => setImageText(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleImageSend()}
+                placeholder='Add a caption…'
+                className='echo-input mb-3 w-full rounded-xl px-3.5 py-2.5 text-[13px] echo-focus-ring'
+              />
+              <button
+                onClick={handleImageSend}
+                className='echo-cta w-full rounded-full py-2.5 text-[13px] font-medium'
+              >
+                Send Image
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* Hidden file input */}
       <input
