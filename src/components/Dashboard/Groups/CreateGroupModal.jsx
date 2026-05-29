@@ -420,6 +420,40 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
               </button>
             </div>
 
+            {/* Selected members tray — persists across searches so you can add
+                several people one search at a time and still see/remove them. */}
+            {selectedUsers.length > 0 && (
+              <div className='mt-3 flex flex-wrap gap-1.5'>
+                {selectedUsers.map((u) => (
+                  <span
+                    key={u.id}
+                    className='inline-flex items-center gap-1.5 rounded-full border border-violet-400/30 bg-violet-500/[0.08] py-1 pl-1.5 pr-2 text-[12px]'
+                  >
+                    {u.profileImage ? (
+                      <img
+                        src={u.profileImage}
+                        alt={u.username}
+                        className='h-5 w-5 rounded-full object-cover'
+                      />
+                    ) : (
+                      <span className='grid h-5 w-5 place-items-center rounded-full bg-gradient-to-br from-violet-500/40 to-violet-700/70 text-[10px] font-semibold text-white'>
+                        {u.username?.[0]}
+                      </span>
+                    )}
+                    <span className='max-w-[120px] truncate'>{u.username}</span>
+                    <button
+                      type='button'
+                      onClick={() => toggle(u)}
+                      aria-label={`Remove ${u.username}`}
+                      className='grid h-4 w-4 place-items-center rounded-full text-white/55 hover:bg-white/10 hover:text-white'
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
             {/* Results */}
             <div className='mt-3 max-h-[260px] overflow-y-auto pr-1'>
               {results.map((c) => {

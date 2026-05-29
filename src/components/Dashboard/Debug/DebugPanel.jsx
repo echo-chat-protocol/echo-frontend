@@ -17,6 +17,8 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Download,
+  Network,
+  KeyRound,
 } from 'lucide-react'
 import { buildComprehensiveDebugLog, downloadDebugLog } from './debugMlsDump'
 import { deviceService } from '@/features/devices/deviceService'
@@ -28,6 +30,14 @@ import {
   getReceivingChainKey,
 } from '../Chat/utils/chat/keyManagement'
 import { loadGroupState } from '../Chat/utils/crypto/groupCryptoProvider'
+import {
+  level,
+  left,
+  right,
+  root,
+  directPath,
+  leafNode,
+} from '../Chat/utils/crypto/groupCrypto/treemath'
 
 const EMPTY_TRACE_ENTRIES = []
 
@@ -515,6 +525,380 @@ function GroupSection({ activeChat, userId, refreshTick }) {
   )
 }
 GroupSection.propTypes = {
+  activeChat: PropTypes.object,
+  userId: PropTypes.string,
+  refreshTick: PropTypes.number.isRequired,
+}
+
+// ── Ratchet-tree (TreeKEM/MLS) visualization ────────────────────────────────
+// Node-box geometry for the inverted (root-on-top) diagram.
+const TREE_NODE_W = 124
+const TREE_NODE_H = 48
+const TREE_H_GAP = 18
+const TREE_V_GAP = 38
+
+// Build a laid-out, top-down binary tree from the flat left-balanced node array.
+// Root sits at depth 0; leaves fan out along the bottom. Virtual (out-of-array)
+// internal nodes are flattened so incomplete trees still render as a clean
+// binary structure. Returns positioned nodes + parent→child edges, or null.
+function buildTreeLayout(nodes, leafData, selfLeafIndex) {
+  const width = Array.isArray(nodes) ? nodes.length : 0
+  if (width === 0) return null
+  const leafCount = Math.floor((width + 1) / 2)
+
+  // Node indices on the path from our own leaf to the root.
+  const selfPath = new Set()
+  if (Number.isInteger(selfLeafIndex) && selfLeafIndex >= 0) {
+    const selfNode = leafNode(selfLeafIndex)
+    selfPath.add(selfNode)
+    for (const idx of directPath(selfNode, leafCount)) selfPath.add(idx)
+  }
+
+  // Real children of a node, descending through virtual internal nodes.
+  const realChildren = (x) => {
+    if (level(x) === 0) return []
+    const out = []
+    for (const child of [left(x), right(x)]) {
+      if (child < width) out.push(child)
+      else if (level(child) > 0) out.push(...realChildren(child))
+      // virtual leaf (>= width, level 0): no real node, skip
+    }
+    return out
+  }
+
+  const describe = (x, isRoot) => {
+    const isLeaf = level(x) === 0
+    const node = nodes[x] || {}
+    const hasPub = typeof node.publicKeyB64 === 'string' && node.publicKeyB64.length > 0
+    const hasPriv = typeof node.privateKeyB64 === 'string' && node.privateKeyB64.length > 0
+    const leafIndex = isLeaf ? x / 2 : null
+    const member = isLeaf ? leafData?.[String(leafIndex)] || null : null
+    return {
+      x,
+      isRoot,
+      isLeaf,
+      leafIndex,
+      hasPub,
+      hasPriv,
+      member,
+      publicKeyB64: node.publicKeyB64 || null,
+      onSelfPath: selfPath.has(x),
+      isSelf: isLeaf && leafIndex === selfLeafIndex,
+    }
+  }
+
+  const colStep = TREE_NODE_W + TREE_H_GAP
+  const rowStep = TREE_NODE_H + TREE_V_GAP
+  const laid = []
+  let leafCol = 0
+  let maxDepth = 0
+
+  // DFS in left→right order: leaves get sequential columns, parents centre over
+  // their children, depth increases downward.
+  const build = (x, depth, isRoot) => {
+    maxDepth = Math.max(maxDepth, depth)
+    const info = describe(x, isRoot)
+    const kids = realChildren(x).map((c) => build(c, depth + 1, false))
+    let cx
+    if (kids.length === 0) {
+      cx = leafCol * colStep + TREE_NODE_W / 2
+      leafCol += 1
+    } else {
+      cx = kids.reduce((sum, k) => sum + k.cx, 0) / kids.length
+    }
+    const laidNode = {
+      ...info,
+      key: `n${x}`,
+      cx,
+      cy: depth * rowStep + TREE_NODE_H / 2,
+      depth,
+      children: kids,
+    }
+    laid.push(laidNode)
+    return laidNode
+  }
+
+  build(root(leafCount), 0, true)
+
+  const edges = []
+  for (const n of laid) {
+    for (const c of n.children) edges.push({ from: n, to: c, key: `${n.key}-${c.key}` })
+  }
+
+  const svgW = Math.max(leafCol, 1) * colStep
+  const svgH = (maxDepth + 1) * rowStep
+  return { laid, edges, dims: { svgW, svgH }, leafCount, nodeCount: width }
+}
+
+// Plain-text rendering (indented, root-first) for the copy button.
+function treeLayoutToText(layout) {
+  if (!layout) return ''
+  const lines = []
+  const byDepth = [...layout.laid].sort((a, b) => a.depth - b.depth || a.cx - b.cx)
+  for (const n of byDepth) {
+    const tag = n.isRoot ? 'root' : n.isLeaf ? `leaf ${n.leafIndex}` : `node ${n.x}`
+    const who = n.member ? `${n.member.username || 'Member'} (uid:${n.member.userId})` : ''
+    const status = n.hasPub ? (n.hasPriv ? 'has priv' : 'pub only') : 'blank'
+    const flags = [n.isSelf ? 'self' : null, n.onSelfPath ? 'on-path' : null]
+      .filter(Boolean)
+      .join(',')
+    lines.push(
+      `${'  '.repeat(n.depth)}${tag} [${status}]${who ? ` ${who}` : ''}${flags ? ` <${flags}>` : ''}`
+    )
+  }
+  return lines.join('\n')
+}
+
+// One positioned node box in the diagram.
+function TreeNodeBox({ node }) {
+  const dotColor = node.hasPub
+    ? node.hasPriv
+      ? 'bg-emerald-400 shadow-[0_0_5px_rgba(52,211,153,0.7)]'
+      : 'bg-sky-400'
+    : 'bg-white/20'
+  const tag = node.isRoot ? 'root' : node.isLeaf ? `L${node.leafIndex}` : `n${node.x}`
+  const border = node.onSelfPath
+    ? 'border-emerald-400/45 bg-emerald-500/[0.06]'
+    : node.isRoot
+      ? 'border-violet-400/40 bg-violet-500/[0.06]'
+      : 'border-white/[0.1] bg-white/[0.02]'
+
+  return (
+    <div
+      title={node.publicKeyB64 || (node.hasPub ? '' : 'blank node')}
+      style={{
+        position: 'absolute',
+        left: node.cx - TREE_NODE_W / 2,
+        top: node.cy - TREE_NODE_H / 2,
+        width: TREE_NODE_W,
+        height: TREE_NODE_H,
+      }}
+      className={`flex flex-col justify-center gap-0.5 rounded-md border px-1.5 py-1 ${border}`}
+    >
+      <div className='flex items-center gap-1'>
+        <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${dotColor}`} />
+        <span
+          className={`shrink-0 rounded px-1 text-[9px] font-mono ${
+            node.isRoot
+              ? 'bg-violet-500/20 text-violet-200'
+              : node.isLeaf
+                ? 'bg-white/[0.08] text-white/75'
+                : 'bg-white/[0.05] text-white/50'
+          }`}
+        >
+          {tag}
+        </span>
+        {node.isSelf && (
+          <span className='shrink-0 rounded bg-emerald-500/15 px-1 text-[8.5px] text-emerald-300'>
+            self
+          </span>
+        )}
+        {node.hasPriv && <KeyRound size={9} className='ml-auto shrink-0 text-emerald-300/80' />}
+      </div>
+
+      {node.isLeaf ? (
+        node.member ? (
+          <div className='flex min-w-0 items-center gap-1'>
+            <span className='truncate text-[11px] text-white/85'>
+              {node.member.username || 'Member'}
+            </span>
+            {node.member.leafSigningPubKeyB64 ? (
+              <span
+                className='shrink-0 rounded bg-violet-500/15 px-1 text-[8px] text-violet-200'
+                title='leaf signing key present'
+              >
+                sig
+              </span>
+            ) : (
+              <span
+                className='shrink-0 rounded bg-amber-500/15 px-1 text-[8px] text-amber-200'
+                title='no leaf signing key'
+              >
+                no-sig
+              </span>
+            )}
+          </div>
+        ) : (
+          <div className='truncate text-[10px] text-white/30'>
+            {node.hasPub ? 'occupied' : 'blank'}
+          </div>
+        )
+      ) : (
+        <div className='truncate font-mono text-[9.5px] text-white/35'>
+          {node.publicKeyB64 ? shortKey(node.publicKeyB64, 6, 4) : 'blank'}
+        </div>
+      )}
+    </div>
+  )
+}
+TreeNodeBox.propTypes = {
+  node: PropTypes.object.isRequired,
+}
+
+// SVG + positioned-box diagram. Edges are drawn parent-bottom → child-top.
+function TreeDiagram({ layout }) {
+  const { svgW, svgH } = layout.dims
+  return (
+    <div className='overflow-auto rounded-lg border border-white/[0.06] bg-black/30 p-3'>
+      <div style={{ position: 'relative', width: svgW, height: svgH, minWidth: '100%' }}>
+        <svg
+          width={svgW}
+          height={svgH}
+          className='absolute inset-0 pointer-events-none'
+          style={{ overflow: 'visible' }}
+        >
+          {layout.edges.map((e) => {
+            const onPath = e.from.onSelfPath && e.to.onSelfPath
+            const x1 = e.from.cx
+            const y1 = e.from.cy + TREE_NODE_H / 2
+            const x2 = e.to.cx
+            const y2 = e.to.cy - TREE_NODE_H / 2
+            const midY = (y1 + y2) / 2
+            return (
+              <path
+                key={e.key}
+                d={`M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`}
+                fill='none'
+                stroke={onPath ? 'rgba(52,211,153,0.55)' : 'rgba(255,255,255,0.14)'}
+                strokeWidth={onPath ? 1.6 : 1}
+              />
+            )
+          })}
+        </svg>
+        {layout.laid.map((node) => (
+          <TreeNodeBox key={node.key} node={node} />
+        ))}
+      </div>
+    </div>
+  )
+}
+TreeDiagram.propTypes = {
+  layout: PropTypes.object.isRequired,
+}
+
+function GroupTreeSection({ activeChat, userId, refreshTick }) {
+  const [state, setState] = useState({ loading: true, groupState: null, error: null })
+
+  const groupId = activeChat?.type === 'group' ? activeChat?.groupId : null
+
+  const load = useCallback(async () => {
+    if (!groupId) {
+      setState({ loading: false, groupState: null, error: null })
+      return
+    }
+    setState((s) => ({ ...s, loading: true, error: null }))
+    try {
+      const gs = await loadGroupState(groupId)
+      setState({ loading: false, groupState: gs, error: null })
+    } catch (err) {
+      setState({
+        loading: false,
+        groupState: null,
+        error: err?.message || 'Failed to load group state',
+      })
+    }
+  }, [groupId])
+
+  useEffect(() => {
+    load()
+  }, [load, refreshTick])
+
+  const gs = state.groupState
+
+  const layout = useMemo(() => {
+    if (!gs?.tree?.nodes) return null
+    // Prefer the explicit selfLeafIndex; fall back to a roster lookup by userId.
+    let selfLeafIndex = gs.selfLeafIndex
+    if (!Number.isInteger(selfLeafIndex)) {
+      const mine = (gs.roster ?? []).find((m) => String(m.userId) === String(userId ?? ''))
+      selfLeafIndex = Number.isInteger(mine?.leafIndex) ? mine.leafIndex : null
+    }
+    return buildTreeLayout(gs.tree.nodes, gs.tree.leafData ?? {}, selfLeafIndex)
+  }, [gs, userId])
+
+  if (!groupId) return null
+
+  const width = gs?.tree?.nodes?.length ?? 0
+  const leafCount = width > 0 ? Math.floor((width + 1) / 2) : 0
+  const occupiedLeaves = layout ? layout.laid.filter((n) => n.isLeaf && n.hasPub).length : 0
+  const privNodes = layout ? layout.laid.filter((n) => n.hasPriv).length : 0
+
+  return (
+    <section className='mb-4'>
+      <SectionHeader
+        icon={<Network size={12} className='text-emerald-300/80' />}
+        title='Ratchet Tree (TreeKEM)'
+        count={width}
+        onRefresh={load}
+      />
+      {state.error && (
+        <div className='mb-2 rounded border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[11px] text-rose-200'>
+          {state.error}
+        </div>
+      )}
+
+      {gs?.tree?.nodes ? (
+        <>
+          <div className='mb-2 flex flex-wrap items-center gap-1.5 text-[10px]'>
+            <span className='rounded bg-white/5 px-1.5 py-0.5 font-mono text-white/55'>
+              epoch {gs.epoch}
+            </span>
+            <span className='rounded bg-white/5 px-1.5 py-0.5 font-mono text-white/55'>
+              {leafCount} leaves · {width} nodes
+            </span>
+            <span className='rounded bg-white/5 px-1.5 py-0.5 font-mono text-white/55'>
+              {occupiedLeaves} occupied
+            </span>
+            <span className='rounded bg-white/5 px-1.5 py-0.5 font-mono text-white/55'>
+              {privNodes} priv held
+            </span>
+            <div className='flex-1' />
+            <button
+              onClick={() => copyText(treeLayoutToText(layout))}
+              className='flex items-center gap-1 rounded bg-white/5 px-1.5 py-0.5 text-white/60 hover:bg-white/10'
+              title='Copy tree as text'
+            >
+              <Copy size={10} /> copy
+            </button>
+          </div>
+
+          {/* Legend */}
+          <div className='mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[9.5px] text-white/40'>
+            <span className='flex items-center gap-1'>
+              <span className='inline-block h-1.5 w-1.5 rounded-full bg-emerald-400' /> pub + priv
+            </span>
+            <span className='flex items-center gap-1'>
+              <span className='inline-block h-1.5 w-1.5 rounded-full bg-sky-400' /> pub only
+            </span>
+            <span className='flex items-center gap-1'>
+              <span className='inline-block h-1.5 w-1.5 rounded-full bg-white/20' /> blank
+            </span>
+            <span className='flex items-center gap-1'>
+              <KeyRound size={9} className='text-emerald-300/80' /> private key held
+            </span>
+            <span className='flex items-center gap-1'>
+              <span className='inline-block h-2 w-3 rounded-sm bg-emerald-500/[0.18]' /> our path to
+              root
+            </span>
+          </div>
+
+          {layout ? (
+            <TreeDiagram layout={layout} />
+          ) : (
+            <div className='rounded-lg border border-white/[0.06] bg-black/30 px-3 py-3 text-[11px] text-white/40'>
+              Tree is empty.
+            </div>
+          )}
+        </>
+      ) : (
+        !state.loading && (
+          <div className='text-[11px] text-white/40'>No tree loaded for this group.</div>
+        )
+      )}
+    </section>
+  )
+}
+GroupTreeSection.propTypes = {
   activeChat: PropTypes.object,
   userId: PropTypes.string,
   refreshTick: PropTypes.number.isRequired,
@@ -1302,6 +1686,7 @@ export default function DebugPanel({ open, onClose, activeChat, userId, removedG
           <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3'>
             <DevicesSection userId={userId} refreshTick={refreshTick} />
             <GroupSection activeChat={activeChat} userId={userId} refreshTick={refreshTick} />
+            <GroupTreeSection activeChat={activeChat} userId={userId} refreshTick={refreshTick} />
             <GroupMessagesSection activeChat={activeChat} />
             <CryptoSection activeChat={activeChat} userId={userId} refreshTick={refreshTick} />
           </div>
