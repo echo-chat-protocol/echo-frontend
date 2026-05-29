@@ -10,7 +10,6 @@ const COLS = [
       { label: 'Features', to: '/features' },
       { label: 'Security', to: '/security' },
       { label: 'Download', to: '/download' },
-      { label: 'Roadmap', to: '/roadmap' },
     ],
   },
   {
@@ -19,14 +18,12 @@ const COLS = [
       { label: 'Docs', to: '/docs' },
       { label: 'Community', to: '/community' },
       { label: 'Help', to: '/help' },
-      { label: 'Status', to: '/status' },
     ],
   },
   {
     title: 'Company',
     links: [
       { label: 'About', to: '/about' },
-      { label: 'Careers', to: '/careers' },
       { label: 'Blog', to: '/blog' },
       { label: 'Contact', to: '/contact' },
     ],

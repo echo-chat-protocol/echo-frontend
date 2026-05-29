@@ -846,39 +846,6 @@
     "buildFromSource": "Prefer to build from source?",
     "viewOnGithub": "View on GitHub"
   },
-  "statusPage": {
-    "pageTitle": "System Status",
-    "lastChecked": "Last checked",
-    "allOperational": "All systems operational",
-    "disruption": "Service disruption detected",
-    "operational": "Operational",
-    "degraded": "Degraded",
-    "outage": "Outage",
-    "maintenance": "Maintenance",
-    "incidentHistory": "Incident history",
-    "services": [
-      { "label": "REST API", "desc": "Auth, users, profiles" },
-      { "label": "WebSocket", "desc": "Live messaging & presence" },
-      { "label": "AES-256 module", "desc": "Client-side encryption" },
-      { "label": "DH key exchange", "desc": "X25519 Diffie-Hellman" },
-      { "label": "XEdDSA signatures", "desc": "Signature verification" },
-      { "label": "CDN / Static assets", "desc": "Web app delivery" }
-    ],
-    "incidents": [
-      {
-        "date": "Feb 20, 2026",
-        "title": "All systems operational",
-        "type": "operational",
-        "body": "No incidents recorded."
-      },
-      {
-        "date": "Feb 10, 2026",
-        "title": "Scheduled backend maintenance",
-        "type": "maintenance",
-        "body": "API & WebSocket updated. ~4 min downtime at 03:00 UTC."
-      }
-    ]
-  },
   "common": {
     "back": "Back",
     "save": "Save",
