@@ -1,11 +1,19 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
-import { Search, Pin, Bot, UsersRound, CheckCheck, Check, Plus } from 'lucide-react'
+import { Search, Pin, Bot, UsersRound, CheckCheck, Check, Plus, Loader2 } from 'lucide-react'
 
 const TABS = [
   { id: 'all', label: 'All' },
   { id: 'unread', label: 'Unread' },
   { id: 'groups', label: 'Groups' },
 ]
+
+// Pull-to-refresh tuning. RESISTANCE < 1 means the finger must travel more than
+// the visual pull distance, so a light/accidental drag won't reach THRESHOLD —
+// triggering needs deliberate force. The wheel completes exactly one full turn
+// (360°) at THRESHOLD.
+const PTR_THRESHOLD = 95
+const PTR_MAX_PULL = 135
+const PTR_RESISTANCE = 0.5
 
 function DeliveryIcon({ state }) {
   if (state === 'read') return <CheckCheck size={15} className='text-sky-400' strokeWidth={2.4} />
@@ -66,10 +74,103 @@ export default function ChatList({
   onCreateGroup,
   onCreatePeer,
   registerOpenAddMenu,
+  onRefresh,
 }) {
   const [tab, setTab] = useState('all')
   const [addMenuOpen, setAddMenuOpen] = useState(false)
   const addMenuRef = useRef(null)
+
+  // ── Pull-to-refresh (drops down from under the tabs) ────────────────────────
+  const listRef = useRef(null)
+  const [pullDistance, setPullDistance] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
+  const refreshingRef = useRef(false)
+
+  useEffect(() => {
+    const el = listRef.current
+    if (!el) return
+
+    let startY = 0
+    let active = false
+    let rawDy = 0
+
+    const onStart = (e) => {
+      if (refreshingRef.current) return
+      // Only start a pull when the list is already scrolled to the very top.
+      if (el.scrollTop > 0) return
+      const touch = e.touches && e.touches[0]
+      if (!touch) return
+      startY = touch.clientY
+      rawDy = 0
+      active = true
+    }
+
+    const onMove = (e) => {
+      if (!active || refreshingRef.current) return
+      if (el.scrollTop > 0) {
+        active = false
+        setPullDistance(0)
+        return
+      }
+      const touch = e.touches && e.touches[0]
+      if (!touch) return
+      const dy = touch.clientY - startY
+      if (dy <= 0) {
+        rawDy = 0
+        setPullDistance(0)
+        return
+      }
+      rawDy = dy
+      const dist = Math.min(PTR_MAX_PULL, dy * PTR_RESISTANCE)
+      setPullDistance(dist)
+      // Stop the native overscroll/bounce so our indicator owns the gesture.
+      if (dist > 2 && e.cancelable) e.preventDefault()
+    }
+
+    const finish = async () => {
+      if (!active) return
+      active = false
+      const dist = Math.min(PTR_MAX_PULL, rawDy * PTR_RESISTANCE)
+      rawDy = 0
+      if (dist < PTR_THRESHOLD) {
+        setPullDistance(0)
+        return
+      }
+      setRefreshing(true)
+      refreshingRef.current = true
+      setPullDistance(PTR_THRESHOLD)
+      try {
+        if (typeof onRefresh === 'function') {
+          await onRefresh()
+        } else {
+          window.location.reload()
+          return
+        }
+      } catch {
+        /* ignore — still reset the indicator below */
+      }
+      refreshingRef.current = false
+      setRefreshing(false)
+      setPullDistance(0)
+    }
+
+    el.addEventListener('touchstart', onStart, { passive: true })
+    el.addEventListener('touchmove', onMove, { passive: false })
+    el.addEventListener('touchend', finish, { passive: true })
+    el.addEventListener('touchcancel', finish, { passive: true })
+    return () => {
+      el.removeEventListener('touchstart', onStart)
+      el.removeEventListener('touchmove', onMove)
+      el.removeEventListener('touchend', finish)
+      el.removeEventListener('touchcancel', finish)
+    }
+  }, [onRefresh])
+
+  // Wheel finishes exactly one full turn at the trigger threshold; opacity fades
+  // in over the first half of the pull so a tiny accidental drag stays subtle.
+  const ptrRotation = refreshing ? 0 : (pullDistance / PTR_THRESHOLD) * 360
+  const ptrOpacity = Math.min(1, pullDistance / (PTR_THRESHOLD * 0.5))
+  const ptrHeight = refreshing ? PTR_THRESHOLD : pullDistance
 
   // Close the add menu on outside click (mobile)
   useEffect(() => {
@@ -174,9 +275,9 @@ export default function ChatList({
         )}
       </div>
 
-      {/* Tabs */}
+      {/* Tabs — sized up ~25% for easier tapping */}
       <div className='pt-4 px-4 md:pt-4 md:px-5'>
-        <div className='relative flex items-center gap-4 md:gap-6 border-b border-white/[0.05]'>
+        <div className='relative flex items-center gap-5 md:gap-7 border-b border-white/[0.05]'>
           {TABS.map((t) => {
             const active = tab === t.id
             return (
@@ -184,7 +285,7 @@ export default function ChatList({
                 key={t.id}
                 data-testid={`chatlist-tab-${t.id}`}
                 onClick={() => setTab(t.id)}
-                className={`relative pb-2 text-[11.5px] font-medium transition-colors ${
+                className={`relative pb-2.5 pt-0.5 text-[14.5px] font-medium transition-colors ${
                   active ? 'text-white' : 'text-white/40 hover:text-white/75'
                 }`}
               >
@@ -205,9 +306,37 @@ export default function ChatList({
         </div>
       </div>
 
+      {/* Pull-to-refresh indicator — drops down from directly under the tabs */}
+      <div
+        className='flex shrink-0 items-end justify-center overflow-hidden'
+        style={{
+          height: `${ptrHeight}px`,
+          transition: pullDistance > 0 && !refreshing ? 'none' : 'height 220ms ease-out',
+        }}
+        aria-hidden={ptrHeight === 0}
+      >
+        <div className='pb-2'>
+          <Loader2
+            size={22}
+            strokeWidth={2.4}
+            className={`text-violet-300 ${refreshing ? 'animate-spin' : ''}`}
+            style={
+              refreshing
+                ? { filter: 'drop-shadow(0 0 6px rgba(168,85,247,0.6))' }
+                : {
+                    transform: `rotate(${ptrRotation}deg)`,
+                    opacity: ptrOpacity,
+                    filter: 'drop-shadow(0 0 6px rgba(168,85,247,0.45))',
+                  }
+            }
+          />
+        </div>
+      </div>
+
       {/* List */}
       <div
-        className='mt-2 md:mt-3 flex-1 overflow-y-auto px-1 pb-3 md:px-2 md:pb-4'
+        ref={listRef}
+        className='mt-2 md:mt-3 flex-1 overflow-y-auto overscroll-y-contain px-1 pb-3 md:px-2 md:pb-4'
         style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)' }}
       >
         {pinned.length > 0 && (

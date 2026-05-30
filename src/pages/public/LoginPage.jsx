@@ -98,6 +98,42 @@ export default function LoginPage() {
       setUsername(created.username);
       setPassword(created.password);
       setDebugUser(created);
+
+      // Auto-login the freshly created debug account and go to the dashboard.
+      // Use the deviceId the server assigned during creation (it may have been
+      // collision-renamed), not the stale cached one — otherwise login 401s.
+      const meta = getDeviceMetadata();
+      const res = await AuthService.login({
+        username: created.username,
+        password: created.password,
+        ...meta,
+        deviceId: created.deviceId || meta.deviceId,
+      });
+
+      if (!res?.success) {
+        setError(res?.error || "Debug user created, but sign-in failed.");
+        return;
+      }
+
+      const userId = res.userId || created.userId;
+      if (res.deviceId) localStorage.setItem("echo-device-id", res.deviceId);
+
+      login(res.token, res.refreshToken, userId, {
+        deviceId: res.deviceId,
+        deviceUserId: res.deviceUserId,
+      });
+
+      try {
+        if (await eld.userExists(userId)) {
+          await eld.unlock(userId, created.password);
+        }
+      } catch (unlockErr) {
+        console.error("[ELD] Unlock after debug create failed:", unlockErr);
+      }
+
+      connectSocket();
+
+      navigate("/dashboard");
     } catch (err) {
       setError(err.message || "Failed to create debug user.");
     } finally {

@@ -15,6 +15,8 @@ import { getDeviceMetadata } from "@/features/devices/deviceMetadata";
 import eld from "../../utils/storage/EncryptedLocalDatabase";
 import { generateOneTimePreKeys } from "@/components/Dashboard/Chat/utils/crypto/opk";
 import AuthService from "@services/auth.service";
+import { useAuth } from "@store/AuthContext";
+import { connectSocket } from "@services/socket";
 
 import init, {
   generate_ed25519_private_key,
@@ -41,6 +43,7 @@ const STRENGTH = [
 
 export default function RegisterPage() {
   const navigate = useNavigate();
+  const { login } = useAuth();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -202,13 +205,53 @@ export default function RegisterPage() {
         privatePreKey:     privatePreKeyBase64,
       });
       await eld.storeOPKs(opkPrivateKeys);
-      eld.lock();
 
-      setSuccess("Registration successful! Redirecting to login…");
-      setTimeout(() => {
+      // ── 8. Auto-login so the new account lands straight in the dashboard ─────
+      setSuccess("Account created! Signing you in…");
+
+      const loginRes = await AuthService.login({
+        username,
+        password,
+        ...deviceMetadata,
+        // The server may have minted a fresh deviceId during registration
+        // (collision-rename). Authenticate against THAT id, not the stale
+        // cached one, otherwise login 401s with "device_not_registered".
+        deviceId: res.deviceId || deviceMetadata.deviceId,
+      });
+
+      if (!loginRes?.success) {
+        // Account was created but auto-login failed — fall back to /login.
+        eld.lock();
+        setError(
+          loginRes?.error ||
+            "Account created, but automatic sign-in failed. Please log in."
+        );
         setSubmitting(false);
-        navigate("/login");
-      }, 1200);
+        setTimeout(() => navigate("/login"), 1200);
+        return;
+      }
+
+      const loggedInUserId = loginRes.userId || userId;
+      if (loginRes.deviceId) localStorage.setItem("echo-device-id", loginRes.deviceId);
+
+      // Update global auth context (stores tokens, decodes user)
+      login(loginRes.token, loginRes.refreshToken, loggedInUserId, {
+        deviceId: loginRes.deviceId,
+        deviceUserId: loginRes.deviceUserId,
+      });
+
+      // Make sure the freshly created key store is unlocked for the session.
+      try {
+        if (await eld.userExists(loggedInUserId)) {
+          await eld.unlock(loggedInUserId, password);
+        }
+      } catch (unlockErr) {
+        console.error("[ELD] Unlock after register failed:", unlockErr);
+      }
+
+      connectSocket();
+
+      navigate("/dashboard");
 
     } catch (err) {
       console.error("Registration failed:", err);

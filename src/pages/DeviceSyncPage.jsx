@@ -7,9 +7,15 @@ import DesktopSyncView from '@/features/devices/DesktopSyncView'
 import MobileSyncView from '@/features/devices/MobileSyncView'
 import { getOrCreateDeviceIK } from '@/features/devices/qrCrypto'
 import { createDebugUserAccount } from '@/features/auth/debugUser'
+import AuthService from '@services/auth.service'
+import { useAuth } from '@store/AuthContext'
+import { connectSocket } from '@services/socket'
+import { getDeviceMetadata } from '@/features/devices/deviceMetadata'
+import eld from '@/utils/storage/EncryptedLocalDatabase'
 
 export default function DeviceSyncPage() {
   const navigate = useNavigate()
+  const { login } = useAuth()
 
   // Ensure a device IK exists as soon as the app opens in Tauri
   useEffect(() => {
@@ -29,6 +35,42 @@ export default function DeviceSyncPage() {
     try {
       const created = await createDebugUserAccount()
       setDebugUser(created)
+
+      // Auto-login the freshly created debug account and go to the dashboard.
+      // Use the deviceId the server assigned during creation (it may have been
+      // collision-renamed), not the stale cached one — otherwise login 401s.
+      const meta = getDeviceMetadata()
+      const res = await AuthService.login({
+        username: created.username,
+        password: created.password,
+        ...meta,
+        deviceId: created.deviceId || meta.deviceId,
+      })
+
+      if (!res?.success) {
+        setDebugError(res?.error || 'Debug user created, but sign-in failed.')
+        return
+      }
+
+      const userId = res.userId || created.userId
+      if (res.deviceId) localStorage.setItem('echo-device-id', res.deviceId)
+
+      login(res.token, res.refreshToken, userId, {
+        deviceId: res.deviceId,
+        deviceUserId: res.deviceUserId,
+      })
+
+      try {
+        if (await eld.userExists(userId)) {
+          await eld.unlock(userId, created.password)
+        }
+      } catch (unlockErr) {
+        console.error('[ELD] Unlock after debug create failed:', unlockErr)
+      }
+
+      connectSocket()
+
+      navigate('/dashboard')
     } catch (err) {
       setDebugError(err.message || 'Failed to create debug user.')
     } finally {

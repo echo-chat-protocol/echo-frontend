@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, lazy, Suspense } from 'react'
+import { useState, useRef, useEffect, useMemo, useCallback, lazy, Suspense } from 'react'
 
 const DeviceSyncModal = lazy(() => import('../../features/devices/DeviceSyncModal'))
 const DebugPanel = lazy(() => import('./Debug/DebugPanel'))
@@ -123,6 +123,27 @@ const Dashboard = () => {
   const [socket, setSocket] = useState(null)
   const [incomingCall, setIncomingCall] = useState(null)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  // The left panel is finger-dragged straight through DOM refs (writing
+  // transform on each rAF tick) instead of React state — re-rendering this large
+  // component on every touchmove was the source of the jank. `isDraggingDrawer`
+  // only flips twice per gesture (start/end): it mounts the backdrop and drops
+  // the snap transition while the finger is down.
+  const [isDraggingDrawer, setIsDraggingDrawer] = useState(false)
+  const sidebarPanelRef = useRef(null)
+  const drawerBackdropRef = useRef(null)
+  const drawerRafRef = useRef(0)
+  const drawerEndTimerRef = useRef(null)
+  const drawerDragRef = useRef({
+    active: false,
+    decided: false,
+    horizontal: false,
+    flagged: false,
+    startX: 0,
+    startY: 0,
+    baseX: 0,
+    width: 0,
+    lastX: 0,
+  })
   const [showMobileChat, setShowMobileChat] = useState(false)
   const [createGroupOpen, setCreateGroupOpen] = useState(false)
   const [newChatOpen, setNewChatOpen] = useState(false)
@@ -1753,6 +1774,204 @@ const Dashboard = () => {
     } catch {}
   }
 
+  // Pull-to-refresh for the conversation list: re-pull groups, the user's own
+  // avatar, and every conversation's profile (name + picture) WITHOUT reloading
+  // the page. New messages already stream in over the socket; this surfaces
+  // membership/profile-picture changes that arrived while the tab was idle.
+  const refreshConversationsData = useCallback(async () => {
+    const socket = getSocket()
+    const startedAt = Date.now()
+
+    const groupsPromise = new Promise((resolve) => {
+      try {
+        socket.emit('listMyGroups', {}, (res) => {
+          if (res?.success && Array.isArray(res.groups)) setAllGroupsRef.current?.(res.groups)
+          resolve()
+        })
+      } catch {
+        resolve()
+      }
+    })
+
+    const ownProfilePromise = fetchUserProfileFromSocket(socket, userId)
+      .then((profileData) => {
+        if (profileData?.profilePicture) {
+          const base = formatProfileImage(profileData.profilePicture, username)
+          const busted = base ? `${base}${base.includes('?') ? '&' : '?'}v=${Date.now()}` : null
+          setUserProfileImage(busted || base)
+        }
+      })
+      .catch(() => {})
+
+    const convos = recentConversationsRef.current || []
+    const convosPromise = Promise.all(
+      convos.map(
+        (conversation) =>
+          new Promise((resolve) => {
+            const conversationUserId = conversation.id || conversation.targetUserId
+            if (!conversationUserId) {
+              resolve()
+              return
+            }
+            try {
+              socket.emit('getUserInfo', { userId: conversationUserId }, (response) => {
+                if (response?.success && response.user) {
+                  const formattedImage = formatProfileImage(
+                    response.user.profilePicture,
+                    response.user.username
+                  )
+                  updateRecentConversationsRef.current?.(
+                    {
+                      id: conversationUserId,
+                      username: response.user.username,
+                      profileImage: formattedImage,
+                      targetUserId: conversationUserId,
+                    },
+                    null
+                  )
+                  try {
+                    localStorage.setItem(
+                      `profile-${conversationUserId}`,
+                      JSON.stringify({
+                        username: response.user.username,
+                        profilePicture: response.user.profilePicture,
+                      })
+                    )
+                  } catch {
+                    /* ignore quota errors */
+                  }
+                }
+                resolve()
+              })
+            } catch {
+              resolve()
+            }
+          })
+      )
+    )
+
+    await Promise.all([groupsPromise, ownProfilePromise, convosPromise])
+    // Keep the wheel spinning long enough to read as a deliberate refresh even
+    // when the round-trips return almost instantly.
+    const elapsed = Date.now() - startedAt
+    if (elapsed < 600) await new Promise((resolve) => setTimeout(resolve, 600 - elapsed))
+  }, [userId, username])
+
+  // Finger-drag the left panel like a tab: it tracks the touch in real time and
+  // snaps open/closed on release. Shared by the conversation list (drag to open
+  // when closed), the panel itself and the dim backdrop (drag to close when
+  // open). Direction is locked on the first few px so a vertical scroll / the
+  // pull-to-refresh isn't hijacked.
+  // Write the panel (and backdrop dim) straight to the DOM — no React render.
+  const paintDrawer = (x, width) => {
+    const panel = sidebarPanelRef.current
+    if (panel) {
+      panel.style.transition = 'none'
+      panel.style.transform = `translateX(${x}px)`
+    }
+    const backdrop = drawerBackdropRef.current
+    if (backdrop) {
+      const fraction = Math.max(0, Math.min(1, (width + x) / width))
+      backdrop.style.transition = 'none'
+      backdrop.style.opacity = String(fraction)
+    }
+  }
+  const handleDrawerTouchStart = (e) => {
+    const touch = e.touches?.[0]
+    if (!touch) return
+    if (drawerEndTimerRef.current) {
+      clearTimeout(drawerEndTimerRef.current)
+      drawerEndTimerRef.current = null
+    }
+    const width = sidebarPanelRef.current?.offsetWidth || 230
+    const baseX = isMobileMenuOpen ? 0 : -width
+    drawerDragRef.current = {
+      active: true,
+      decided: false,
+      horizontal: false,
+      flagged: false,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      baseX,
+      width,
+      lastX: baseX,
+    }
+  }
+  const handleDrawerTouchMove = (e) => {
+    const drag = drawerDragRef.current
+    if (!drag.active) return
+    const touch = e.touches?.[0]
+    if (!touch) return
+    const dx = touch.clientX - drag.startX
+    const dy = touch.clientY - drag.startY
+    if (!drag.decided) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return
+      drag.decided = true
+      drag.horizontal = Math.abs(dx) > Math.abs(dy)
+      if (!drag.horizontal) {
+        // Vertical intent — let the list scroll / pull-to-refresh own it.
+        drag.active = false
+        return
+      }
+    }
+    drag.lastX = Math.max(-drag.width, Math.min(0, drag.baseX + dx))
+    if (!drag.flagged) {
+      drag.flagged = true
+      setIsDraggingDrawer(true) // mount backdrop + drop the snap transition (once)
+    }
+    // Coalesce multiple touchmoves into one paint per animation frame.
+    if (drawerRafRef.current) return
+    drawerRafRef.current = requestAnimationFrame(() => {
+      drawerRafRef.current = 0
+      paintDrawer(drawerDragRef.current.lastX, drawerDragRef.current.width)
+    })
+  }
+  const handleDrawerTouchEnd = () => {
+    const drag = drawerDragRef.current
+    if (!drag.active) return
+    drag.active = false
+    if (drawerRafRef.current) {
+      cancelAnimationFrame(drawerRafRef.current)
+      drawerRafRef.current = 0
+    }
+    if (!drag.decided || !drag.horizontal) return
+
+    // Snap to whichever side it's closest to (past the halfway point).
+    const open = drag.lastX > -drag.width / 2
+    const targetX = open ? 0 : -drag.width
+    const panel = sidebarPanelRef.current
+    const backdrop = drawerBackdropRef.current
+    if (panel) {
+      panel.style.transition = 'transform 240ms ease-out'
+      panel.style.transform = `translateX(${targetX}px)`
+    }
+    if (backdrop) {
+      backdrop.style.transition = 'opacity 240ms ease-out'
+      backdrop.style.opacity = open ? '1' : '0'
+    }
+    setIsMobileMenuOpen(open)
+    // After the snap animation, hand styling back to the class transform.
+    drawerEndTimerRef.current = setTimeout(() => {
+      drawerEndTimerRef.current = null
+      if (panel) {
+        panel.style.transition = ''
+        panel.style.transform = ''
+      }
+      if (backdrop) {
+        backdrop.style.transition = ''
+        backdrop.style.opacity = ''
+      }
+      setIsDraggingDrawer(false)
+    }, 250)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (drawerRafRef.current) cancelAnimationFrame(drawerRafRef.current)
+      if (drawerEndTimerRef.current) clearTimeout(drawerEndTimerRef.current)
+    }
+  }, [])
+
   const handleGroupSelect = (group) => {
     const gid = String(group?.groupId ?? '')
     if (!gid) return
@@ -1958,22 +2177,41 @@ const Dashboard = () => {
           <IncomingCallNotification callData={incomingCall} onClose={() => setIncomingCall(null)} />
         )}
 
-        {/* Mobile Menu Overlay */}
-        {isMobileMenuOpen && (
+        {/* Mobile Menu Overlay — visible while open or mid-drag; dim opacity is
+            driven straight to the DOM during a drag so it tracks the finger
+            without re-rendering. Base opacity reflects the resting open state. */}
+        {(isMobileMenuOpen || isDraggingDrawer) && (
           <div
-            className='fixed inset-0 bg-black/50 z-40 md:hidden'
+            ref={drawerBackdropRef}
+            className='fixed inset-0 z-40 bg-black/50 md:hidden'
+            style={{
+              opacity: isMobileMenuOpen ? 1 : 0,
+              // Constant transition so the snap-render can't kill it; the live
+              // drag overrides this to 'none' directly (see paintDrawer).
+              transition: 'opacity 240ms ease-out',
+            }}
             onClick={() => setIsMobileMenuOpen(false)}
+            onTouchStart={handleDrawerTouchStart}
+            onTouchMove={handleDrawerTouchMove}
+            onTouchEnd={handleDrawerTouchEnd}
           />
         )}
 
         {/* Global hamburger removed — per-view headers own their menu buttons */}
 
-        {/* Sidebar - Hidden on mobile, shown via menu */}
+        {/* Sidebar - Hidden on mobile, shown via menu / finger-drag. While
+            dragging, transform/transition are written directly to this node
+            (see paintDrawer); the class transform governs at rest + snap. */}
         <div
+          ref={sidebarPanelRef}
+          onTouchStart={handleDrawerTouchStart}
+          onTouchMove={handleDrawerTouchMove}
+          onTouchEnd={handleDrawerTouchEnd}
           className={`
           fixed md:relative inset-y-0 left-0 z-50 h-full
           transform ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
-          md:translate-x-0 transition-transform duration-300 ease-in-out
+          md:translate-x-0 md:!transform-none
+          ${isDraggingDrawer ? '' : 'transition-transform duration-300 ease-in-out'}
         `}
         >
           <Sidebar
@@ -2009,6 +2247,9 @@ const Dashboard = () => {
 
         {/* Navigation Panel — Premium ChatList (left panel) */}
         <div
+          onTouchStart={handleDrawerTouchStart}
+          onTouchMove={handleDrawerTouchMove}
+          onTouchEnd={handleDrawerTouchEnd}
           className={`
           ${showMobileChat || activeView === 'settings' || activeView === 'groups' ? 'hidden' : 'flex'}
           ${activeView === 'settings' || activeView === 'groups' ? 'md:hidden' : 'md:flex'}
@@ -2021,6 +2262,7 @@ const Dashboard = () => {
               activeId={activeChat?.type === 'group' ? activeChat?.groupId : activeChat?.id}
               searchTerm={conversationsSearchTerm}
               onSearchChange={setConversationsSearchTerm}
+              onRefresh={refreshConversationsData}
               onCreatePeer={() => setNewChatOpen(true)}
               onCreateGroup={() => setCreateGroupOpen(true)}
               onSelect={(id) => {

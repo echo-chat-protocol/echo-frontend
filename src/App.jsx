@@ -44,7 +44,6 @@ const GdprPage = lazy(() => import('@/pages/public/GdprPage'))
 const LicensesPage = lazy(() => import('@/pages/public/LicensesPage'))
 // DeviceSyncPage is eagerly imported to avoid dynamic import issues on mobile
 import DeviceSyncPage from '@/pages/DeviceSyncPage'
-import { initPullToRefresh } from '@/utils/pullToRefresh'
 
 // ─── Tauri gate: redirect to /device-sync when running inside Tauri ──────────
 function TauriGate() {
@@ -156,10 +155,6 @@ function UserProfileRoute() {
 }
 
 function App() {
-  useEffect(() => {
-    const dispose = initPullToRefresh()
-    return () => dispose?.()
-  }, [])
   return (
     <ErrorBoundary>
       <Router>
