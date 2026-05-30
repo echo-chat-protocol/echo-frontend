@@ -47,6 +47,7 @@ import {
   catchUpGroupMlsFromServer,
 } from './Chat/utils/crypto/groupCrypto/groupMlsReplay'
 import { decryptIncomingMessage } from './Chat/utils/chat/messageDecryption'
+import { isOwnReadReceipt } from './Chat/utils/chat/readReceipts'
 import { base64ToArrayBuffer } from './Chat/utils/helpers'
 import { generateOneTimePreKeys } from './Chat/utils/crypto/opk'
 import { createOpkReplenishHandler, requestOpkStatusAndReplenish } from '../../utils/opk/replenish'
@@ -71,6 +72,18 @@ import CreateGroupModal from './Groups/CreateGroupModal'
 import GroupChat from './Chat/GroupChat'
 import { tokenStorage } from '@services/api'
 import EmptyState from './EmptyState'
+
+const DRAWER_SNAP_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)'
+const DRAWER_MIN_SNAP_MS = 150
+const DRAWER_MAX_SNAP_MS = 280
+const DRAWER_VELOCITY_OPEN_THRESHOLD = 0.45
+const DRAWER_VELOCITY_PROJECTION_MS = 140
+
+const getDrawerSnapDuration = (distance, velocity) => {
+  if (distance <= 0) return DRAWER_MIN_SNAP_MS
+  const duration = velocity > 0.05 ? distance / velocity : 240
+  return Math.round(Math.max(DRAWER_MIN_SNAP_MS, Math.min(DRAWER_MAX_SNAP_MS, duration)))
+}
 
 const Dashboard = () => {
   const token = tokenStorage.getAccess()
@@ -125,10 +138,8 @@ const Dashboard = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   // The left panel is finger-dragged straight through DOM refs (writing
   // transform on each rAF tick) instead of React state — re-rendering this large
-  // component on every touchmove was the source of the jank. `isDraggingDrawer`
-  // only flips twice per gesture (start/end): it mounts the backdrop and drops
-  // the snap transition while the finger is down.
-  const [isDraggingDrawer, setIsDraggingDrawer] = useState(false)
+  // component on every touchmove was the source of the jank. The backdrop stays
+  // mounted at opacity 0, so the first swipe frame doesn't pay a mount cost.
   const sidebarPanelRef = useRef(null)
   const drawerBackdropRef = useRef(null)
   const drawerRafRef = useRef(0)
@@ -137,12 +148,14 @@ const Dashboard = () => {
     active: false,
     decided: false,
     horizontal: false,
-    flagged: false,
     startX: 0,
     startY: 0,
     baseX: 0,
     width: 0,
     lastX: 0,
+    previousX: 0,
+    previousTime: 0,
+    velocityX: 0,
   })
   const [showMobileChat, setShowMobileChat] = useState(false)
   const [createGroupOpen, setCreateGroupOpen] = useState(false)
@@ -855,6 +868,21 @@ const Dashboard = () => {
       })
     }
 
+    // When any of my own devices marks a peer's messages as seen, the server
+    // echoes `messageSeenUpdate` to my user room with `userId === my id`. Clear
+    // this device's unread badge for that conversation so the count doesn't
+    // linger after I've already read the thread on another device.
+    const handleSeenSiblingClear = (payload = {}) => {
+      if (!isOwnReadReceipt(payload, userIdRef.current)) return
+      const pid = String(payload.targetUserId ?? '')
+      if (!pid) return
+      setUnreadMessages((prev) => {
+        if (!prev[pid]) return prev
+        localStorage.setItem(`unread-${userIdRef.current}-${pid}`, 0)
+        return { ...prev, [pid]: 0 }
+      })
+    }
+
     const handleNewMessageNotification = async (messageData) => {
       const messages = Array.isArray(messageData) ? messageData : [messageData]
 
@@ -897,6 +925,14 @@ const Dashboard = () => {
           const existingMessages = await getSavedMessages(userIdRef.current, senderId)
           if (existingMessages.some((msg) => msg._id === message._id)) {
             continue
+          }
+
+          // The message reached this device but the conversation isn't open
+          // (active-chat copies `continue` above and emit `messageSeen` from
+          // Chat instead). Tell the sender it was delivered — a state distinct
+          // from read. Skip call events, which carry their own status.
+          if (message.messageType !== 'call_event') {
+            sharedSocket.emit('messageDelivered', { targetUserId: senderId })
           }
 
           try {
@@ -1117,6 +1153,7 @@ const Dashboard = () => {
     }
 
     sharedSocket.on('newMessage', handleNewMessageNotification)
+    sharedSocket.on('messageSeenUpdate', handleSeenSiblingClear)
     sharedSocket.on('groupAdded', handleGroupAdded)
     sharedSocket.on('groupUpdated', handleGroupUpdated)
     sharedSocket.on('groupRemoved', handleGroupRemoved)
@@ -1610,6 +1647,7 @@ const Dashboard = () => {
       sharedSocket.off('opkReplenishRequested', handleOpkReplenishRequested)
       sharedSocket.off('userProfileUpdated')
       sharedSocket.off('newMessage', handleNewMessageNotification)
+      sharedSocket.off('messageSeenUpdate', handleSeenSiblingClear)
       sharedSocket.off('groupAdded', handleGroupAdded)
       sharedSocket.off('groupUpdated', handleGroupUpdated)
       sharedSocket.off('groupRemoved', handleGroupRemoved)
@@ -1867,7 +1905,7 @@ const Dashboard = () => {
     const panel = sidebarPanelRef.current
     if (panel) {
       panel.style.transition = 'none'
-      panel.style.transform = `translateX(${x}px)`
+      panel.style.transform = `translate3d(${x}px, 0, 0)`
     }
     const backdrop = drawerBackdropRef.current
     if (backdrop) {
@@ -1889,12 +1927,14 @@ const Dashboard = () => {
       active: true,
       decided: false,
       horizontal: false,
-      flagged: false,
       startX: touch.clientX,
       startY: touch.clientY,
       baseX,
       width,
       lastX: baseX,
+      previousX: touch.clientX,
+      previousTime: performance.now(),
+      velocityX: 0,
     }
   }
   const handleDrawerTouchMove = (e) => {
@@ -1914,11 +1954,14 @@ const Dashboard = () => {
         return
       }
     }
+    if (e.cancelable) e.preventDefault()
+    const now = performance.now()
+    const elapsed = Math.max(1, now - drag.previousTime)
+    const instantVelocity = (touch.clientX - drag.previousX) / elapsed
+    drag.velocityX = drag.velocityX * 0.72 + instantVelocity * 0.28
+    drag.previousX = touch.clientX
+    drag.previousTime = now
     drag.lastX = Math.max(-drag.width, Math.min(0, drag.baseX + dx))
-    if (!drag.flagged) {
-      drag.flagged = true
-      setIsDraggingDrawer(true) // mount backdrop + drop the snap transition (once)
-    }
     // Coalesce multiple touchmoves into one paint per animation frame.
     if (drawerRafRef.current) return
     drawerRafRef.current = requestAnimationFrame(() => {
@@ -1936,17 +1979,23 @@ const Dashboard = () => {
     }
     if (!drag.decided || !drag.horizontal) return
 
-    // Snap to whichever side it's closest to (past the halfway point).
-    const open = drag.lastX > -drag.width / 2
+    // Snap with a little momentum so a quick flick doesn't feel sticky.
+    const projectedX = drag.lastX + drag.velocityX * DRAWER_VELOCITY_PROJECTION_MS
+    const open =
+      Math.abs(drag.velocityX) > DRAWER_VELOCITY_OPEN_THRESHOLD
+        ? drag.velocityX > 0
+        : projectedX > -drag.width / 2
     const targetX = open ? 0 : -drag.width
+    const distance = Math.abs(targetX - drag.lastX)
+    const snapDuration = getDrawerSnapDuration(distance, Math.abs(drag.velocityX))
     const panel = sidebarPanelRef.current
     const backdrop = drawerBackdropRef.current
     if (panel) {
-      panel.style.transition = 'transform 240ms ease-out'
-      panel.style.transform = `translateX(${targetX}px)`
+      panel.style.transition = `transform ${snapDuration}ms ${DRAWER_SNAP_EASE}`
+      panel.style.transform = `translate3d(${targetX}px, 0, 0)`
     }
     if (backdrop) {
-      backdrop.style.transition = 'opacity 240ms ease-out'
+      backdrop.style.transition = `opacity ${snapDuration}ms ${DRAWER_SNAP_EASE}`
       backdrop.style.opacity = open ? '1' : '0'
     }
     setIsMobileMenuOpen(open)
@@ -1961,8 +2010,7 @@ const Dashboard = () => {
         backdrop.style.transition = ''
         backdrop.style.opacity = ''
       }
-      setIsDraggingDrawer(false)
-    }, 250)
+    }, snapDuration + 20)
   }
 
   useEffect(() => {
@@ -2177,25 +2225,26 @@ const Dashboard = () => {
           <IncomingCallNotification callData={incomingCall} onClose={() => setIncomingCall(null)} />
         )}
 
-        {/* Mobile Menu Overlay — visible while open or mid-drag; dim opacity is
-            driven straight to the DOM during a drag so it tracks the finger
-            without re-rendering. Base opacity reflects the resting open state. */}
-        {(isMobileMenuOpen || isDraggingDrawer) && (
-          <div
-            ref={drawerBackdropRef}
-            className='fixed inset-0 z-40 bg-black/50 md:hidden'
-            style={{
-              opacity: isMobileMenuOpen ? 1 : 0,
-              // Constant transition so the snap-render can't kill it; the live
-              // drag overrides this to 'none' directly (see paintDrawer).
-              transition: 'opacity 240ms ease-out',
-            }}
-            onClick={() => setIsMobileMenuOpen(false)}
-            onTouchStart={handleDrawerTouchStart}
-            onTouchMove={handleDrawerTouchMove}
-            onTouchEnd={handleDrawerTouchEnd}
-          />
-        )}
+        {/* Mobile Menu Overlay — always mounted at opacity 0, then driven straight
+            to the DOM during a drag so it tracks the finger without re-rendering. */}
+        <div
+          ref={drawerBackdropRef}
+          className='fixed inset-0 z-40 bg-black/50 md:hidden'
+          aria-hidden={!isMobileMenuOpen}
+          style={{
+            opacity: isMobileMenuOpen ? 1 : 0,
+            pointerEvents: isMobileMenuOpen ? 'auto' : 'none',
+            touchAction: 'none',
+            // Constant transition so the snap-render can't kill it; the live
+            // drag overrides this to 'none' directly (see paintDrawer).
+            transition: `opacity 240ms ${DRAWER_SNAP_EASE}`,
+          }}
+          onClick={() => setIsMobileMenuOpen(false)}
+          onTouchStart={handleDrawerTouchStart}
+          onTouchMove={handleDrawerTouchMove}
+          onTouchEnd={handleDrawerTouchEnd}
+          onTouchCancel={handleDrawerTouchEnd}
+        />
 
         {/* Global hamburger removed — per-view headers own their menu buttons */}
 
@@ -2207,11 +2256,17 @@ const Dashboard = () => {
           onTouchStart={handleDrawerTouchStart}
           onTouchMove={handleDrawerTouchMove}
           onTouchEnd={handleDrawerTouchEnd}
+          onTouchCancel={handleDrawerTouchEnd}
+          style={{
+            backfaceVisibility: 'hidden',
+            touchAction: 'pan-y',
+            willChange: 'transform',
+          }}
           className={`
           fixed md:relative inset-y-0 left-0 z-50 h-full
-          transform ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
+          transform-gpu ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
           md:translate-x-0 md:!transform-none
-          ${isDraggingDrawer ? '' : 'transition-transform duration-300 ease-in-out'}
+          transition-transform duration-300 ease-out
         `}
         >
           <Sidebar
@@ -2250,6 +2305,8 @@ const Dashboard = () => {
           onTouchStart={handleDrawerTouchStart}
           onTouchMove={handleDrawerTouchMove}
           onTouchEnd={handleDrawerTouchEnd}
+          onTouchCancel={handleDrawerTouchEnd}
+          style={{ touchAction: 'pan-y', overscrollBehaviorX: 'none' }}
           className={`
           ${showMobileChat || activeView === 'settings' || activeView === 'groups' ? 'hidden' : 'flex'}
           ${activeView === 'settings' || activeView === 'groups' ? 'md:hidden' : 'md:flex'}

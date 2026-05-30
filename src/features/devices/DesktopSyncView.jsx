@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, Monitor, Laptop, MapPin, RefreshCw, Wifi, Trash2 } from 'lucide-react'
+import {
+  ArrowLeft,
+  Monitor,
+  Laptop,
+  MapPin,
+  RefreshCw,
+  Wifi,
+  Trash2,
+  QrCode,
+  Scan,
+} from 'lucide-react'
 import ParticlesBackground from '@/components/animations/ParticlesBackground'
 import QRGenerator from './QRGenerator'
 import { deviceService } from './deviceService'
+import DesktopScanner from './DesktopScanner'
 
 function formatDate(value) {
   if (!value) return 'Never seen'
@@ -20,6 +31,7 @@ export default function DesktopSyncView({ onBack, embedded = false }) {
   const [confirmRevokeId, setConfirmRevokeId] = useState(null)
   const [revokingId, setRevokingId] = useState(null)
   const [revokeError, setRevokeError] = useState('')
+  const [mode, setMode] = useState('generate') // 'generate' | 'scan'
   const currentDeviceId = localStorage.getItem('echo-device-id')
 
   const loadDevices = useCallback(async () => {
@@ -93,7 +105,9 @@ export default function DesktopSyncView({ onBack, embedded = false }) {
             Device sync
           </h2>
           <p className={embedded ? 'mt-1 text-sm text-gray-400' : 'mt-2 text-sm text-white/40'}>
-            Scan from your phone to pair another device.
+            {mode === 'generate'
+              ? 'Scan from your phone to pair a new device.'
+              : 'Use this computer’s camera to scan a QR from your phone.'}
           </p>
         </div>
         <button
@@ -103,6 +117,26 @@ export default function DesktopSyncView({ onBack, embedded = false }) {
           aria-label='Refresh devices'
         >
           <RefreshCw className={`h-4 w-4 ${loadingDevices ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      {/* Mode toggle */}
+      <div className='mb-4 inline-flex rounded-lg border border-gray-800 bg-black/20 p-1'>
+        <button
+          onClick={() => setMode('generate')}
+          className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm ${
+            mode === 'generate' ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white'
+          }`}
+        >
+          <QrCode className='h-4 w-4' /> Show QR
+        </button>
+        <button
+          onClick={() => setMode('scan')}
+          className={`ml-1 flex items-center gap-2 rounded-md px-3 py-1.5 text-sm ${
+            mode === 'scan' ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white'
+          }`}
+        >
+          <Scan className='h-4 w-4' /> Scan
         </button>
       </div>
 
@@ -224,10 +258,16 @@ export default function DesktopSyncView({ onBack, embedded = false }) {
           )}
         </div>
 
-        {/* Encrypted sync QR generator */}
+        {/* Right side: QR generator or desktop scanner */}
         <div className='rounded-xl border border-gray-800 bg-black/20 p-5'>
-          <h3 className='mb-5 text-sm font-medium text-white/80'>QR</h3>
-          <QRGenerator onDeviceLinked={loadDevices} />
+          <h3 className='mb-5 text-sm font-medium text-white/80'>
+            {mode === 'generate' ? 'QR' : 'Scan'}
+          </h3>
+          {mode === 'generate' ? (
+            <QRGenerator onDeviceLinked={loadDevices} />
+          ) : (
+            <DesktopScanner embedded onSynced={loadDevices} />
+          )}
         </div>
       </div>
     </div>

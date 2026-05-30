@@ -16,6 +16,7 @@ import {
   getIdentityKeys,
   getSavedMessages,
   updateMessageSeenStatus,
+  updateMessageDeliveredStatus,
   storePeerIdentityKeys,
   getPeerIdentityKeys,
   getRootKey,
@@ -23,6 +24,7 @@ import {
 
 import { encryptOutgoingMessage } from './utils/chat/messageEncryption'
 import { decryptIncomingMessage } from './utils/chat/messageDecryption'
+import { hasUnreadInbound } from './utils/chat/readReceipts'
 import { forwardMessageToDevices, requestSessionSync } from '../../../utils/deviceForward'
 import {
   attachBundlesToFanoutTargets,
@@ -147,6 +149,14 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
           setMessages(savedMessages)
         } else {
           setMessages([])
+        }
+
+        // Mark already-delivered-but-unread history as seen on chat-open.
+        // Previously `messageSeen` only fired when a *live* message arrived
+        // (handleChatMessage), so opening a chat full of unread messages never
+        // produced a read receipt. Emit once if any inbound message is unread.
+        if (socket && hasUnreadInbound(savedMessages, targetUserId)) {
+          socket.emit('messageSeen', { targetUserId })
         }
       } catch (error) {
         console.error('Error loading saved messages:', error)
@@ -303,6 +313,31 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
       }
     }
 
+    // Peer's device received our message(s) but hasn't necessarily opened the
+    // chat. Flip our outgoing bubbles to "delivered" (read still supersedes).
+    const handleDeliveredUpdate = async ({
+      userId: deliveredByUserId,
+      targetUserId: deliveredForUserId,
+      deliveredAt,
+    }) => {
+      if (deliveredForUserId === userId && deliveredByUserId === targetUserId) {
+        const stamp = deliveredAt || new Date().toISOString()
+        setMessages((prevMessages) =>
+          prevMessages.map((msg) =>
+            String(msg.userId) === String(userId) && !msg.deliveredAt
+              ? { ...msg, deliveredAt: stamp }
+              : msg
+          )
+        )
+
+        try {
+          await updateMessageDeliveredStatus(userId, targetUserId, stamp)
+        } catch (e) {
+          console.error('Error updating delivered status in ELD:', e)
+        }
+      }
+    }
+
     const handleEldUpdate = async (event) => {
       const { userId: updatedUserId, targetUserId: updatedTargetUserId } = event.detail
       if (
@@ -318,6 +353,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
 
     socket.on('newMessage', handleChatMessage)
     socket.on('messageSeenUpdate', handleSeenUpdate)
+    socket.on('messageDeliveredUpdate', handleDeliveredUpdate)
 
     const initChat = async () => {
       // Ask sibling devices to push their current DR state for this peer.
@@ -333,6 +369,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
     return () => {
       socket.off('newMessage', handleChatMessage)
       socket.off('messageSeenUpdate', handleSeenUpdate)
+      socket.off('messageDeliveredUpdate', handleDeliveredUpdate)
       window.removeEventListener('localStorageUpdated', handleEldUpdate)
     }
   }, [activeChat, privateKeyArray, socket, targetUserId, userId])

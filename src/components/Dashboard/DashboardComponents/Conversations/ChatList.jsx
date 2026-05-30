@@ -90,9 +90,12 @@ export default function ChatList({
     const el = listRef.current
     if (!el) return
 
+    let startX = 0
     let startY = 0
     let active = false
     let rawDy = 0
+    let intentLocked = false
+    let verticalIntent = false
 
     const onStart = (e) => {
       if (refreshingRef.current) return
@@ -100,9 +103,12 @@ export default function ChatList({
       if (el.scrollTop > 0) return
       const touch = e.touches && e.touches[0]
       if (!touch) return
+      startX = touch.clientX
       startY = touch.clientY
       rawDy = 0
       active = true
+      intentLocked = false
+      verticalIntent = false
     }
 
     const onMove = (e) => {
@@ -114,7 +120,19 @@ export default function ChatList({
       }
       const touch = e.touches && e.touches[0]
       if (!touch) return
+      const dx = touch.clientX - startX
       const dy = touch.clientY - startY
+      if (!intentLocked) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return
+        intentLocked = true
+        verticalIntent = dy > 0 && Math.abs(dy) > Math.abs(dx)
+        if (!verticalIntent) {
+          active = false
+          rawDy = 0
+          setPullDistance(0)
+          return
+        }
+      }
       if (dy <= 0) {
         rawDy = 0
         setPullDistance(0)
@@ -208,7 +226,10 @@ export default function ChatList({
   const recent = filtered.filter((c) => !c.pinned)
 
   return (
-    <div className='echo-floating relative flex h-full w-full md:w-[300px] lg:w-[340px] xl:w-[380px] shrink-0 flex-col overflow-hidden'>
+    <div
+      className='echo-floating relative flex h-full w-full md:w-[300px] lg:w-[340px] xl:w-[380px] shrink-0 flex-col overflow-hidden'
+      style={{ touchAction: 'pan-y', overscrollBehaviorX: 'none' }}
+    >
       {/* Title row (mobile menu + title aligned) */}
       <div
         className='px-4 md:pt-5 md:px-5 flex items-center justify-between'
@@ -337,7 +358,11 @@ export default function ChatList({
       <div
         ref={listRef}
         className='mt-2 md:mt-3 flex-1 overflow-y-auto overscroll-y-contain px-1 pb-3 md:px-2 md:pb-4'
-        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)' }}
+        style={{
+          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)',
+          touchAction: 'pan-y',
+          overscrollBehaviorX: 'none',
+        }}
       >
         {pinned.length > 0 && (
           <div className='mb-1 px-3 pt-1 text-[10px] font-medium uppercase tracking-[0.18em] text-white/35'>

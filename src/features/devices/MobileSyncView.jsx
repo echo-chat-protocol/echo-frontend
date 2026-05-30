@@ -31,6 +31,7 @@ import { generateAndUploadDeviceKeyBundle } from './deviceKeyBundle'
 import { getDeviceMetadata, resetDeviceId } from './deviceMetadata'
 import ParticlesBackground from '@/components/animations/ParticlesBackground'
 import { PageLoader } from '@/components/common/Spinner'
+import QRGenerator from './QRGenerator'
 
 function Row({ label, value, mono = true }) {
   return (
@@ -248,6 +249,7 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
   const [error, setError] = useState(null)
   const [pairingCodeInput, setPairingCodeInput] = useState('')
   const [pendingPairing, setPendingPairing] = useState(null)
+  const [mode, setMode] = useState('scan') // 'scan' | 'generate'
 
   const parsePairingPayload = (raw) => {
     try {
@@ -567,8 +569,41 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
               }`
         }
       >
+        {/* Mode toggle */}
+        <div className='inline-flex rounded-lg border border-gray-800 bg-black/20 p-1'>
+          <button
+            onClick={() => setMode('scan')}
+            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm ${
+              mode === 'scan' ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white'
+            }`}
+          >
+            Scan
+          </button>
+          <button
+            onClick={() => setMode('generate')}
+            className={`ml-1 flex items-center gap-2 rounded-md px-3 py-1.5 text-sm ${
+              mode === 'generate' ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white'
+            }`}
+          >
+            Show QR
+          </button>
+        </div>
+
+        {/* Generate for desktop */}
+        {mode === 'generate' && (
+          <div className='w-full max-w-sm'>
+            <div className='text-center mb-3'>
+              <h2 className='text-2xl font-semibold tracking-tight'>Show QR</h2>
+              <p className='mt-1 text-sm text-gray-400'>
+                Show this QR on your phone, then scan it from your desktop.
+              </p>
+            </div>
+            <QRGenerator onDeviceLinked={onSynced} />
+          </div>
+        )}
+
         {/* Scanning */}
-        {phase === 'scan' && (
+        {mode === 'scan' && phase === 'scan' && (
           <>
             <div className='text-center'>
               <h2
@@ -609,10 +644,10 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
         )}
 
         {/* Decrypting */}
-        {phase === 'decrypting' && <PageLoader label='Decrypting…' />}
+        {mode === 'scan' && phase === 'decrypting' && <PageLoader label='Decrypting…' />}
 
         {/* Pairing code */}
-        {phase === 'code' && (
+        {mode === 'scan' && phase === 'code' && (
           <div className='w-full max-w-sm rounded-xl border border-gray-800 bg-black/20 p-6'>
             <div className='text-center'>
               <div className='mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg border border-emerald-400/25 bg-emerald-400/10'>
@@ -655,7 +690,7 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
         )}
 
         {/* Decrypted message */}
-        {phase === 'message' && (
+        {mode === 'scan' && phase === 'message' && (
           <>
             <div className='rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-4'>
               <CheckCircle2 className='h-10 w-10 text-emerald-300' />
@@ -681,7 +716,7 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
         )}
 
         {/* Device synced */}
-        {phase === 'synced' && (
+        {mode === 'scan' && phase === 'synced' && (
           <>
             <div className='rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-4'>
               <CheckCircle2 className='h-10 w-10 text-emerald-300' />
@@ -721,7 +756,7 @@ export default function MobileSyncView({ onBack, onSynced, embedded = false }) {
         )}
 
         {/* Error */}
-        {phase === 'error' && (
+        {mode === 'scan' && phase === 'error' && (
           <>
             <div className='rounded-lg border border-red-400/20 bg-red-400/10 p-4'>
               <ShieldX className='h-10 w-10 text-red-400' />

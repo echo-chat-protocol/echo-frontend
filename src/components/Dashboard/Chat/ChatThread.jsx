@@ -1,13 +1,15 @@
 import { useEffect, useRef } from 'react'
-import { CheckCheck, Check, Loader2, Download, FileImage } from 'lucide-react'
+import { CheckCheck, Check, Loader2, AlertCircle, Download, FileImage } from 'lucide-react'
 import { format, isSameDay } from 'date-fns'
 import Wallpaper from '@/components/Dashboard/Wallpaper'
+import { receiptState } from './utils/chat/readReceipts'
 
 /**
  * State icon for self-sent messages.
  */
 function State({ s }) {
   if (s === 'sending') return <Loader2 size={11} className='animate-spin-slow text-white/45' />
+  if (s === 'failed') return <AlertCircle size={12} className='text-red-400' />
   if (s === 'sent') return <Check size={12} className='text-white/45' />
   if (s === 'delivered') return <CheckCheck size={12} className='text-white/45' />
   if (s === 'read') return <CheckCheck size={13} strokeWidth={2.4} className='text-sky-400' />
@@ -145,7 +147,7 @@ export default function ChatThread({ messages, currentUserId, contact, isTyping 
     text: msg.text || '',
     image: msg.image || null,
     time: msg.createdAt ? format(new Date(msg.createdAt), 'HH:mm') : '',
-    state: msg.seenStatus ? 'read' : 'delivered',
+    state: receiptState(msg),
     from: msg.userId === currentUserId ? 'self' : msg.userId,
     messageType: msg.messageType,
     callData: msg.callData,

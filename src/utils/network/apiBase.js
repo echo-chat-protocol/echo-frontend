@@ -2,6 +2,28 @@
 
 const DEFAULT_API_BASE = 'http://127.0.0.1:3001'
 
+function tauriDetect() {
+  if (typeof window === 'undefined') return false
+  return (
+    typeof window.__TAURI__ !== 'undefined' ||
+    typeof window.__TAURI_IPC__ !== 'undefined' ||
+    typeof window.__TAURI_INTERNALS__ !== 'undefined'
+  )
+}
+
+function runtimeConfiguredBase() {
+  try {
+    if (typeof window === 'undefined') return null
+    const raw =
+      localStorage.getItem('echo_backend_url') || localStorage.getItem('echo_api_base') || ''
+    const trimmed = String(raw).trim()
+    if (!trimmed) return null
+    const u = new URL(trimmed)
+    if (u.protocol === 'http:' || u.protocol === 'https:') return u.toString().replace(/\/$/, '')
+  } catch {}
+  return null
+}
+
 function isLoopbackHost(hostname) {
   return (
     hostname === 'localhost' ||
@@ -15,6 +37,9 @@ function isLoopbackHost(hostname) {
 }
 
 export function resolveApiBase(rawBase = import.meta.env.VITE_SOCKET_URL || DEFAULT_API_BASE) {
+  // Highest priority: runtime override saved by the app/user.
+  const runtime = runtimeConfiguredBase()
+  if (runtime) return runtime
   // If explicitly forced, prefer a remote/public origin so mobile devices
   // and Tauri dev builds don't depend on a local Vite server being reachable.
   // Priority: VITE_SOCKET_URL > VITE_DEV_PROXY_TARGET > VITE_PAIRING_SERVER_URL
@@ -46,9 +71,7 @@ export function resolveApiBase(rawBase = import.meta.env.VITE_SOCKET_URL || DEFA
   const appHost = typeof window !== 'undefined' ? window.location.hostname : ''
   const appProtocol = typeof window !== 'undefined' ? window.location.protocol : ''
   const isHttp = appProtocol === 'http:' || appProtocol === 'https:'
-  const isTauri =
-    typeof window !== 'undefined' &&
-    (typeof window.__TAURI__ !== 'undefined' || typeof window.__TAURI_IPC__ !== 'undefined')
+  const isTauri = tauriDetect()
   const isDevLoopbackOrigin =
     typeof window !== 'undefined' &&
     (appHost === 'localhost' ||
@@ -59,7 +82,23 @@ export function resolveApiBase(rawBase = import.meta.env.VITE_SOCKET_URL || DEFA
   if (isDevLoopbackOrigin && isHttp && !isTauri) forcedRemoteBase = null
 
   const effectiveForced = forcedRemoteBase
-  const base = (effectiveForced || rawBase || DEFAULT_API_BASE).replace(/\/$/, '')
+  let base = (effectiveForced || rawBase || DEFAULT_API_BASE).replace(/\/$/, '')
+
+  // In production Tauri builds, never fall back to localhost — prefer a known remote backend
+  // so QR/serverUrl are reachable from other devices.
+  try {
+    const isDev = Boolean(import.meta.env.DEV)
+    if (!isDev && isTauri) {
+      const parsed = new URL(base)
+      const isLoopback = isLoopbackHost(parsed.hostname)
+      if (isLoopback) {
+        // Use the same hosted default as Vite dev proxy fallback.
+        base = 'https://echo-backend-x91g.onrender.com'
+      }
+    }
+  } catch {
+    // If URL parsing fails, keep the existing base
+  }
 
   try {
     const apiUrl = new URL(base)
@@ -117,10 +156,8 @@ export function resolvePairingServerUrl() {
     return window.location.origin.replace(/\/$/, '')
   }
 
-  // Production: the /pairing and /sync endpoints live on the API backend, NOT
-  // on the static frontend host (e.g. Vercel). Falling back to
-  // window.location.origin or VITE_PUBLIC_APP_URL here points the phone at the
-  // frontend, which has no such routes → "Request failed". resolveApiBase()
-  // (VITE_SOCKET_URL) is the backend.
+  // Production: the /pairing and /sync endpoints live on the API backend.
+  // resolveApiBase() already considers runtime overrides and Tauri production
+  // fallback to a remote backend when no explicit base is configured.
   return resolveApiBase()
 }

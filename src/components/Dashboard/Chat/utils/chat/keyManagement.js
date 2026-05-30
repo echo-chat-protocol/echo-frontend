@@ -537,3 +537,30 @@ export const updateMessageSeenStatus = async (userId, targetUserId) => {
     console.error('[KeyMgmt] Failed to update seen status:', err)
   }
 }
+
+/**
+ * Mark our own outgoing messages in a conversation as delivered (received by
+ * the peer's device), persisting `deliveredAt` so the "delivered" receipt
+ * survives a reload. Mirrors {@link updateMessageSeenStatus}; never downgrades a
+ * message that is already delivered/seen.
+ *
+ * @param {string} userId - Our own user id (author of outgoing messages).
+ * @param {string} targetUserId - Conversation partner / ELD bucket key.
+ * @param {string} [deliveredAt] - ISO timestamp; defaults to now.
+ */
+export const updateMessageDeliveredStatus = async (userId, targetUserId, deliveredAt) => {
+  if (!eld.isUnlocked()) return
+
+  const stamp = deliveredAt || new Date().toISOString()
+  try {
+    const messages = await eld.getMessages(targetUserId)
+    for (const msg of messages) {
+      if (msg.userId === userId && !msg.deliveredAt) {
+        msg.deliveredAt = stamp
+        await eld.storeMessage(targetUserId, msg)
+      }
+    }
+  } catch (err) {
+    console.error('[KeyMgmt] Failed to update delivered status:', err)
+  }
+}

@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import PropTypes from 'prop-types'
-import { CheckCheck, Check, Download, FileImage } from 'lucide-react'
+import { CheckCheck, Check, Clock, AlertCircle, Download, FileImage } from 'lucide-react'
 import { format, isSameDay } from 'date-fns'
 import { es } from 'date-fns/locale'
 import CallEventMessage from './CallEventMessage'
 import ImageLightbox from './ImageLightbox'
+import { receiptState, RECEIPT_STATE } from '../utils/chat/readReceipts'
 
 // Plain text rendering. GIFs are now sent as animated images (message.image,
 // via the KLIPY picker), so message text no longer embeds GIF links or ids.
@@ -13,9 +14,26 @@ const renderMessageContent = (text) => {
   return <p>{text}</p>
 }
 
-function State({ seen }) {
-  if (seen) return <CheckCheck size={13} strokeWidth={2.4} className='text-violet-200' />
-  return <Check size={12} className='text-white/45' />
+// Read-receipt indicator for our own outgoing bubbles.
+//  sending  → clock           delivered → grey double-check
+//  failed   → red alert       read      → violet double-check
+//  sent     → grey single-check
+function State({ message }) {
+  switch (receiptState(message)) {
+    case RECEIPT_STATE.SENDING:
+      return <Clock size={11} className='text-white/40' aria-label='Sending' />
+    case RECEIPT_STATE.FAILED:
+      return <AlertCircle size={12} className='text-red-400' aria-label='Not sent' />
+    case RECEIPT_STATE.READ:
+      return (
+        <CheckCheck size={13} strokeWidth={2.4} className='text-violet-200' aria-label='Read' />
+      )
+    case RECEIPT_STATE.DELIVERED:
+      return <CheckCheck size={13} className='text-white/45' aria-label='Delivered' />
+    case RECEIPT_STATE.SENT:
+    default:
+      return <Check size={12} className='text-white/45' aria-label='Sent' />
+  }
 }
 
 function AvatarFallback({ name }) {
@@ -104,7 +122,7 @@ function MessageBubble({ message, currentUserId, contact, showName = true, showA
               ) : null}
               <span className='ml-2 inline-flex shrink-0 items-center gap-1 text-[10px] text-white/35 mono'>
                 {time}
-                {isSelf && <State seen={message.seenStatus} />}
+                {isSelf && <State message={message} />}
               </span>
             </div>
             {lightboxOpen && (
@@ -126,7 +144,7 @@ function MessageBubble({ message, currentUserId, contact, showName = true, showA
             <div className='-mb-1 mt-1 flex justify-end'>
               <span className='ml-2 inline-flex items-center gap-1 text-[10px] text-white/35 mono'>
                 {time}
-                {isSelf && <State seen={message.seenStatus} />}
+                {isSelf && <State message={message} />}
               </span>
             </div>
           </div>

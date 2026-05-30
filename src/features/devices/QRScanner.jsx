@@ -184,6 +184,22 @@ export default function QRScanner({ onScanRaw } = {}) {
     scanCountRef.current = 0
     log('─── START SCANNER ────────────────────────────────────', '#22d3ee')
 
+    // Browsers block camera access on http for non-localhost origins. Detect and guide.
+    try {
+      const proto = window.location?.protocol || ''
+      const host = window.location?.hostname || ''
+      const isHttp = proto === 'http:'
+      const isLoopback =
+        host === 'localhost' || host === '127.0.0.1' || host === '::1' || /\.localhost$/i.test(host)
+      if (isHttp && !isLoopback) {
+        const tip =
+          'Camera requires a secure origin. Open this page at http://localhost (or use HTTPS) to scan.'
+        log(tip, '#f59e0b')
+        setError(tip)
+        return
+      }
+    } catch {}
+
     if ('BarcodeDetector' in window) {
       try {
         const formats = await window.BarcodeDetector.getSupportedFormats()
@@ -282,7 +298,16 @@ export default function QRScanner({ onScanRaw } = {}) {
         log('html5-qrcode live feed active', '#4ade80')
       } catch (e) {
         log(`html5-qrcode start FAILED: ${e.name} — ${e.message}`, '#f87171')
-        setError('Could not start scanner: ' + e.message)
+        const proto = window.location?.protocol || ''
+        const host = window.location?.hostname || ''
+        const isHttp = proto === 'http:'
+        const isLoopback =
+          host === 'localhost' ||
+          host === '127.0.0.1' ||
+          host === '::1' ||
+          /\.localhost$/i.test(host)
+        const insecureTip = isHttp && !isLoopback ? ' — Camera requires https or localhost.' : ''
+        setError('Could not start scanner: ' + e.message + insecureTip)
         streamRef.current?.getTracks().forEach((t) => t.stop())
       }
     }
