@@ -119,4 +119,46 @@ describe('useConversations hook', () => {
     })
     expect(api.recentConversations.find((c) => c.id === 'P2').lastMessageState).toBe(null)
   })
+
+  it('accepts a functional updater (profile-update path) without injecting garbage rows', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    let api = null
+    const Harness = ({ userId }) => {
+      const hook = useConversations(userId)
+      useEffect(() => {
+        api = hook
+      }, [hook])
+      return null
+    }
+
+    await act(async () => {
+      root.render(<Harness userId='ME' />)
+      await flush()
+    })
+
+    await act(async () => {
+      api.updateRecentConversations({ id: 'P1', username: 'peer1' }, { text: 'hi', userId: 'ME' })
+      await flush()
+    })
+
+    // The userProfileUpdated handler calls updateRecentConversations(prev => prev.map(...)).
+    // Previously this injected a property-less row (no id/username) that crashed
+    // the conversation-list filter on `username.toLowerCase()`.
+    await act(async () => {
+      api.updateRecentConversations((prev) =>
+        prev.map((c) => (c.id === 'P1' ? { ...c, username: 'peer1-renamed' } : c))
+      )
+      await flush()
+    })
+
+    // No extra/garbage rows, and every row still has an id + username.
+    expect(api.recentConversations.length).toBe(1)
+    expect(
+      api.recentConversations.every((c) => c.id != null && typeof c.username === 'string')
+    ).toBe(true)
+    expect(api.recentConversations.find((c) => c.id === 'P1').username).toBe('peer1-renamed')
+  })
 })

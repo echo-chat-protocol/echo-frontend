@@ -22,7 +22,11 @@ export const useConversations = (userId) => {
     if (saved) {
       try {
         const parsed = JSON.parse(saved)
-        if (Array.isArray(parsed)) nextConversations = parsed
+        // Drop any malformed rows (missing id/username) that a past bug may have
+        // persisted, so they can't crash the conversation list on render.
+        if (Array.isArray(parsed)) {
+          nextConversations = parsed.filter((conv) => conv && conv.id != null)
+        }
       } catch (e) {
         console.error('Failed to parse localStorage conversations', e)
       }
@@ -44,6 +48,17 @@ export const useConversations = (userId) => {
   }, [recentConversations, userId])
 
   const updateRecentConversations = (friendData, message = null) => {
+    // Support a functional updater form, e.g. the `userProfileUpdated` handler
+    // remaps many conversations at once with `updateRecentConversations(prev =>
+    // prev.map(...))`. Without this branch the function was treated as a
+    // `friendData` object: spreading it added a property-less garbage entry
+    // (no id, no username), and the conversation-list filter then crashed on
+    // `conv.username.toLowerCase()`.
+    if (typeof friendData === 'function') {
+      setRecentConversations(friendData)
+      return
+    }
+
     // A receipt only makes sense for OUR outgoing last message — an inbound last
     // message shows no check. Only touch receipt fields when the update carries
     // the author id; a direction-less update (e.g. a profile/metadata refresh)

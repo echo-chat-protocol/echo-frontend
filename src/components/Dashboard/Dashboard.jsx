@@ -2224,12 +2224,15 @@ const Dashboard = () => {
   }
 
   // Filtrado de conversaciones
+  const conversationsSearch = conversationsSearchTerm.toLowerCase()
   const filteredConversations = recentConversations
+    // Drop malformed entries (e.g. a property-less row a buggy updater could
+    // once inject) so the search below never reads `.toLowerCase()` of undefined.
+    .filter((conv) => conv && conv.id != null)
     .filter(
       (conv) =>
-        conv.username.toLowerCase().includes(conversationsSearchTerm.toLowerCase()) ||
-        (conv.lastMessage &&
-          conv.lastMessage.toLowerCase().includes(conversationsSearchTerm.toLowerCase()))
+        (conv.username || '').toLowerCase().includes(conversationsSearch) ||
+        (conv.lastMessage || '').toLowerCase().includes(conversationsSearch)
     )
     .map((conv) => ({
       ...conv,

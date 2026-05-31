@@ -15,6 +15,7 @@ import {
 import { getSocket } from '../../../socket'
 import { getPeerIdentityKeys } from '../Chat/utils/chat/keyManagement'
 import { formatProfileImage } from '../DashboardComponents/utils/helpers'
+import ImageLightbox from '../Chat/MessageDisplay/ImageLightbox'
 
 /**
  * UserInfoPanel — contact info side panel.
@@ -28,6 +29,7 @@ export default function UserInfoPanel({ contact, onClose }) {
   const [profile, setProfile] = useState(null)
   const [fingerprint, setFingerprint] = useState(null)
   const [copied, setCopied] = useState(false)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
 
   // Fetch full profile from server
   useEffect(() => {
@@ -137,14 +139,22 @@ export default function UserInfoPanel({ contact, onClose }) {
         <div className='echo-aurora' />
         <div className='relative mx-auto h-24 w-24'>
           {avatar ? (
-            <img
-              src={avatar}
-              alt={profileName}
-              className='h-24 w-24 rounded-full object-cover ring-1 ring-white/10'
-              onError={(e) => {
-                e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(profileName)}&background=8e79f2&color=fff`
-              }}
-            />
+            <button
+              type='button'
+              onClick={() => setLightboxOpen(true)}
+              title='View photo'
+              aria-label='View photo'
+              className='block h-24 w-24 cursor-zoom-in rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60'
+            >
+              <img
+                src={avatar}
+                alt={profileName}
+                className='h-24 w-24 rounded-full object-cover ring-1 ring-white/10 transition hover:ring-violet-400/40'
+                onError={(e) => {
+                  e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(profileName)}&background=8e79f2&color=fff`
+                }}
+              />
+            </button>
           ) : (
             <div className='grid h-24 w-24 place-items-center rounded-full bg-gradient-to-br from-violet-500/40 to-violet-700/70 ring-1 ring-white/10 text-white text-3xl font-bold'>
               {profileName[0]}
@@ -154,9 +164,6 @@ export default function UserInfoPanel({ contact, onClose }) {
         <h2 className='relative mt-4 text-[18px] font-semibold tracking-[-0.02em]'>
           {profileName}
         </h2>
-        <p className='relative mt-0.5 text-[12px] text-white/45 mono'>
-          ECHO ID: {userId || 'unknown'}
-        </p>
         <button
           type='button'
           onClick={copyUserId}
@@ -176,17 +183,6 @@ export default function UserInfoPanel({ contact, onClose }) {
       {/* About */}
       <Section title='About'>
         <p className='text-[12.5px] leading-relaxed text-white/65'>{about}</p>
-      </Section>
-
-      <Section title='Identity' icon={<Fingerprint size={11} />}>
-        <div className='grid gap-2'>
-          <div className='rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5'>
-            <p className='text-[10px] uppercase tracking-[0.18em] text-white/35'>ECHO ID</p>
-            <p className='mt-1 break-all text-[12px] mono text-white/82'>
-              {userId || 'No ID available'}
-            </p>
-          </div>
-        </div>
       </Section>
 
       {/* Cryptographic fingerprint */}
@@ -234,6 +230,10 @@ export default function UserInfoPanel({ contact, onClose }) {
       <div className='px-5 pb-6 pt-2 text-center text-[10px] text-white/25 mono'>
         ECHO · zero-knowledge · keys live on-device only
       </div>
+
+      {lightboxOpen && avatar && (
+        <ImageLightbox src={avatar} alt={profileName} onClose={() => setLightboxOpen(false)} />
+      )}
     </aside>
   )
 }
