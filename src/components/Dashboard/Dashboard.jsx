@@ -498,7 +498,7 @@ const Dashboard = () => {
 
     sharedSocket.on('incomingCall', (callData) => {
       setIncomingCall(callData)
-      const caller = callData?.fromUsername || callData?.from || 'Unknown'
+      const caller = callData?.callerName || callData?.fromUsername || callData?.from || 'Unknown'
       // Notify if app is not visibly focused (typical on mobile Tauri)
       try {
         if (typeof document === 'undefined' || document.hidden) {

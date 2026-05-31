@@ -727,6 +727,16 @@ code,
   animation-delay: 0.3s;
 }
 
+/* Incoming-call auto-dismiss countdown bar. */
+@keyframes echo-call-countdown {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+
 /* Entrance for the typing bubble that pops up over the chat input. */
 @keyframes echo-typing-pop {
   from {

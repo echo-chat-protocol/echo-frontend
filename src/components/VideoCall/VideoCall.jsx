@@ -1,5 +1,6 @@
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
+import { Mic, MicOff, Video, VideoOff, PhoneOff, User } from 'lucide-react'
 import firebase from 'firebase/compat/app'
 import 'firebase/compat/firestore'
 import { getSocket } from '../../socket'
@@ -613,7 +614,9 @@ const VideoCall = () => {
                     <p className='text-white text-xl'>{remoteUserProfile.username}</p>
                   </>
                 ) : (
-                  <i className='fa-solid fa-user text-gray-600 text-9xl'></i>
+                  <div className='grid h-44 w-44 place-items-center rounded-full bg-white/[0.03] ring-1 ring-white/10'>
+                    <User size={72} className='text-white/30' />
+                  </div>
                 )}
               </div>
             )}
@@ -632,7 +635,9 @@ const VideoCall = () => {
                     <p className='text-white text-xl'>{remoteUserProfile.username}</p>
                   </>
                 ) : (
-                  <i className='fa-solid fa-user text-gray-600 text-9xl'></i>
+                  <div className='grid h-44 w-44 place-items-center rounded-full bg-white/[0.03] ring-1 ring-white/10'>
+                    <User size={72} className='text-white/30' />
+                  </div>
                 )}
               </div>
             )}
@@ -640,7 +645,7 @@ const VideoCall = () => {
         </div>
 
         {/* Local video (small overlay) */}
-        <div className='absolute bottom-4 right-4 w-64 h-48 bg-gray-800 rounded-lg border-2 border-gray-700 overflow-hidden flex flex-col'>
+        <div className='absolute bottom-4 right-4 flex h-36 w-28 flex-col overflow-hidden rounded-2xl border border-white/15 bg-black/60 shadow-xl sm:h-48 sm:w-64'>
           <div className='flex-1 min-h-0 relative overflow-hidden'>
             <video
               ref={localVideoRef}
@@ -666,7 +671,7 @@ const VideoCall = () => {
                         <p className='text-white text-sm'>{localUserProfile.username}</p>
                       </>
                     ) : (
-                      <i className='fa-solid fa-user text-gray-500 text-2xl'></i>
+                      <User size={28} className='text-white/40' />
                     )}
                   </div>
                 )
@@ -676,46 +681,55 @@ const VideoCall = () => {
 
         {/* Call status */}
         {callStatus === 'calling' && (
-          <div className='absolute top-4 left-1/2 transform -translate-x-1/2 bg-gray-800 p-4 rounded-lg'>
-            <p className='text-white text-sm'>Calling...</p>
+          <div className='absolute left-1/2 top-[calc(env(safe-area-inset-top,0px)+1rem)] -translate-x-1/2 rounded-full border border-white/[0.08] bg-black/60 px-4 py-1.5 backdrop-blur'>
+            <p className='flex items-center gap-2 text-[12px] text-white/80'>
+              <span className='inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-violet-400' />
+              Calling…
+            </p>
           </div>
         )}
 
         {callStatus === 'connected' && (
-          <div className='absolute top-4 left-1/2 transform -translate-x-1/2 bg-green-800 p-2 rounded-lg'>
-            <p className='text-white text-sm'>Connected</p>
+          <div className='absolute left-1/2 top-[calc(env(safe-area-inset-top,0px)+1rem)] -translate-x-1/2 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-4 py-1.5 backdrop-blur'>
+            <p className='flex items-center gap-2 text-[12px] text-emerald-300'>
+              <span className='inline-block h-1.5 w-1.5 rounded-full bg-emerald-400' />
+              Connected
+            </p>
           </div>
         )}
       </div>
 
       {/* Controls */}
-      <div className='bg-gray-900 p-4 flex justify-center gap-4 shrink-0'>
+      <div className='flex shrink-0 justify-center gap-3 border-t border-white/[0.05] bg-black/80 px-4 py-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] backdrop-blur md:gap-4'>
         <button
-          className={`p-4 rounded-full transition-colors ${isMuted ? 'bg-red-600 hover:bg-red-500' : 'bg-gray-700 hover:bg-gray-600'}`}
-          aria-label='Toggle microphone'
+          className={`grid h-14 w-14 place-items-center rounded-full text-white transition active:scale-95 ${
+            isMuted ? 'bg-red-500/90 hover:bg-red-500' : 'bg-white/[0.08] hover:bg-white/[0.14]'
+          }`}
+          aria-label={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+          title={isMuted ? 'Unmute' : 'Mute'}
           onClick={toggleMute}
         >
-          <i
-            className={`fa-solid ${isMuted ? 'fa-microphone-slash' : 'fa-microphone'} text-white text-xl`}
-          ></i>
+          {isMuted ? <MicOff size={22} /> : <Mic size={22} />}
         </button>
 
         <button
-          className={`p-4 rounded-full transition-colors ${isCameraOff ? 'bg-red-600 hover:bg-red-500' : 'bg-gray-700 hover:bg-gray-600'}`}
-          aria-label='Toggle camera'
+          className={`grid h-14 w-14 place-items-center rounded-full text-white transition active:scale-95 ${
+            isCameraOff ? 'bg-red-500/90 hover:bg-red-500' : 'bg-white/[0.08] hover:bg-white/[0.14]'
+          }`}
+          aria-label={isCameraOff ? 'Turn camera on' : 'Turn camera off'}
+          title={isCameraOff ? 'Camera on' : 'Camera off'}
           onClick={toggleCamera}
         >
-          <i
-            className={`fa-solid ${isCameraOff ? 'fa-video-slash' : 'fa-video'} text-white text-xl`}
-          ></i>
+          {isCameraOff ? <VideoOff size={22} /> : <Video size={22} />}
         </button>
 
         <button
-          className='p-4 rounded-full bg-red-600 hover:bg-red-500 transition-colors'
+          className='grid h-14 w-14 place-items-center rounded-full bg-red-600 text-white shadow-lg transition hover:bg-red-500 active:scale-95'
           aria-label='End call'
+          title='End call'
           onClick={handleEndCall}
         >
-          <i className='fa-solid fa-phone-slash text-white text-xl'></i>
+          <PhoneOff size={22} />
         </button>
       </div>
     </div>

@@ -1,119 +1,120 @@
-import { useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
-import { getSocket } from "../../socket";
+import { useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import PropTypes from 'prop-types'
+import { Phone, PhoneOff, Video } from 'lucide-react'
+import { getSocket } from '../../socket'
+
+const AUTO_DISMISS_MS = 30000
 
 const IncomingCallNotification = ({ callData, onClose }) => {
-  const navigate = useNavigate();
-  const [isVisible, setIsVisible] = useState(false);
+  const navigate = useNavigate()
+  const [isVisible, setIsVisible] = useState(false)
+  const closedRef = useRef(false)
 
-  // Auto-dismiss after 30 seconds
-  useEffect(() => {
-    // Slide in animation
-    setTimeout(() => setIsVisible(true), 100);
-
-    // Auto-dismiss after 30 seconds
-    const autoDismissTimer = setTimeout(() => {
-      handleDecline();
-    }, 30000);
-
-    return () => {
-      clearTimeout(autoDismissTimer);
-    };
-  }, []);
+  const close = (after = 300) => {
+    if (closedRef.current) return
+    closedRef.current = true
+    setIsVisible(false)
+    setTimeout(() => onClose(), after)
+  }
 
   const handleAnswer = () => {
-    setIsVisible(false);
+    setIsVisible(false)
     setTimeout(() => {
-      onClose();
+      onClose()
       navigate(`/video-call/${callData.callerId}`, {
-        state: {
-          callId: callData.callId,
-          callerName: callData.callerName
-        }
-      });
-    }, 300);
-  };
+        state: { callId: callData.callId, callerName: callData.callerName },
+      })
+    }, 300)
+  }
 
   const handleDecline = () => {
-    const socket = getSocket();
-    socket.emit('declineCall', {
-      callId: callData.callId
-    });
-    setIsVisible(false);
-    setTimeout(() => {
-      onClose();
-    }, 300);
-  };
+    try {
+      getSocket().emit('declineCall', { callId: callData.callId })
+    } catch {
+      /* ignore */
+    }
+    close()
+  }
+
+  // Slide in on mount; auto-decline after the timeout.
+  useEffect(() => {
+    const showTimer = setTimeout(() => setIsVisible(true), 50)
+    const autoDismiss = setTimeout(() => handleDecline(), AUTO_DISMISS_MS)
+    return () => {
+      clearTimeout(showTimer)
+      clearTimeout(autoDismiss)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const callerName = callData?.callerName || 'Unknown caller'
 
   return (
     <div
-      className={`fixed top-0 left-0 right-0 z-[100] flex justify-center px-4 pt-4 pointer-events-none transition-transform duration-300 ease-out ${
-        isVisible ? 'translate-y-0' : '-translate-y-full'
+      className={`fixed inset-x-0 top-0 z-[100] flex justify-center px-4 pt-[calc(env(safe-area-inset-top,0px)+12px)] pointer-events-none transition-transform duration-300 ease-out ${
+        isVisible ? 'translate-y-0' : '-translate-y-[140%]'
       }`}
     >
-      <div className="bg-gradient-to-r from-gray-800 to-gray-900 rounded-lg shadow-2xl max-w-md w-full pointer-events-auto border border-gray-700">
-        {/* Progress bar for auto-dismiss */}
-        <div className="h-1 bg-gray-700 rounded-t-lg overflow-hidden">
+      <div className='echo-floating pointer-events-auto w-full max-w-md overflow-hidden rounded-2xl border border-white/[0.08] shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)]'>
+        {/* Auto-dismiss progress bar */}
+        <div className='h-0.5 w-full bg-white/[0.06]'>
           <div
-            className="h-full bg-blue-500 animate-shrink-width"
-            style={{ animation: 'shrinkWidth 30s linear' }}
+            className='h-full bg-gradient-to-r from-violet-500 to-violet-300'
+            style={{ animation: `echo-call-countdown ${AUTO_DISMISS_MS}ms linear forwards` }}
           />
         </div>
 
-        <div className="p-4">
-          <div className="flex items-center gap-4">
-            {/* Caller Avatar */}
-            <div className="w-14 h-14 bg-gray-700 rounded-full flex items-center justify-center flex-shrink-0 ring-2 ring-blue-500 animate-pulse">
-              <i className="fa-solid fa-video text-blue-400 text-xl"></i>
-            </div>
+        <div className='flex items-center gap-4 p-4'>
+          {/* Caller avatar */}
+          <div className='relative grid h-14 w-14 shrink-0 place-items-center rounded-full bg-gradient-to-br from-violet-500/40 to-violet-700/70 ring-1 ring-violet-300/40'>
+            <span className='absolute inset-0 animate-ping rounded-full ring-2 ring-violet-400/40' />
+            <Video size={22} className='relative text-violet-100' />
+          </div>
 
-            {/* Call Info */}
-            <div className="flex-1 min-w-0">
-              <h3 className="text-white text-lg font-semibold truncate">
-                {callData.callerName}
-              </h3>
-              <p className="text-gray-400 text-sm flex items-center gap-1">
-                <span className="inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                Incoming video call...
-              </p>
-            </div>
+          {/* Call info */}
+          <div className='min-w-0 flex-1'>
+            <h3 className='truncate text-[15px] font-semibold tracking-[-0.01em] text-white'>
+              {callerName}
+            </h3>
+            <p className='mt-0.5 flex items-center gap-1.5 text-[12px] text-white/55'>
+              <span className='inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400' />
+              Incoming call…
+            </p>
+          </div>
 
-            {/* Action Buttons */}
-            <div className="flex gap-2 flex-shrink-0">
-              <button
-                onClick={handleDecline}
-                className="p-3 rounded-full bg-red-600 hover:bg-red-500 transition-all hover:scale-110 active:scale-95"
-                aria-label="Decline call"
-                title="Decline"
-              >
-                <i className="fa-solid fa-phone-slash text-white text-lg"></i>
-              </button>
-              <button
-                onClick={handleAnswer}
-                className="p-3 rounded-full bg-green-600 hover:bg-green-500 transition-all hover:scale-110 active:scale-95 animate-bounce"
-                aria-label="Answer call"
-                title="Answer"
-              >
-                <i className="fa-solid fa-phone text-white text-lg"></i>
-              </button>
-            </div>
+          {/* Actions */}
+          <div className='flex shrink-0 items-center gap-2'>
+            <button
+              onClick={handleDecline}
+              aria-label='Decline call'
+              title='Decline'
+              className='grid h-12 w-12 place-items-center rounded-full bg-red-500/90 text-white shadow-lg transition hover:bg-red-500 active:scale-95'
+            >
+              <PhoneOff size={18} />
+            </button>
+            <button
+              onClick={handleAnswer}
+              aria-label='Answer call'
+              title='Answer'
+              className='grid h-12 w-12 animate-bounce place-items-center rounded-full bg-emerald-500 text-white shadow-lg transition hover:bg-emerald-400 active:scale-95'
+            >
+              <Phone size={18} />
+            </button>
           </div>
         </div>
       </div>
-
-      {/* Add keyframe animation for progress bar */}
-      <style>{`
-        @keyframes shrinkWidth {
-          from {
-            width: 100%;
-          }
-          to {
-            width: 0%;
-          }
-        }
-      `}</style>
     </div>
-  );
-};
+  )
+}
 
-export default IncomingCallNotification;
+IncomingCallNotification.propTypes = {
+  callData: PropTypes.shape({
+    callId: PropTypes.string,
+    callerId: PropTypes.string,
+    callerName: PropTypes.string,
+  }),
+  onClose: PropTypes.func.isRequired,
+}
+
+export default IncomingCallNotification
