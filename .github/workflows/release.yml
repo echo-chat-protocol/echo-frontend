@@ -1,21 +1,20 @@
 name: Release (Tauri)
 
-# Builds the Echo desktop app for macOS, Linux and Windows and uploads the
-# installers to a single GitHub Release.
+# Builds the Echo installers and publishes them to a single GitHub Release:
+#   - Windows 64-bit NSIS .exe
+#   - Windows 32-bit NSIS .exe
+#   - macOS universal .dmg (runs on Apple Silicon AND Intel)
+# GitHub attaches the source-code archives automatically once published.
 #
-# Trigger it by pushing a version tag:
+# Trigger by pushing a version tag:
 #     git tag v0.1.1
 #     git push origin v0.1.1
-# ...or run it manually from the Actions tab (workflow_dispatch), which builds
-# against the version in src-tauri/tauri.conf.json.
+# ...or run it manually from the Actions tab (workflow_dispatch).
 #
-# Flow (the official Tauri multi-platform pattern so the matrix doesn't create
-# duplicate draft releases):
+# Flow:
 #   1. create-release  — make ONE draft release, output its id
-#   2. build-tauri      — matrix builds, each uploads its installers to that id
-#   3. publish-release  — flip the release from draft to published
-# Don't want it auto-published? Delete the publish-release job (it then stays a
-# draft for you to review and publish manually).
+#   2. build-tauri      — build each installer, upload to that id
+#   3. publish-release  — flip draft -> published (adds Source code assets)
 
 on:
   push:
@@ -45,9 +44,6 @@ jobs:
             const tag = context.ref.startsWith('refs/tags/')
               ? context.ref.replace('refs/tags/', '')
               : `v${version}`
-
-            // Reuse a published release for this tag if one already exists
-            // (re-runs); otherwise create a fresh draft.
             try {
               const existing = await github.rest.repos.getReleaseByTag({
                 owner: context.repo.owner,
@@ -63,7 +59,7 @@ jobs:
                 tag_name: tag,
                 target_commitish: context.sha,
                 name: `Echo v${version}`,
-                body: 'Download the installer for your platform from the assets below.',
+                body: 'Windows installers (64-bit and 32-bit) and a macOS universal .dmg are attached below.',
                 draft: true,
                 prerelease: false,
               })
@@ -79,14 +75,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: 'macos-latest' # Apple silicon (arm64)
-            args: '--target aarch64-apple-darwin'
-          - platform: 'macos-latest' # Intel (x86_64)
-            args: '--target x86_64-apple-darwin'
-          - platform: 'ubuntu-22.04'
-            args: ''
-          - platform: 'windows-latest'
-            args: ''
+          - label: 'windows-x64'
+            platform: 'windows-latest'
+            rust-targets: ''
+            args: '--target x86_64-pc-windows-msvc --bundles nsis'
+          - label: 'windows-x86'
+            platform: 'windows-latest'
+            rust-targets: 'i686-pc-windows-msvc'
+            args: '--target i686-pc-windows-msvc --bundles nsis'
+          - label: 'macos-universal'
+            platform: 'macos-latest'
+            rust-targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+            args: '--target universal-apple-darwin --bundles dmg'
 
     runs-on: ${{ matrix.platform }}
 
@@ -103,33 +103,22 @@ jobs:
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.rust-targets }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-
-      - name: Install Linux build dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libgtk-3-dev
+          key: ${{ matrix.label }}
 
       - name: Install frontend dependencies
-        # `npm install` (not `npm ci`) so a slightly out-of-sync package-lock.json
-        # doesn't hard-fail the release — npm reconciles the lock in-memory.
-        # HUSKY=0 skips the `prepare: husky` git-hook setup, which is unneeded in CI.
+        # `npm install` (not `npm ci`) tolerates a slightly out-of-sync lockfile.
+        # HUSKY=0 skips the `prepare: husky` git-hook setup, unneeded in CI.
         env:
           HUSKY: 0
         run: npm install --no-audit --no-fund
 
-      - name: Build app and upload installers to the release
+      - name: Build ${{ matrix.label }} and upload
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -142,16 +131,30 @@ jobs:
       contents: write
     runs-on: ubuntu-22.04
     needs: [create-release, build-tauri]
+    # Run even if one leg failed (e.g. 32-bit), as long as the release exists —
+    # publish whatever installers DID upload.
+    if: ${{ always() && needs.create-release.result == 'success' }}
     steps:
-      - name: Publish the release
+      - name: Publish the release (only if installers were uploaded)
         uses: actions/github-script@v7
         env:
           RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
         with:
           script: |
+            const release_id = Number(process.env.RELEASE_ID)
+            const assets = await github.rest.repos.listReleaseAssets({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id,
+            })
+            if (assets.data.length === 0) {
+              core.setFailed('No installers uploaded — leaving the release as a draft.')
+              return
+            }
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              release_id: Number(process.env.RELEASE_ID),
+              release_id,
               draft: false,
             })
+            core.info(`Published release ${release_id} with ${assets.data.length} asset(s).`)
