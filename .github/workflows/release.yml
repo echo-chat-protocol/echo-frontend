@@ -1,0 +1,93 @@
+name: Release (Tauri)
+
+# Builds the Echo desktop app for macOS, Linux and Windows and uploads the
+# installers to a GitHub Release.
+#
+# Trigger it by pushing a version tag:
+#     npm version patch          # bumps package.json + creates a git tag
+#     # (or edit src-tauri/tauri.conf.json "version" and tag manually)
+#     git tag v0.1.0
+#     git push origin v0.1.0
+#
+# ...or run it manually from the Actions tab (workflow_dispatch), which builds
+# against the version in src-tauri/tauri.conf.json.
+#
+# The release is created as a DRAFT so you can review the assets before
+# publishing. Set `releaseDraft: false` below to publish automatically.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  publish-tauri:
+    permissions:
+      contents: write # required for tauri-action to create the release + upload assets
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest' # Apple silicon (arm64)
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest' # Intel (x86_64)
+            args: '--target x86_64-apple-darwin'
+          - platform: 'ubuntu-22.04'
+            args: ''
+          - platform: 'windows-latest'
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS builds both architectures; other platforms use the host target.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev
+
+      - name: Install frontend dependencies
+        # HUSKY=0 skips the `prepare: husky` git-hook setup, which is unneeded in CI.
+        env:
+          HUSKY: 0
+        run: npm ci
+
+      - name: Build app and upload to release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # On a tag push use the pushed tag; on manual runs fall back to the
+          # app version from tauri.conf.json (tauri-action expands __VERSION__).
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'app-v__VERSION__' }}
+          releaseName: 'Echo v__VERSION__'
+          releaseBody: 'Download the installer for your platform from the assets below.'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
