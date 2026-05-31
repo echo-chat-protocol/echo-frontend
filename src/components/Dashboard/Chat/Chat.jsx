@@ -5,6 +5,7 @@ import { getSocket } from '../../../socket'
 import PropTypes from 'prop-types'
 import SendText from './MessageInput/sendText'
 import DisplayText from './MessageDisplay/displayText'
+import TypingIndicator from './MessageDisplay/TypingIndicator'
 import { getWallpaperComponent, getWallpaperClasses } from '../DashboardComponents/utils/wallpaper'
 import { formatProfileImage } from '../DashboardComponents/utils/helpers'
 import { base64ToArrayBuffer } from './utils/helpers'
@@ -25,6 +26,13 @@ import {
 import { encryptOutgoingMessage } from './utils/chat/messageEncryption'
 import { decryptIncomingMessage } from './utils/chat/messageDecryption'
 import { hasUnreadInbound } from './utils/chat/readReceipts'
+import {
+  upsertTypist,
+  removeTypist,
+  activeTypists,
+  formatTypingText,
+  TYPING_TTL_MS,
+} from './utils/chat/typing'
 import { forwardMessageToDevices, requestSessionSync } from '../../../utils/deviceForward'
 import {
   attachBundlesToFanoutTargets,
@@ -43,6 +51,16 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
   const username = decodedToken?.username || ''
   const ownDeviceUserId = decodedToken?.deviceUserId || null
   const [messages, setMessages] = useState([])
+  const [typists, setTypists] = useState({})
+  const typingPruneRef = useRef(null)
+  // Last accepted message number per (sender_device → recipient_device) pair, so
+  // a send can skip the pre-send getLatestMessageNumber round-trip. This device
+  // is the sole writer of its own pair sequences; the server's out_of_sync ack
+  // self-corrects the rare conflict (e.g. a second tab of the same device).
+  const sentNumberCacheRef = useRef(new Map())
+  // _id of the in-flight optimistic message, so the send queue's catch can flip
+  // it to a "failed" state if the whole send throws. Cleared on success.
+  const optimisticSendIdRef = useRef(null)
   const [privateKeyArray, setPrivateKeyArray] = useState(null)
   const [sendBlocked, setSendBlocked] = useState(false)
   const [sendBlockedReason, setSendBlockedReason] = useState('')
@@ -131,6 +149,9 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
   useEffect(() => {
     isInitialLoadRef.current = true
     previousMessageCountRef.current = 0
+    // Drop any typing state carried over from the previous conversation.
+    setTypists({})
+    if (typingPruneRef.current) clearTimeout(typingPruneRef.current)
   }, [targetUserId])
 
   useEffect(() => {
@@ -349,11 +370,42 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
       }
     }
 
+    // Rebuild a map from the still-active entries, preserving their expiry.
+    const buildTypistMap = (active, prev) =>
+      active.reduce((acc, t) => {
+        acc[t.userId] = prev[t.userId]
+        return acc
+      }, {})
+    // Schedule a prune so a missed peerStopTyping can't strand the indicator on.
+    const scheduleTypingPrune = () => {
+      if (typingPruneRef.current) clearTimeout(typingPruneRef.current)
+      typingPruneRef.current = setTimeout(() => {
+        setTypists((prev) => {
+          const active = activeTypists(prev)
+          return active.length === Object.keys(prev).length ? prev : buildTypistMap(active, prev)
+        })
+      }, TYPING_TTL_MS + 100)
+    }
+
+    const handlePeerTyping = ({ userId: typistId } = {}) => {
+      if (String(typistId) !== String(targetUserId)) return
+      setTypists((prev) =>
+        upsertTypist(prev, { userId: typistId, username: contact?.username || contact?.name })
+      )
+      scheduleTypingPrune()
+    }
+    const handlePeerStopTyping = ({ userId: typistId } = {}) => {
+      if (String(typistId) !== String(targetUserId)) return
+      setTypists((prev) => removeTypist(prev, typistId))
+    }
+
     window.addEventListener('localStorageUpdated', handleEldUpdate)
 
     socket.on('newMessage', handleChatMessage)
     socket.on('messageSeenUpdate', handleSeenUpdate)
     socket.on('messageDeliveredUpdate', handleDeliveredUpdate)
+    socket.on('peerTyping', handlePeerTyping)
+    socket.on('peerStopTyping', handlePeerStopTyping)
 
     const initChat = async () => {
       // Ask sibling devices to push their current DR state for this peer.
@@ -370,9 +422,11 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
       socket.off('newMessage', handleChatMessage)
       socket.off('messageSeenUpdate', handleSeenUpdate)
       socket.off('messageDeliveredUpdate', handleDeliveredUpdate)
+      socket.off('peerTyping', handlePeerTyping)
+      socket.off('peerStopTyping', handlePeerStopTyping)
       window.removeEventListener('localStorageUpdated', handleEldUpdate)
     }
-  }, [activeChat, privateKeyArray, socket, targetUserId, userId])
+  }, [activeChat, contact, privateKeyArray, socket, targetUserId, userId])
 
   const sendMessageNow = async (text, imageData = null) => {
     if (sendBlocked) {
@@ -437,6 +491,21 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
       createdAt,
     }
 
+    // Optimistic render: show the bubble immediately in a "sending" state. The
+    // crypto + fan-out below run after, then markSent() reconciles to "sent";
+    // if the whole send throws, the queue's catch flips it to "failed". This is
+    // the main fix for the perceived gap between hitting enter and seeing the
+    // message.
+    optimisticSendIdRef.current = messageId
+    setMessages((prev) => [...prev, { ...outgoingMsg, sendState: 'sending' }])
+    const markSent = async () => {
+      await updateSavedMessages(userId, targetUserId, outgoingMsg, setMessages)
+      optimisticSendIdRef.current = null
+      setMessages((prev) =>
+        prev.map((m) => (m._id === messageId ? { ...m, sendState: undefined } : m))
+      )
+    }
+
     const sendOnce = (payload) =>
       new Promise((resolve) => {
         socket.emit('newMessage', payload, (ack) => resolve(ack))
@@ -457,12 +526,22 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
                 : null,
           }
         : {}
-      const lastAccepted = await fetchLatestMessageNumber(
-        socket,
-        payload.targetUserId || targetUserId,
-        sequenceScope
-      ).catch(() => -1)
-      const lastInt = Number.isSafeInteger(lastAccepted) ? lastAccepted : -1
+      const cacheKey = `${payload.targetUserId || targetUserId}|${
+        sequenceScope.senderDeviceUserId || sequenceScope.senderDeviceId || ''
+      }|${sequenceScope.peerDeviceUserId || sequenceScope.peerDeviceId || ''}`
+
+      let lastInt
+      if (sentNumberCacheRef.current.has(cacheKey)) {
+        lastInt = sentNumberCacheRef.current.get(cacheKey)
+      } else {
+        // First send to this pair this session — probe the server once.
+        const lastAccepted = await fetchLatestMessageNumber(
+          socket,
+          payload.targetUserId || targetUserId,
+          sequenceScope
+        ).catch(() => -1)
+        lastInt = Number.isSafeInteger(lastAccepted) ? lastAccepted : -1
+      }
       payload.messageNumber = lastInt + 1
       let ack = await sendOnce(payload)
       if (!ack?.success && (ack?.error === 'out_of_sync' || ack?.error === 'replay_detected')) {
@@ -471,6 +550,12 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
           payload.messageNumber = last + 1
           ack = await sendOnce(payload)
         }
+      }
+      if (ack?.success) {
+        sentNumberCacheRef.current.set(cacheKey, payload.messageNumber)
+      } else {
+        // Drop a possibly-stale entry so the next send re-probes the server.
+        sentNumberCacheRef.current.delete(cacheKey)
       }
       return ack
     }
@@ -510,7 +595,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
         })
       }
 
-      await updateSavedMessages(userId, targetUserId, outgoingMsg, setMessages)
+      await markSent()
 
       // Legacy own-outbound display-sync (no-op under per-device IK; harmless).
       forwardMessageToDevices({
@@ -595,7 +680,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
     }
 
     // Persist the visual message once, under the user-level conversation key.
-    await updateSavedMessages(userId, targetUserId, outgoingMsg, setMessages)
+    await markSent()
     return
   }
 
@@ -604,7 +689,18 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
       .catch(() => {})
       .then(() => sendMessageNow(text, imageData))
 
-    sendQueueRef.current = queuedSend.catch(() => {})
+    sendQueueRef.current = queuedSend.catch(() => {
+      // The send threw after the optimistic bubble was rendered — flip it to
+      // "failed" so the user sees it didn't go through (instead of a stuck
+      // "sending" clock). Sends are serialized, so this id is unambiguous.
+      const failedId = optimisticSendIdRef.current
+      if (failedId) {
+        optimisticSendIdRef.current = null
+        setMessages((prev) =>
+          prev.map((m) => (m._id === failedId ? { ...m, sendState: 'failed' } : m))
+        )
+      }
+    })
     return queuedSend
   }
 
@@ -633,6 +729,12 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
     name: contact?.username || contact?.name || 'Unknown',
     avatar: contact?.profileImage || contact?.avatar || null,
   }
+
+  // DM: a non-empty typist map → "typing…" (names are irrelevant for 1:1).
+  const typingText = formatTypingText(
+    activeTypists(typists).map((t) => t.username),
+    { isGroup: false }
+  )
 
   return (
     <div className='app-container flex h-full min-h-0 min-w-0 flex-col overflow-hidden'>
@@ -684,10 +786,12 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
         }}
       />
       <div className='shrink-0'>
+        <TypingIndicator text={typingText} />
         <SendText
           sendMessage={sendMessage}
           disabled={sendBlocked}
           disabledReason={sendBlockedReason}
+          targetUserId={targetUserId}
         />
       </div>
     </div>

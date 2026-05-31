@@ -85,3 +85,40 @@ export const receiptState = (msg) => {
   if (msg.deliveredAt) return RECEIPT_STATE.DELIVERED
   return RECEIPT_STATE.SENT
 }
+
+// Progress ordering for the three server-truth states a conversation PREVIEW
+// can show. Higher = further along; used to keep the preview monotonic.
+const PREVIEW_RANK = { sent: 0, delivered: 1, read: 2 }
+
+/**
+ * The receipt state to show on a conversation preview for its last message, or
+ * `null` when no check should be shown (the last message was inbound, so it
+ * isn't ours to get a receipt on).
+ *
+ * @param {{userId?: string|number}} message - The conversation's last message.
+ * @param {string|number} myUserId - The signed-in user's id.
+ * @returns {'sent'|'delivered'|'read'|null}
+ */
+export const previewReceiptState = (message, myUserId) => {
+  if (!message || message.userId == null) return null
+  if (String(message.userId) !== String(myUserId)) return null
+  const state = receiptState(message)
+  // Previews only ever show server-truth states; collapse transient local
+  // sending/failed onto the 'sent' floor.
+  return PREVIEW_RANK[state] == null ? RECEIPT_STATE.SENT : state
+}
+
+/**
+ * Monotonically advance a preview receipt state: returns `incoming` only when it
+ * is strictly further along than `current`, otherwise keeps `current`. Prevents
+ * a late `delivered` event from clobbering an existing `read`.
+ *
+ * @param {'sent'|'delivered'|'read'|null|undefined} current
+ * @param {'sent'|'delivered'|'read'} incoming
+ * @returns {'sent'|'delivered'|'read'|null}
+ */
+export const advancePreviewReceipt = (current, incoming) => {
+  const c = PREVIEW_RANK[current] ?? -1
+  const i = PREVIEW_RANK[incoming] ?? -1
+  return i > c ? incoming : current
+}

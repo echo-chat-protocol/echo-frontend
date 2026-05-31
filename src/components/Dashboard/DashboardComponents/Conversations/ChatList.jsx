@@ -16,7 +16,14 @@ const PTR_MAX_PULL = 135
 const PTR_RESISTANCE = 0.5
 
 function DeliveryIcon({ state }) {
-  if (state === 'read') return <CheckCheck size={15} className='text-sky-400' strokeWidth={2.4} />
+  if (state === 'read')
+    return (
+      <CheckCheck
+        size={17}
+        strokeWidth={3}
+        className='text-sky-400 drop-shadow-[0_0_6px_rgba(56,189,248,0.9)]'
+      />
+    )
   if (state === 'delivered')
     return <CheckCheck size={15} className='text-white/35' strokeWidth={2.2} />
   if (state === 'sent') return <Check size={15} className='text-white/35' strokeWidth={2.2} />
@@ -400,6 +407,8 @@ export default function ChatList({
 }
 
 function ChatRow({ chat, active, onClick }) {
+  const showTypingLabel = chat.typingText && chat.typingText !== 'typing…'
+
   return (
     <button
       data-testid={`chat-row-${chat.id}`}
@@ -430,11 +439,15 @@ function ChatRow({ chat, active, onClick }) {
         </div>
         <div className='mt-0.5 flex items-center gap-1.5'>
           {chat.typing ? (
-            <span className='flex items-center gap-1 text-[14px] text-violet-300'>
-              <span className='typing-dot' />
-              <span className='typing-dot' />
-              <span className='typing-dot' />
-              <span className='ml-1'>typing…</span>
+            <span
+              className={`flex min-h-5 min-w-0 items-center gap-1 text-[14px] leading-5 text-violet-300 ${
+                showTypingLabel ? '' : 'translate-y-0.5'
+              }`}
+            >
+              <span className='shrink-0 typing-dot' />
+              <span className='shrink-0 typing-dot' />
+              <span className='shrink-0 typing-dot' />
+              {showTypingLabel ? <span className='ml-1 truncate'>{chat.typingText}</span> : null}
             </span>
           ) : (
             <p className='truncate text-[14px] text-white/45'>{chat.last}</p>

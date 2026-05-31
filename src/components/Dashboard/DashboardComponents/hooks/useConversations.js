@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { previewReceiptState, advancePreviewReceipt } from '../../Chat/utils/chat/readReceipts'
 
 export const useConversations = (userId) => {
   const [recentConversations, setRecentConversations] = useState([])
@@ -43,6 +44,14 @@ export const useConversations = (userId) => {
   }, [recentConversations, userId])
 
   const updateRecentConversations = (friendData, message = null) => {
+    // A receipt only makes sense for OUR outgoing last message — an inbound last
+    // message shows no check. Only touch receipt fields when the update carries
+    // the author id; a direction-less update (e.g. a profile/metadata refresh)
+    // must not clobber a known outgoing receipt back to "no check".
+    const hasDirection = message && typeof message === 'object' && message.userId != null
+    const fromMe = hasDirection && String(message.userId) === String(userId)
+    const lastMessageState = previewReceiptState(message, userId)
+
     setRecentConversations((prev) => {
       const existingIndex = prev.findIndex((chat) => chat.id === friendData.id)
       let updated = [...prev]
@@ -53,6 +62,7 @@ export const useConversations = (userId) => {
           ...friendData,
           lastMessage: message?.text || updated[existingIndex].lastMessage,
           lastMessageTime: message?.timestamp || updated[existingIndex].lastMessageTime,
+          ...(hasDirection ? { lastMessageFromMe: fromMe, lastMessageState } : {}),
         }
         if (message) {
           const [moved] = updated.splice(existingIndex, 1)
@@ -63,6 +73,8 @@ export const useConversations = (userId) => {
           ...friendData,
           lastMessage: message?.text || '',
           lastMessageTime: message?.timestamp || new Date().toISOString(),
+          lastMessageFromMe: fromMe,
+          lastMessageState,
         })
       }
 
@@ -70,5 +82,23 @@ export const useConversations = (userId) => {
     })
   }
 
-  return { recentConversations, updateRecentConversations }
+  // Advance a conversation's outgoing-message receipt state in response to a
+  // live messageSeenUpdate / messageDeliveredUpdate. No-op for conversations
+  // whose last message wasn't ours, and never regresses a higher state.
+  const setConversationReceipt = (peerId, state) => {
+    setRecentConversations((prev) => {
+      let changed = false
+      const next = prev.map((conv) => {
+        if (String(conv.id) !== String(peerId)) return conv
+        if (!conv.lastMessageFromMe) return conv
+        const advanced = advancePreviewReceipt(conv.lastMessageState, state)
+        if (advanced === conv.lastMessageState) return conv
+        changed = true
+        return { ...conv, lastMessageState: advanced }
+      })
+      return changed ? next : prev
+    })
+  }
+
+  return { recentConversations, updateRecentConversations, setConversationReceipt }
 }

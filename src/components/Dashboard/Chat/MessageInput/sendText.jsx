@@ -10,7 +10,13 @@ import MediaPanel from './MediaPanel'
  * Premium MessageInput — keeps all existing send/image logic,
  * adds typing events, wraps in new premium pill UI.
  */
-const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUserId }) => {
+const SendText = ({
+  sendMessage,
+  disabled = false,
+  disabledReason = '',
+  targetUserId,
+  groupId,
+}) => {
   const [value, setValue] = useState('')
   const [focused, setFocused] = useState(false)
   const [selectedImage, setSelectedImage] = useState(null)
@@ -26,16 +32,29 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
   const isTypingRef = useRef(false)
 
   // ── Typing events ──────────────────────────────────────────────────────────
-  const emitStopTyping = useCallback(() => {
-    if (isTypingRef.current && targetUserId) {
+  // A group composer emits group-scoped typing (relayed to all members); a DM
+  // composer emits peer-scoped typing. One of `groupId`/`targetUserId` must be
+  // set or typing is silently disabled.
+  const emitTyping = useCallback(
+    (start) => {
       try {
-        getSocket().emit('stopTyping', { targetUserId })
+        if (groupId) {
+          getSocket().emit(start ? 'groupTyping' : 'groupStopTyping', { groupId })
+        } else if (targetUserId) {
+          getSocket().emit(start ? 'typing' : 'stopTyping', { targetUserId })
+        }
       } catch {
         /* ignore */
       }
-      isTypingRef.current = false
-    }
-  }, [targetUserId])
+    },
+    [groupId, targetUserId]
+  )
+
+  const emitStopTyping = useCallback(() => {
+    if (!isTypingRef.current) return
+    emitTyping(false)
+    isTypingRef.current = false
+  }, [emitTyping])
 
   // Stop typing on unmount / chat change
   useEffect(() => {
@@ -43,23 +62,19 @@ const SendText = ({ sendMessage, disabled = false, disabledReason = '', targetUs
       emitStopTyping()
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
     }
-  }, [emitStopTyping, targetUserId])
+  }, [emitStopTyping, targetUserId, groupId])
 
   const handleChange = (e) => {
     setValue(e.target.value)
 
     // Emit typing start (debounced stop after 1.5 s idle)
-    if (!disabled && targetUserId) {
-      try {
-        if (!isTypingRef.current) {
-          getSocket().emit('typing', { targetUserId })
-          isTypingRef.current = true
-        }
-        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
-        typingTimeoutRef.current = setTimeout(emitStopTyping, 1500)
-      } catch {
-        /* ignore */
+    if (!disabled && (groupId || targetUserId)) {
+      if (!isTypingRef.current) {
+        emitTyping(true)
+        isTypingRef.current = true
       }
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+      typingTimeoutRef.current = setTimeout(emitStopTyping, 1500)
     }
   }
 
@@ -306,6 +321,7 @@ SendText.propTypes = {
   disabled: PropTypes.bool,
   disabledReason: PropTypes.string,
   targetUserId: PropTypes.string,
+  groupId: PropTypes.string,
 }
 
 export default SendText

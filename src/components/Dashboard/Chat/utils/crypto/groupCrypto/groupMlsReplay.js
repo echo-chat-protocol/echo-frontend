@@ -632,10 +632,37 @@ export async function fetchGroupServerEpoch(socket, groupId, options = {}) {
  * Align local MLS state with the server's current group epoch before sending.
  * groupMeta alone can lag when commits arrived on another device/tab.
  */
-export async function prepareGroupMlsForSend({ socket, groupId, userId, currentState = null }) {
+export async function prepareGroupMlsForSend({
+  socket,
+  groupId,
+  userId,
+  currentState = null,
+  knownServerEpoch = null,
+}) {
   const gid = String(groupId ?? '')
   if (!socket || !gid || !userId) {
     return { state: currentState, serverEpoch: null }
+  }
+
+  // Fast path: when the caller already knows the server epoch (from groupMeta /
+  // the last broadcast) and our in-memory state is fully usable AT that epoch,
+  // skip the `openGroup` round-trip entirely. `fetchGroupServerEpoch` calls the
+  // heavy `openGroup` handler (roster + member + profile reads) purely to read
+  // one integer — doing that on every send dominated group-send latency. The
+  // server still validates the epoch on `sendGroupMessage` and rejects a stale
+  // send with 'Invalid message epoch', which the caller re-aligns and retries,
+  // so trusting the known epoch here is safe.
+  if (
+    Number.isInteger(knownServerEpoch) &&
+    currentState &&
+    currentState.initSecretB64 &&
+    currentState.applicationSecretB64 &&
+    Number.isInteger(currentState.epoch) &&
+    currentState.epoch === knownServerEpoch &&
+    Number.isInteger(currentState.selfLeafIndex)
+  ) {
+    const finalized = await finalizeLocalMlsState(gid, currentState, userId)
+    return { state: finalized, serverEpoch: knownServerEpoch }
   }
 
   let state = currentState ?? (await loadGroupState(gid).catch(() => null))

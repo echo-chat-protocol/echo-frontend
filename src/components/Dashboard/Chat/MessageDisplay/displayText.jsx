@@ -26,7 +26,9 @@ function State({ message }) {
       return <AlertCircle size={12} className='text-red-400' aria-label='Not sent' />
     case RECEIPT_STATE.READ:
       return (
-        <CheckCheck size={13} strokeWidth={2.4} className='text-violet-200' aria-label='Read' />
+        <span className='inline-flex items-center gap-0.5 font-semibold text-sky-400 drop-shadow-[0_0_6px_rgba(56,189,248,0.9)]'>
+          <CheckCheck size={15} strokeWidth={3} aria-label='Read' />
+        </span>
       )
     case RECEIPT_STATE.DELIVERED:
       return <CheckCheck size={13} className='text-white/45' aria-label='Delivered' />
@@ -162,10 +164,21 @@ const GROUP_GAP_MS = 5 * 60 * 1000
 const isChatMessage = (m) => m && m.messageType !== 'call_event' && m.messageType !== 'system'
 
 const DisplayText = ({ messages = [], currentUserId, contact = null }) => {
+  // Run-grouping (hiding the repeated username/avatar for consecutive messages
+  // from the same sender) relies on array adjacency being chronological. P2P
+  // history is already time-ordered, but group messages arrive via several
+  // merge/replay paths and can land out of order — which broke grouping and
+  // made every consecutive group message repeat the username. Sort a shallow
+  // copy by createdAt (Array.sort is stable, so equal timestamps keep their
+  // insertion order) before computing runs.
+  const ordered = [...messages].sort(
+    (a, b) => new Date(a?.createdAt || 0) - new Date(b?.createdAt || 0)
+  )
+
   const shouldShowDate = (index) => {
     if (index === 0) return true
-    const currentDate = new Date(messages[index].createdAt)
-    const prevDate = new Date(messages[index - 1].createdAt)
+    const currentDate = new Date(ordered[index].createdAt)
+    const prevDate = new Date(ordered[index - 1].createdAt)
     return !isSameDay(currentDate, prevDate)
   }
 
@@ -181,9 +194,9 @@ const DisplayText = ({ messages = [], currentUserId, contact = null }) => {
 
   return (
     <div className='min-h-full p-3 md:p-4'>
-      {messages.map((message, index) => {
-        const prev = messages[index - 1]
-        const next = messages[index + 1]
+      {ordered.map((message, index) => {
+        const prev = ordered[index - 1]
+        const next = ordered[index + 1]
         const newDay = shouldShowDate(index)
         // First bubble of a run → show name; last bubble of a run → show avatar.
         const isRunStart = newDay || !isSameRun(prev, message)

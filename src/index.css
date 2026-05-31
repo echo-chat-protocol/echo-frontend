@@ -715,7 +715,8 @@ code,
   width: 5px;
   height: 5px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.55);
+  background: rgba(196, 181, 253, 0.9);
+  box-shadow: 0 0 8px rgba(168, 85, 247, 0.55);
   display: inline-block;
   animation: echo-pulse-dot 1.2s ease-in-out infinite;
 }
@@ -724,6 +725,22 @@ code,
 }
 .typing-dot:nth-child(3) {
   animation-delay: 0.3s;
+}
+
+/* Entrance for the typing bubble that pops up over the chat input. */
+@keyframes echo-typing-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.typing-pop {
+  animation: echo-typing-pop 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: bottom left;
 }
 
 /* Hover utility for cards */

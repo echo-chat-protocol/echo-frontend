@@ -48,6 +48,14 @@ import {
 } from './Chat/utils/crypto/groupCrypto/groupMlsReplay'
 import { decryptIncomingMessage } from './Chat/utils/chat/messageDecryption'
 import { isOwnReadReceipt } from './Chat/utils/chat/readReceipts'
+import { getMessagePreview } from './Chat/utils/chat/messagePreview'
+import {
+  upsertTypist,
+  removeTypist,
+  activeTypists,
+  formatTypingText,
+  TYPING_TTL_MS,
+} from './Chat/utils/chat/typing'
 import { base64ToArrayBuffer } from './Chat/utils/helpers'
 import { generateOneTimePreKeys } from './Chat/utils/crypto/opk'
 import { createOpkReplenishHandler, requestOpkStatusAndReplenish } from '../../utils/opk/replenish'
@@ -127,6 +135,11 @@ const Dashboard = () => {
     }
     return unread
   })
+  // Live "typing…" state for conversation-list previews, keyed by conversation
+  // id (peer userId for DMs, groupId for groups): { isGroup, typists }.
+  const [typingByConv, setTypingByConv] = useState({})
+  const typingPruneRef = useRef(null)
+
   const currentWallpaper = (() => {
     const saved = localStorage.getItem('chatWallpaper')
     return saved && WALLPAPER_PREVIEWS[saved] ? saved : 'default'
@@ -175,7 +188,8 @@ const Dashboard = () => {
   // plaintext once handleGroupStateSynced re-decrypts the buffered message.
   const GROUP_PREVIEW_PENDING_TEXT = 'New message'
   // Hooks personalizados - must be before useEffects that use them
-  const { recentConversations, updateRecentConversations } = useConversations(userId)
+  const { recentConversations, updateRecentConversations, setConversationReceipt } =
+    useConversations(userId)
   const { groups, setAllGroups, upsertGroup, removeGroup } = useGroups(userId)
   const messagesEndRef = useRef(null)
   // const conversationsListRef = useRef(null)
@@ -192,6 +206,7 @@ const Dashboard = () => {
   const removedGroupsRef = useRef(removedGroups)
 
   const updateRecentConversationsRef = useRef(updateRecentConversations)
+  const setConversationReceiptRef = useRef(setConversationReceipt)
   const setAllGroupsRef = useRef(setAllGroups)
   const upsertGroupRef = useRef(upsertGroup)
   const removeGroupRef = useRef(removeGroup)
@@ -266,6 +281,10 @@ const Dashboard = () => {
   useEffect(() => {
     updateRecentConversationsRef.current = updateRecentConversations
   }, [updateRecentConversations])
+
+  useEffect(() => {
+    setConversationReceiptRef.current = setConversationReceipt
+  }, [setConversationReceipt])
 
   useEffect(() => {
     setAllGroupsRef.current = setAllGroups
@@ -774,17 +793,9 @@ const Dashboard = () => {
             userId: userIdRef.current,
             username,
           })
-          const decryptedText = result?.formattedMessage?.text ?? ''
-          const decryptedImage = result?.formattedMessage?.image ?? null
-          if (decryptedText) {
-            msgText = decryptedText
-          } else if (decryptedImage) {
-            const isGif =
-              /\.gif($|\?)/i.test(decryptedImage) || decryptedImage.startsWith('data:image/gif')
-            msgText = isGif ? '🎞️ GIF' : '📷 Photo'
-          } else {
-            msgText = decryptedText
-          }
+          // Image-aware preview: "📷 caption" when captioned, else "📷 Photo"
+          // (or "🎞️ GIF"); plain text otherwise.
+          msgText = getMessagePreview(result?.formattedMessage)
         } catch {
           console.warn('[Dashboard] Failed to decrypt incoming group message')
           // Do not persist placeholder into storage — background state may not be ready yet
@@ -873,14 +884,101 @@ const Dashboard = () => {
     // this device's unread badge for that conversation so the count doesn't
     // linger after I've already read the thread on another device.
     const handleSeenSiblingClear = (payload = {}) => {
-      if (!isOwnReadReceipt(payload, userIdRef.current)) return
-      const pid = String(payload.targetUserId ?? '')
-      if (!pid) return
-      setUnreadMessages((prev) => {
-        if (!prev[pid]) return prev
-        localStorage.setItem(`unread-${userIdRef.current}-${pid}`, 0)
-        return { ...prev, [pid]: 0 }
+      // Reader side: one of my own devices read the peer's messages → clear
+      // this device's unread badge for that conversation.
+      if (isOwnReadReceipt(payload, userIdRef.current)) {
+        const pid = String(payload.targetUserId ?? '')
+        if (!pid) return
+        setUnreadMessages((prev) => {
+          if (!prev[pid]) return prev
+          localStorage.setItem(`unread-${userIdRef.current}-${pid}`, 0)
+          return { ...prev, [pid]: 0 }
+        })
+        return
+      }
+
+      // Sender side: the peer read MY messages (payload.targetUserId is me) →
+      // flip that conversation's preview receipt to "read".
+      if (String(payload.targetUserId ?? '') === String(userIdRef.current)) {
+        const peerId = String(payload.userId ?? '')
+        if (peerId) setConversationReceiptRef.current?.(peerId, 'read')
+      }
+    }
+
+    // Sender side: the peer's device received MY message(s) → mark the
+    // conversation preview "delivered" (read still supersedes it).
+    const handleDeliveredPreviewUpdate = (payload = {}) => {
+      if (String(payload.targetUserId ?? '') !== String(userIdRef.current)) return
+      const peerId = String(payload.userId ?? '')
+      if (peerId) setConversationReceiptRef.current?.(peerId, 'delivered')
+    }
+
+    // ── Typing previews (DM + group), keyed by conversation id ──────────────────
+    // A single rescheduled prune drops entries whose TTL lapsed, so a missed
+    // stop event can't leave a preview stuck on "typing…".
+    const scheduleConvTypingPrune = () => {
+      if (typingPruneRef.current) clearTimeout(typingPruneRef.current)
+      typingPruneRef.current = setTimeout(() => {
+        setTypingByConv((prev) => {
+          let changed = false
+          const next = {}
+          for (const [convId, entry] of Object.entries(prev)) {
+            const active = activeTypists(entry.typists)
+            if (active.length === 0) {
+              changed = true
+              continue
+            }
+            if (active.length !== Object.keys(entry.typists).length) {
+              changed = true
+              const typists = {}
+              for (const t of active) typists[t.userId] = entry.typists[t.userId]
+              next[convId] = { ...entry, typists }
+            } else {
+              next[convId] = entry
+            }
+          }
+          return changed ? next : prev
+        })
+      }, TYPING_TTL_MS + 100)
+    }
+    const upsertConvTypist = (convId, isGroup, typist) => {
+      setTypingByConv((prev) => {
+        const entry = prev[convId] || { isGroup, typists: {} }
+        return { ...prev, [convId]: { isGroup, typists: upsertTypist(entry.typists, typist) } }
       })
+      scheduleConvTypingPrune()
+    }
+    const removeConvTypist = (convId, typistId) => {
+      setTypingByConv((prev) => {
+        const entry = prev[convId]
+        if (!entry) return prev
+        const typists = removeTypist(entry.typists, typistId)
+        if (typists === entry.typists) return prev
+        if (Object.keys(typists).length === 0) {
+          const next = { ...prev }
+          delete next[convId]
+          return next
+        }
+        return { ...prev, [convId]: { ...entry, typists } }
+      })
+    }
+
+    // DM: conversation id is the peer's user id; group: it's the group id.
+    const handlePeerTypingPreview = ({ userId: typistId } = {}) => {
+      const id = String(typistId ?? '')
+      if (id) upsertConvTypist(id, false, { userId: id })
+    }
+    const handlePeerStopTypingPreview = ({ userId: typistId } = {}) => {
+      const id = String(typistId ?? '')
+      if (id) removeConvTypist(id, id)
+    }
+    const handleGroupTypingPreview = ({ groupId, userId: typistId, username } = {}) => {
+      const id = String(groupId ?? '')
+      if (id && typistId) upsertConvTypist(id, true, { userId: typistId, username })
+    }
+    const handleGroupStopTypingPreview = ({ groupId, userId: typistId } = {}) => {
+      const id = String(groupId ?? '')
+      if (id && typistId) removeConvTypist(id, typistId)
     }
 
     const handleNewMessageNotification = async (messageData) => {
@@ -1154,6 +1252,11 @@ const Dashboard = () => {
 
     sharedSocket.on('newMessage', handleNewMessageNotification)
     sharedSocket.on('messageSeenUpdate', handleSeenSiblingClear)
+    sharedSocket.on('messageDeliveredUpdate', handleDeliveredPreviewUpdate)
+    sharedSocket.on('peerTyping', handlePeerTypingPreview)
+    sharedSocket.on('peerStopTyping', handlePeerStopTypingPreview)
+    sharedSocket.on('groupTyping', handleGroupTypingPreview)
+    sharedSocket.on('groupStopTyping', handleGroupStopTypingPreview)
     sharedSocket.on('groupAdded', handleGroupAdded)
     sharedSocket.on('groupUpdated', handleGroupUpdated)
     sharedSocket.on('groupRemoved', handleGroupRemoved)
@@ -1648,7 +1751,13 @@ const Dashboard = () => {
       sharedSocket.off('userProfileUpdated')
       sharedSocket.off('newMessage', handleNewMessageNotification)
       sharedSocket.off('messageSeenUpdate', handleSeenSiblingClear)
+      sharedSocket.off('messageDeliveredUpdate', handleDeliveredPreviewUpdate)
+      sharedSocket.off('peerTyping', handlePeerTypingPreview)
+      sharedSocket.off('peerStopTyping', handlePeerStopTypingPreview)
+      sharedSocket.off('groupTyping', handleGroupTypingPreview)
+      sharedSocket.off('groupStopTyping', handleGroupStopTypingPreview)
       sharedSocket.off('groupAdded', handleGroupAdded)
+      if (typingPruneRef.current) clearTimeout(typingPruneRef.current)
       sharedSocket.off('groupUpdated', handleGroupUpdated)
       sharedSocket.off('groupRemoved', handleGroupRemoved)
       sharedSocket.off('groupMemberRemoved', handleGroupMemberRemoved)
@@ -1678,6 +1787,9 @@ const Dashboard = () => {
       const targetId = String(event?.detail?.targetUserId ?? '')
       const latestText = event?.detail?.latestMessage ?? ''
       const ts = event?.detail?.timestamp || new Date().toISOString()
+      // The dispatched message carries who sent it + its receipt fields, so the
+      // preview can show the correct check (only for our own outgoing message).
+      const msg = event?.detail?.message ?? null
 
       // Group conversation preview update
       if (targetId.startsWith(GROUP_CACHE_PREFIX)) {
@@ -1699,7 +1811,14 @@ const Dashboard = () => {
         id: targetId,
         username: existing?.username || `User ${targetId}`,
       }
-      updateRecentConversationsRef.current?.(friend, { text: latestText, timestamp: ts })
+      updateRecentConversationsRef.current?.(friend, {
+        text: latestText,
+        timestamp: ts,
+        userId: msg?.userId,
+        seenStatus: msg?.seenStatus,
+        seenAt: msg?.seenAt,
+        deliveredAt: msg?.deliveredAt,
+      })
     }
 
     window.addEventListener('localStorageUpdated', handleStorageUpdate)
@@ -2151,43 +2270,68 @@ const Dashboard = () => {
 
   // ── Build ChatList items from recentConversations + groups ──────────────────
   const chatListItems = useMemo(() => {
-    const directItems = filteredConversations.map((conv) => ({
-      id: conv.id,
-      name: conv.username,
-      avatar: conv.profileImage || null,
-      last: conv.lastMessage || '',
-      time: conv.lastMessageTime
-        ? new Date(conv.lastMessageTime).toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-          })
-        : '',
-      unread: conv.unreadCount || 0,
-      delivered: conv.seenStatus ? 'read' : 'delivered',
-      status: null,
-      isGroup: false,
-      isBot: false,
-      pinned: false,
-    }))
+    const typingTextFor = (id, isGroup) => {
+      const entry = typingByConv[String(id)]
+      if (!entry) return null
+      return formatTypingText(
+        activeTypists(entry.typists).map((t) => t.username),
+        { isGroup }
+      )
+    }
 
-    const groupItems = filteredGroups.map((g) => ({
-      id: g.groupId,
-      name: g.name || 'Group',
-      avatar: g.profilePicture || null,
-      last: g.lastActivityText || '',
-      time: g.lastActivityAt
-        ? new Date(g.lastActivityAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        : '',
-      unread: g.unreadCount || 0,
-      delivered: 'delivered',
-      status: null,
-      isGroup: true,
-      isBot: false,
-      pinned: false,
-    }))
+    const directItems = filteredConversations.map((conv) => {
+      const typingText = typingTextFor(conv.id, false)
+      return {
+        id: conv.id,
+        name: conv.username,
+        avatar: conv.profileImage || null,
+        last: conv.lastMessage || '',
+        time: conv.lastMessageTime
+          ? new Date(conv.lastMessageTime).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : '',
+        unread: conv.unreadCount || 0,
+        // Only OUR outgoing last message carries a receipt; an inbound last
+        // message shows no check. null → DeliveryIcon renders nothing.
+        delivered: conv.lastMessageFromMe ? conv.lastMessageState || 'sent' : null,
+        typing: Boolean(typingText),
+        typingText,
+        status: null,
+        isGroup: false,
+        isBot: false,
+        pinned: false,
+      }
+    })
+
+    const groupItems = filteredGroups.map((g) => {
+      const typingText = typingTextFor(g.groupId, true)
+      return {
+        id: g.groupId,
+        name: g.name || 'Group',
+        avatar: g.profilePicture || null,
+        last: g.lastActivityText || '',
+        time: g.lastActivityAt
+          ? new Date(g.lastActivityAt).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : '',
+        unread: g.unreadCount || 0,
+        // Groups have no per-message receipts yet (Phase 3) — show no check.
+        delivered: null,
+        typing: Boolean(typingText),
+        typingText,
+        status: null,
+        isGroup: true,
+        isBot: false,
+        pinned: false,
+      }
+    })
 
     return [...directItems, ...groupItems]
-  }, [filteredConversations, filteredGroups])
+  }, [filteredConversations, filteredGroups, typingByConv])
 
   return (
     <div

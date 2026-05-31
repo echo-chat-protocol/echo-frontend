@@ -3,7 +3,15 @@ import PropTypes from 'prop-types'
 import { getSocket } from '../../../socket'
 import DisplayText from './MessageDisplay/displayText'
 import SendText from './MessageInput/sendText'
+import TypingIndicator from './MessageDisplay/TypingIndicator'
 import { formatProfileImage } from '../DashboardComponents/utils/helpers'
+import {
+  upsertTypist,
+  removeTypist,
+  activeTypists,
+  formatTypingText,
+  TYPING_TTL_MS,
+} from './utils/chat/typing'
 
 import {
   applyCommit,
@@ -115,6 +123,13 @@ const buildRemovedMessage = (activeGroupId, removedInfo = {}) => ({
 const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedInfo = null }) => {
   const socket = useMemo(() => getSocket(), [])
   const [messages, setMessages] = useState([])
+  const [typists, setTypists] = useState({})
+  const typingPruneRef = useRef(null)
+  // Drop typing state when switching between groups.
+  useEffect(() => {
+    setTypists({})
+    if (typingPruneRef.current) clearTimeout(typingPruneRef.current)
+  }, [activeGroupId])
   const [, setMembers] = useState([])
   const [, setRole] = useState(null)
   const [groupCryptoState, setGroupCryptoState] = useState(null)
@@ -1412,11 +1427,38 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       } catch {}
     }
 
+    // ── Typing indicator (per-member, name-aware) ──────────────────────────────
+    const buildTypistMap = (active, prev) =>
+      active.reduce((acc, t) => {
+        acc[t.userId] = prev[t.userId]
+        return acc
+      }, {})
+    const scheduleTypingPrune = () => {
+      if (typingPruneRef.current) clearTimeout(typingPruneRef.current)
+      typingPruneRef.current = setTimeout(() => {
+        setTypists((prev) => {
+          const active = activeTypists(prev)
+          return active.length === Object.keys(prev).length ? prev : buildTypistMap(active, prev)
+        })
+      }, TYPING_TTL_MS + 100)
+    }
+    const handleGroupTyping = ({ groupId, userId: typistId, username } = {}) => {
+      if (String(groupId) !== String(activeGroupId)) return
+      setTypists((prev) => upsertTypist(prev, { userId: typistId, username }))
+      scheduleTypingPrune()
+    }
+    const handleGroupStopTyping = ({ groupId, userId: typistId } = {}) => {
+      if (String(groupId) !== String(activeGroupId)) return
+      setTypists((prev) => removeTypist(prev, typistId))
+    }
+
     socket.on('groupCommit', handleGroupCommit)
     socket.on('groupWelcome', handleGroupWelcome)
     socket.on('newGroupMessage', handleNewGroupMessage)
     socket.on('groupMemberAdded', handleMembershipChanged)
     socket.on('groupMemberRemoved', handleMembershipChanged)
+    socket.on('groupTyping', handleGroupTyping)
+    socket.on('groupStopTyping', handleGroupStopTyping)
     window.addEventListener('localStorageUpdated', handleStoredGroupMessage)
     window.addEventListener('groupStateSynced', handleGroupStateSynced)
 
@@ -1427,8 +1469,11 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       socket.off('newGroupMessage', handleNewGroupMessage)
       socket.off('groupMemberAdded', handleMembershipChanged)
       socket.off('groupMemberRemoved', handleMembershipChanged)
+      socket.off('groupTyping', handleGroupTyping)
+      socket.off('groupStopTyping', handleGroupStopTyping)
       window.removeEventListener('localStorageUpdated', handleStoredGroupMessage)
       window.removeEventListener('groupStateSynced', handleGroupStateSynced)
+      if (typingPruneRef.current) clearTimeout(typingPruneRef.current)
     }
   }, [
     activeGroupId,
@@ -1480,6 +1525,9 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           groupId: activeGroupId,
           userId,
           currentState: groupCryptoStateRef.current,
+          // Trust the locally-known epoch to skip a per-send openGroup round-trip;
+          // the server validates and rejects a stale epoch, handled below.
+          knownServerEpoch: Number.isInteger(currentMeta?.epoch) ? currentMeta.epoch : null,
         })
       } catch (err) {
         const raw = String(err?.message || err || '')
@@ -1761,6 +1809,13 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     ? 'You are no longer a member of this group'
     : MLS_KEY_MISSING_REASON
 
+  // Group: name-aware label — "Alice is typing…", "Alice and Bob are typing…",
+  // "Alice, Bob and Carol are typing…", then "N people typing…" for >3.
+  const typingText = formatTypingText(
+    activeTypists(typists).map((t) => t.username),
+    { isGroup: true }
+  )
+
   return (
     <div className='app-container h-full min-h-0 min-w-0 flex flex-col'>
       <div className='chat-container flex-1 min-h-0 min-w-0 flex flex-col relative'>
@@ -1776,10 +1831,12 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       </div>
 
       <div className='shrink-0'>
+        <TypingIndicator text={typingText} />
         <SendText
           sendMessage={sendMessage}
           disabled={sendDisabled}
           disabledReason={sendDisabledReason}
+          groupId={String(activeGroupId)}
         />
       </div>
     </div>

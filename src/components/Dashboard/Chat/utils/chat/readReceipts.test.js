@@ -4,6 +4,8 @@ import {
   hasUnreadInbound,
   isOwnReadReceipt,
   receiptState,
+  previewReceiptState,
+  advancePreviewReceipt,
   RECEIPT_STATE,
 } from './readReceipts'
 
@@ -94,5 +96,45 @@ describe('receiptState', () => {
   it('local failed/sending flags win over server truth', () => {
     expect(receiptState({ sendState: 'failed', seenStatus: true })).toBe(RECEIPT_STATE.FAILED)
     expect(receiptState({ sendState: 'sending', deliveredAt: 'x' })).toBe(RECEIPT_STATE.SENDING)
+  })
+})
+
+describe('previewReceiptState', () => {
+  const me = 'U1'
+
+  it('is null for an inbound last message (no check on received messages)', () => {
+    expect(previewReceiptState({ userId: 'U2', seenStatus: true }, me)).toBe(null)
+  })
+
+  it('is null when there is no message or no author', () => {
+    expect(previewReceiptState(null, me)).toBe(null)
+    expect(previewReceiptState({ text: 'hi' }, me)).toBe(null)
+  })
+
+  it('reflects the outgoing message state', () => {
+    expect(previewReceiptState({ userId: 'U1' }, me)).toBe(RECEIPT_STATE.SENT)
+    expect(previewReceiptState({ userId: 'U1', deliveredAt: 'x' }, me)).toBe(
+      RECEIPT_STATE.DELIVERED
+    )
+    expect(previewReceiptState({ userId: 'U1', seenStatus: true }, me)).toBe(RECEIPT_STATE.READ)
+  })
+
+  it('collapses transient sending/failed onto the sent floor for previews', () => {
+    expect(previewReceiptState({ userId: 'U1', sendState: 'sending' }, me)).toBe(RECEIPT_STATE.SENT)
+    expect(previewReceiptState({ userId: 'U1', sendState: 'failed' }, me)).toBe(RECEIPT_STATE.SENT)
+  })
+})
+
+describe('advancePreviewReceipt', () => {
+  it('moves forward sent → delivered → read', () => {
+    expect(advancePreviewReceipt('sent', 'delivered')).toBe('delivered')
+    expect(advancePreviewReceipt('delivered', 'read')).toBe('read')
+    expect(advancePreviewReceipt(null, 'sent')).toBe('sent')
+  })
+
+  it('never regresses to an earlier state', () => {
+    expect(advancePreviewReceipt('read', 'delivered')).toBe('read')
+    expect(advancePreviewReceipt('read', 'sent')).toBe('read')
+    expect(advancePreviewReceipt('delivered', 'delivered')).toBe('delivered')
   })
 })

@@ -1,4 +1,5 @@
 import eld from '../../../../../utils/storage/EncryptedLocalDatabase'
+import { getMessagePreview } from './messagePreview'
 
 // In-memory caches
 const ephemeralCache = new Map()
@@ -463,7 +464,7 @@ export const updateSavedMessages = async (userId, targetUserId, message, setMess
         userId,
         targetUserId,
         message,
-        latestMessage: message.text,
+        latestMessage: getMessagePreview(message),
         timestamp: message.timestamp || message.createdAt,
       },
     })
@@ -501,7 +502,7 @@ export const storeSavedMessagesBatch = async (userId, targetUserId, messages) =>
         userId,
         targetUserId,
         message: latest,
-        latestMessage: latest?.text,
+        latestMessage: getMessagePreview(latest),
         timestamp: latest?.timestamp || latest?.createdAt,
       },
     })

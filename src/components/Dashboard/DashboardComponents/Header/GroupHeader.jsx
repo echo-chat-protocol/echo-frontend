@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import PropTypes from 'prop-types'
-import { Camera, Plus, Search, X, ArrowLeft } from 'lucide-react'
+import { Camera, Plus, Search, X, ArrowLeft, UserPlus } from 'lucide-react'
 import { getSocket } from '../../../../socket'
 import { formatProfileImage } from '../utils/helpers'
 import { searchUsersByUsername } from '@/utils/userSearch'
@@ -673,7 +673,16 @@ const GroupHeader = ({
         </div>
       </div>
 
-      <div className='flex gap-2 md:gap-4 relative items-center' />
+      <div className='flex gap-2 md:gap-4 relative items-center'>
+        <button
+          onClick={() => setMembersOpen(true)}
+          aria-label={canAdd ? 'Members and add member' : 'Members'}
+          title={canAdd ? 'Members · Add member' : 'Members'}
+          className='grid h-10 w-10 place-items-center rounded-full border border-white/[0.08] text-white/70 transition-all hover:border-violet-400/40 hover:bg-white/[0.05] hover:text-white'
+        >
+          <UserPlus className='w-5 h-5' />
+        </button>
+      </div>
 
       {profileOpen && (
         <div className='fixed inset-0 bg-black/70 flex items-center justify-center z-50'>
