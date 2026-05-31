@@ -56,6 +56,7 @@ import {
   fetchAllGroupMessages,
 } from './utils/crypto/groupCrypto/groupMlsReplay'
 import { mergeAccountRosterIntoMlsRoster } from './utils/crypto/groupCrypto/rosterMerge'
+import { buildReplyContext } from './utils/chat/replyContext'
 
 const TEXT_DECODER = new TextDecoder()
 const MLS_UNAVAILABLE_TEXT = '[Unable to decrypt message]'
@@ -129,9 +130,12 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
   // input and then collapsing.
   const [opening, setOpening] = useState(true)
   const [typists, setTypists] = useState({})
+  // Swipe/click-to-reply target (compact reply context) for the composer.
+  const [replyTarget, setReplyTarget] = useState(null)
   const typingPruneRef = useRef(null)
-  // Drop typing state when switching between groups.
+  // Drop reply + typing state when switching between groups.
   useEffect(() => {
+    setReplyTarget(null)
     setTypists({})
     if (typingPruneRef.current) clearTimeout(typingPruneRef.current)
   }, [activeGroupId])
@@ -494,6 +498,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
 
       let text = ''
       let image = null
+      let replyTo = null
       let nextState = cryptoState
 
       const hasAppMessage =
@@ -523,6 +528,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             const payload = decodeGroupMessagePayload(plaintextBytes)
             text = payload.text
             image = payload.image
+            replyTo = payload.replyTo ?? null
           } catch (err) {
             console.error('[GroupChat] Failed to decrypt MLS message:', err)
             text = MLS_UNAVAILABLE_TEXT
@@ -541,6 +547,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           username: fromUsername,
           text,
           image,
+          replyTo,
           createdAt,
           seenStatus: true,
         },
@@ -1559,7 +1566,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     }
   }, [groupMeta?.mlsEnabled, groupCryptoState, userId])
 
-  const sendMessageNow = async (text, imageData = null) => {
+  const sendMessageNow = async (text, imageData = null, replyTo = null) => {
     if (removedInfoRef.current) {
       throw new Error('You are no longer a member of this group')
     }
@@ -1683,7 +1690,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
 
       const encrypted = await encryptApplicationMessage({
         state: currentState,
-        plaintextBytes: encodeGroupMessagePayload({ text, image: imageData }),
+        plaintextBytes: encodeGroupMessagePayload({ text, image: imageData, replyTo }),
       })
       const pendingOutgoingMessage = {
         groupId: activeGroupId,
@@ -1695,6 +1702,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         ...pendingOutgoingMessage,
         text,
         image: imageData ?? null,
+        replyTo: replyTo ?? null,
       })
 
       return new Promise((resolve, reject) => {
@@ -1751,7 +1759,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                   }
                   const retried = await encryptApplicationMessage({
                     state: retryState,
-                    plaintextBytes: encodeGroupMessagePayload({ text, image: imageData }),
+                    plaintextBytes: encodeGroupMessagePayload({ text, image: imageData, replyTo }),
                   })
                   const retryPendingOutgoingMessage = {
                     groupId: activeGroupId,
@@ -1843,10 +1851,10 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     })
   }
 
-  const sendMessage = (text, imageData = null) => {
+  const sendMessage = (text, imageData = null, replyTo = null) => {
     const queuedSend = sendQueueRef.current
       .catch(() => {})
-      .then(() => sendMessageNow(text, imageData))
+      .then(() => sendMessageNow(text, imageData, replyTo))
 
     sendQueueRef.current = queuedSend.catch(() => {})
     return queuedSend
@@ -1874,7 +1882,12 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           data-wallpaper={currentWallpaper}
         >
           <div className='relative z-10 flex flex-col min-h-full'>
-            <DisplayText messages={messages} currentUserId={String(userId)} />
+            <DisplayText
+              messages={messages}
+              currentUserId={String(userId)}
+              colorizeSenders
+              onReply={(m) => setReplyTarget(buildReplyContext(m))}
+            />
             <div ref={messagesEndRef} />
           </div>
         </div>
@@ -1896,6 +1909,8 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
               disabled={Boolean(removedInfo)}
               disabledReason={removedInfo ? 'You are no longer a member of this group' : ''}
               groupId={String(activeGroupId)}
+              replyTo={replyTarget}
+              onCancelReply={() => setReplyTarget(null)}
             />
           </div>
         )}

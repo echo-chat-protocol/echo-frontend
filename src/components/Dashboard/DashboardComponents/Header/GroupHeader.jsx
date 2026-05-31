@@ -3,6 +3,7 @@ import PropTypes from 'prop-types'
 import { Camera, Plus, Search, X, ArrowLeft, Users } from 'lucide-react'
 import { getSocket } from '../../../../socket'
 import { formatProfileImage } from '../utils/helpers'
+import { userColorName } from '../utils/userColor'
 import { searchUsersByUsername } from '@/utils/userSearch'
 
 import {
@@ -900,8 +901,10 @@ const GroupHeader = ({
                           alt={m.username || m.userId}
                           className='h-9 w-9 rounded-full object-cover ring-1 ring-white/10'
                         />
-                        <div className='min-w-0 truncate text-[13px] text-white/90'>
-                          {m.username || m.userId}
+                        <div className='min-w-0 truncate text-[13px]'>
+                          <span style={{ color: userColorName(m.userId) }}>
+                            {m.username || m.userId}
+                          </span>
                           {m.role === 'admin' && (
                             <span className='ml-1 text-[10px] text-violet-300/80'>admin</span>
                           )}

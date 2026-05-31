@@ -505,6 +505,8 @@ export const decryptIncomingMessage = async (
       text: decryptedPayload.text,
       image: decryptedPayload.image,
     }
+    // Only attach replyTo when present so plain messages keep their prior shape.
+    if (decryptedPayload.replyTo) decryptedMessage.replyTo = decryptedPayload.replyTo
 
     // Commit ratchet state only after successful decrypt (prevents desync on tampered ciphertext).
     for (const action of postDecryptActions) {

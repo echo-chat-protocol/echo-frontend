@@ -12,6 +12,13 @@ const cryptoMocks = vi.hoisted(() => ({
   parseQRPayload: vi.fn(),
 }))
 
+const html5Mocks = vi.hoisted(() => ({
+  start: vi.fn(),
+  stop: vi.fn(),
+  clear: vi.fn(),
+  instances: [],
+}))
+
 vi.mock('../qrCrypto', () => ({
   getOrCreateDeviceIK: (...a) => cryptoMocks.getOrCreateDeviceIK(...a),
   decryptQRPayloadDebug: (...a) => cryptoMocks.decryptQRPayloadDebug(...a),
@@ -24,10 +31,15 @@ vi.mock('../qrCrypto', () => ({
 }))
 
 vi.mock('html5-qrcode', () => ({
-  Html5Qrcode: vi.fn().mockImplementation(() => ({
-    start: vi.fn().mockResolvedValue(undefined),
-    stop: vi.fn().mockResolvedValue(undefined),
-  })),
+  Html5Qrcode: vi.fn().mockImplementation(function () {
+    const instance = {
+      start: html5Mocks.start,
+      stop: html5Mocks.stop,
+      clear: html5Mocks.clear,
+    }
+    html5Mocks.instances.push(instance)
+    return instance
+  }),
 }))
 
 // ── Browser API stubs ─────────────────────────────────────────────────────────
@@ -95,12 +107,21 @@ Object.defineProperty(HTMLVideoElement.prototype, 'readyState', {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 import QRScanner from '../QRScanner'
+import { Html5Qrcode } from 'html5-qrcode'
 
 const flush = () => new Promise((r) => setTimeout(r, 0))
 const flushScanner = async () => {
   await flush()
   await flush()
   await flush()
+  await flush()
+  await flush()
+}
+const waitForMockCall = async (mock, attempts = 20) => {
+  for (let i = 0; i < attempts; i++) {
+    if (mock.mock.calls.length > 0) return
+    await flush()
+  }
 }
 const fakeIK = {
   priv: new Uint8Array(32).fill(1),
@@ -120,6 +141,10 @@ beforeEach(() => {
   cryptoMocks.getOrCreateDeviceIK.mockResolvedValue(fakeIK)
   cryptoMocks.parseQRPayload.mockReturnValue(null)
   cryptoMocks.decryptQRPayloadDebug.mockResolvedValue({ text: 'decrypted text', debug: {} })
+  html5Mocks.start.mockResolvedValue(undefined)
+  html5Mocks.stop.mockResolvedValue(undefined)
+  html5Mocks.clear.mockResolvedValue(undefined)
+  html5Mocks.instances.length = 0
   stubBarcodeDetector(false)
   stubGetUserMedia(true)
   vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
@@ -189,7 +214,9 @@ describe('QRScanner — automatic camera start', () => {
     })
 
     expect(container.textContent).not.toContain('Start Camera')
-    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled()
+    expect(Html5Qrcode).toHaveBeenCalled()
+    expect(html5Mocks.start).toHaveBeenCalled()
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled()
   })
 
   it('starts automatically in onScanRaw mode without waiting for IK', async () => {
@@ -198,15 +225,20 @@ describe('QRScanner — automatic camera start', () => {
     await act(async () => {
       root.render(<QRScanner onScanRaw={vi.fn()} />)
       await flushScanner()
+      await waitForMockCall(Html5Qrcode)
+      await waitForMockCall(html5Mocks.start)
     })
 
     expect(container.textContent).not.toContain('Start Camera')
-    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled()
+    expect(Html5Qrcode).toHaveBeenCalled()
+    expect(html5Mocks.start).toHaveBeenCalled()
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled()
   })
 })
 
 describe('QRScanner — camera error', () => {
   it('shows an error when getUserMedia is denied', async () => {
+    stubBarcodeDetector(true)
     stubGetUserMedia(false)
 
     await act(async () => {
@@ -219,6 +251,7 @@ describe('QRScanner — camera error', () => {
   })
 
   it('logs getUserMedia failure in the debug panel', async () => {
+    stubBarcodeDetector(true)
     stubGetUserMedia(false)
 
     await act(async () => {
@@ -231,6 +264,7 @@ describe('QRScanner — camera error', () => {
   })
 
   it('shows "No camera found." for NotFoundError', async () => {
+    stubBarcodeDetector(true)
     Object.defineProperty(global.navigator, 'mediaDevices', {
       configurable: true,
       value: {
@@ -264,7 +298,9 @@ describe('QRScanner — onScanRaw mode', () => {
     // Since we can't directly trigger handleScan from outside, we verify
     // the component renders the camera view (not a result view).
     expect(container.textContent).not.toContain('Start Camera')
-    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled()
+    expect(Html5Qrcode).toHaveBeenCalled()
+    expect(html5Mocks.start).toHaveBeenCalled()
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled()
     // No result view text should be present
     expect(container.textContent).not.toContain('Message Decrypted')
     expect(container.textContent).not.toContain('Message Received')
@@ -313,6 +349,43 @@ describe('QRScanner — result views', () => {
     // Camera view: has the debug panel and auto-starts instead of showing a start button.
     expect(container.querySelector('.font-mono')).not.toBeNull()
     expect(container.textContent).not.toContain('Start Camera')
+  })
+})
+
+describe('QRScanner — html5-qrcode fallback', () => {
+  it('lets html5-qrcode own the camera when BarcodeDetector is unavailable', async () => {
+    stubBarcodeDetector(false)
+
+    await act(async () => {
+      root.render(<QRScanner />)
+      await flushScanner()
+    })
+
+    expect(Html5Qrcode).toHaveBeenCalledWith('qr-h5-container')
+    expect(html5Mocks.start).toHaveBeenCalledWith(
+      { facingMode: { ideal: 'environment' } },
+      { fps: 10 },
+      expect.any(Function),
+      expect.any(Function)
+    )
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled()
+  })
+
+  it('tries relaxed html5-qrcode constraints when rear camera startup fails', async () => {
+    html5Mocks.start
+      .mockRejectedValueOnce(
+        Object.assign(new Error('rear unavailable'), { name: 'NotReadableError' })
+      )
+      .mockResolvedValueOnce(undefined)
+
+    await act(async () => {
+      root.render(<QRScanner />)
+      await flushScanner()
+    })
+
+    expect(html5Mocks.start).toHaveBeenCalledTimes(2)
+    expect(html5Mocks.start.mock.calls[1][0]).toEqual({ facingMode: 'environment' })
+    expect(container.textContent).toContain('html5-qrcode live feed active')
   })
 })
 

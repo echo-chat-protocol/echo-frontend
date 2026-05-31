@@ -553,6 +553,19 @@ code,
   overflow-wrap: anywhere;
 }
 
+/* Reply jump: brief flash when scrolling to a quoted message. */
+@keyframes echo-reply-flash {
+  0% {
+    background-color: rgba(168, 85, 247, 0.22);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.echo-reply-highlight {
+  animation: echo-reply-flash 1.6s ease-out;
+}
+
 /* Bubble: received */
 .bubble-received {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015));

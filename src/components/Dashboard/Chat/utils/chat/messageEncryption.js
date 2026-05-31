@@ -62,6 +62,9 @@ export const encryptOutgoingMessage = async ({
   sessionTargetId = null,
   peerUserId = null,
   precomputedBundle = null,
+  // Optional compact reply context, embedded in the encrypted payload so the
+  // quoted message stays end-to-end encrypted.
+  replyTo = null,
 }) => {
   if (!userId || !targetUserId) {
     throw new Error('encryptOutgoingMessage requires userId and targetUserId')
@@ -122,6 +125,7 @@ export const encryptOutgoingMessage = async ({
     const payload = JSON.stringify({
       text: text || '',
       image: imageData || null,
+      replyTo: replyTo || null,
     })
 
     const aadBytes = buildAadBytes({
@@ -182,6 +186,7 @@ export const encryptOutgoingMessage = async ({
   const payload = JSON.stringify({
     text: text || '',
     image: imageData || null,
+    replyTo: replyTo || null,
   })
 
   const aadBytes = buildAadBytes({

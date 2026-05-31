@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import PropTypes from 'prop-types'
-import { Plus, Smile, Keyboard, Send, X } from 'lucide-react'
+import { Plus, Smile, Keyboard, Send, X, Reply } from 'lucide-react'
 import { compressImage } from '../utils/imageUtils'
 import { getSocket } from '../../../../socket'
 import MediaPanel from './MediaPanel'
+import { replyPreviewText } from '../utils/chat/replyContext'
 
 /**
  * Premium MessageInput — keeps all existing send/image logic,
@@ -16,6 +17,8 @@ const SendText = ({
   disabledReason = '',
   targetUserId,
   groupId,
+  replyTo = null,
+  onCancelReply,
 }) => {
   const [value, setValue] = useState('')
   const [focused, setFocused] = useState(false)
@@ -64,6 +67,11 @@ const SendText = ({
     }
   }, [emitStopTyping, targetUserId, groupId])
 
+  // Focus the composer when a reply is started (e.g. via swipe).
+  useEffect(() => {
+    if (replyTo) inputRef.current?.focus()
+  }, [replyTo])
+
   const handleChange = (e) => {
     setValue(e.target.value)
 
@@ -83,9 +91,11 @@ const SendText = ({
     if (!value.trim() || disabled) return
     emitStopTyping()
     const text = value.trim()
+    const reply = replyTo
     setValue('')
+    onCancelReply?.()
     try {
-      await Promise.resolve(sendMessage(text))
+      await Promise.resolve(sendMessage(text, null, reply))
     } catch (err) {
       console.error('[SendText] Failed to send message:', err)
     }
@@ -114,11 +124,13 @@ const SendText = ({
   const handleImageSend = async () => {
     if (disabled || !selectedImage) return
     const compressed = await compressImage(selectedImage)
+    const reply = replyTo
     const reader = new FileReader()
     reader.onload = () => {
-      Promise.resolve(sendMessage(imageText, reader.result)).catch((err) =>
+      Promise.resolve(sendMessage(imageText, reader.result, reply)).catch((err) =>
         console.error('[SendText] Failed to send image:', err)
       )
+      onCancelReply?.()
       handleCloseModal()
     }
     reader.readAsDataURL(compressed)
@@ -168,9 +180,10 @@ const SendText = ({
   const handleMediaSelect = (media) => {
     if (disabled || !media?.fullUrl) return
     setPanelOpen(false)
-    Promise.resolve(sendMessage('', media.fullUrl)).catch((err) =>
+    Promise.resolve(sendMessage('', media.fullUrl, replyTo)).catch((err) =>
       console.error('[SendText] Failed to send media:', err)
     )
+    onCancelReply?.()
   }
 
   const trackCaret = (e) => {
@@ -235,6 +248,28 @@ const SendText = ({
         accept='image/*'
         className='hidden'
       />
+
+      {/* Reply preview bar — shown above the composer while replying. */}
+      {replyTo && (
+        <div className='mx-1 mb-2 flex items-stretch gap-2 rounded-xl border border-white/[0.06] bg-white/[0.03] px-2.5 py-2 md:mx-2'>
+          <span className='w-[3px] shrink-0 rounded-full bg-violet-400' />
+          <div className='min-w-0 flex-1'>
+            <div className='flex items-center gap-1 truncate text-[11px] font-semibold text-violet-200'>
+              <Reply size={12} />
+              Replying to {replyTo.username || 'Unknown'}
+            </div>
+            <div className='truncate text-[12px] text-white/55'>{replyPreviewText(replyTo)}</div>
+          </div>
+          <button
+            type='button'
+            onClick={onCancelReply}
+            aria-label='Cancel reply'
+            className='grid h-7 w-7 shrink-0 place-items-center rounded-lg text-white/45 hover:bg-white/[0.06] hover:text-white'
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       {/* Pill input bar */}
       <div
@@ -322,6 +357,8 @@ SendText.propTypes = {
   disabledReason: PropTypes.string,
   targetUserId: PropTypes.string,
   groupId: PropTypes.string,
+  replyTo: PropTypes.object,
+  onCancelReply: PropTypes.func,
 }
 
 export default SendText

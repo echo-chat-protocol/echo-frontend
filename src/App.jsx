@@ -265,7 +265,14 @@ function App() {
                 </PrivateRoute>
               }
             />
-            <Route path='/profile/:userId' element={<UserProfileRoute />} />
+            <Route
+              path='/profile/:userId'
+              element={
+                <PrivateRoute>
+                  <UserProfileRoute />
+                </PrivateRoute>
+              }
+            />
 
             {/* 404 fallback */}
             <Route path='*' element={<Navigate to='/' replace />} />

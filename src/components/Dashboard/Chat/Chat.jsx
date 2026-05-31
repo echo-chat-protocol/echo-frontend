@@ -24,6 +24,7 @@ import {
 } from './utils/chat/keyManagement'
 
 import { encryptOutgoingMessage } from './utils/chat/messageEncryption'
+import { buildReplyContext } from './utils/chat/replyContext'
 import { decryptIncomingMessage } from './utils/chat/messageDecryption'
 import { hasUnreadInbound } from './utils/chat/readReceipts'
 import {
@@ -51,6 +52,8 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
   const username = decodedToken?.username || ''
   const ownDeviceUserId = decodedToken?.deviceUserId || null
   const [messages, setMessages] = useState([])
+  // Swipe/click-to-reply target (compact reply context) for the composer.
+  const [replyTarget, setReplyTarget] = useState(null)
   const [typists, setTypists] = useState({})
   const typingPruneRef = useRef(null)
   // Last accepted message number per (sender_device → recipient_device) pair, so
@@ -149,7 +152,8 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
   useEffect(() => {
     isInitialLoadRef.current = true
     previousMessageCountRef.current = 0
-    // Drop any typing state carried over from the previous conversation.
+    // Drop reply + typing state carried over from the previous conversation.
+    setReplyTarget(null)
     setTypists({})
     if (typingPruneRef.current) clearTimeout(typingPruneRef.current)
   }, [targetUserId])
@@ -428,7 +432,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
     }
   }, [activeChat, contact, privateKeyArray, socket, targetUserId, userId])
 
-  const sendMessageNow = async (text, imageData = null) => {
+  const sendMessageNow = async (text, imageData = null, replyTo = null) => {
     if (sendBlocked) {
       throw new Error(sendBlockedReason || 'Sending is blocked')
     }
@@ -487,6 +491,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
       username,
       text: text || '',
       image: imageData || null,
+      replyTo: replyTo || null,
       seenStatus: false,
       createdAt,
     }
@@ -572,6 +577,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
           username,
           socket,
           privateKeyArray: privateKey,
+          replyTo,
         })
       } catch (err) {
         if (err?.code === 'PEER_IDENTITY_CHANGED') {
@@ -630,6 +636,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
           username,
           socket,
           privateKeyArray: privateKey,
+          replyTo,
           sessionTargetId: target.sessionTargetId,
           peerUserId: target.peerUserId,
           precomputedBundle: target.bundle,
@@ -684,10 +691,10 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
     return
   }
 
-  const sendMessage = (text, imageData = null) => {
+  const sendMessage = (text, imageData = null, replyTo = null) => {
     const queuedSend = sendQueueRef.current
       .catch(() => {})
-      .then(() => sendMessageNow(text, imageData))
+      .then(() => sendMessageNow(text, imageData, replyTo))
 
     sendQueueRef.current = queuedSend.catch(() => {
       // The send threw after the optimistic bubble was rendered — flip it to
@@ -752,6 +759,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
               currentUserId={userId}
               wallpaperType={currentWallpaper}
               contact={contactInfo}
+              onReply={(m) => setReplyTarget(buildReplyContext(m))}
             />
             <div ref={messagesEndRef} />
           </div>
@@ -792,6 +800,8 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
           disabled={sendBlocked}
           disabledReason={sendBlockedReason}
           targetUserId={targetUserId}
+          replyTo={replyTarget}
+          onCancelReply={() => setReplyTarget(null)}
         />
       </div>
     </div>
