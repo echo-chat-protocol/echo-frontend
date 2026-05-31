@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PropTypes from 'prop-types'
+import { Loader2 } from 'lucide-react'
 import { getSocket } from '../../../socket'
 import DisplayText from './MessageDisplay/displayText'
 import SendText from './MessageInput/sendText'
@@ -123,6 +124,10 @@ const buildRemovedMessage = (activeGroupId, removedInfo = {}) => ({
 const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedInfo = null }) => {
   const socket = useMemo(() => getSocket(), [])
   const [messages, setMessages] = useState([])
+  // True from the moment a group opens until we've determined MLS readiness, so
+  // the composer shows the "securing" bar immediately instead of flashing the
+  // input and then collapsing.
+  const [opening, setOpening] = useState(true)
   const [typists, setTypists] = useState({})
   const typingPruneRef = useRef(null)
   // Drop typing state when switching between groups.
@@ -704,6 +709,17 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     let cancelled = false
 
     setMessages([])
+    setOpening(true)
+    // Instant render: paint this group's cached messages from ELD right away,
+    // BEFORE the slow openGroup + MLS prep + fetch/replay below. New or
+    // not-yet-cached messages merge in once the replay completes. This is what
+    // makes reopening a group feel instant instead of waiting on MLS.
+    getSavedMessages(userId, getGroupCacheId(activeGroupId))
+      .then((cached) => {
+        if (cancelled || !Array.isArray(cached) || cached.length === 0) return
+        setMessages(cached.filter((m) => m?.text !== MLS_UNAVAILABLE_TEXT))
+      })
+      .catch(() => {})
     setMembers([])
     setRole(null)
     setGroupCryptoState(null)
@@ -740,7 +756,10 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       const res = await new Promise((resolve) =>
         socket.emit('openGroup', { groupId: activeGroupId }, resolve)
       )
-      if (cancelled || !res?.success) return
+      if (cancelled || !res?.success) {
+        if (!cancelled) setOpening(false)
+        return
+      }
 
       const roster = buildRoster(res.members)
       const nextMeta = {
@@ -753,6 +772,9 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       setMembers(Array.isArray(res.members) ? res.members : [])
       setRole(res?.membership?.role ?? null)
       setGroupMeta(nextMeta)
+      // We now know whether this is an MLS group; `mlsPreparing` takes over the
+      // composer state from here (down while securing, up once key material lands).
+      setOpening(false)
 
       let localState = await syncLocalStateFromServer({
         roster,
@@ -767,6 +789,10 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             groupId: activeGroupId,
             userId,
             currentState: localState,
+            // The openGroup response above already told us the server epoch, so
+            // pass it as the hint: when our saved state is current, prepare can
+            // skip a second openGroup round-trip (and the bootstrap) entirely.
+            knownServerEpoch: Number.isInteger(nextMeta.epoch) ? nextMeta.epoch : null,
           })
           if (prepared?.state) localState = prepared.state
           if (Number.isInteger(prepared?.serverEpoch)) {
@@ -1826,11 +1852,12 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     return queuedSend
   }
 
-  const sendDisabled =
-    Boolean(removedInfo) || (groupMeta.mlsEnabled && !hasGroupKeyMaterial(groupCryptoState))
-  const sendDisabledReason = removedInfo
-    ? 'You are no longer a member of this group'
-    : MLS_KEY_MISSING_REASON
+  // The composer is "down" (a slim securing bar) while the group is still
+  // opening OR MLS key material hasn't landed yet; it pops up to the full input
+  // once MLS is ready (or the group isn't MLS). Removed members keep the
+  // (disabled) input so they still see history.
+  const mlsPreparing =
+    !removedInfo && (opening || (groupMeta.mlsEnabled && !hasGroupKeyMaterial(groupCryptoState)))
 
   // Group: name-aware label — "Alice is typing…", "Alice and Bob are typing…",
   // "Alice, Bob and Carol are typing…", then "N people typing…" for >3.
@@ -1854,13 +1881,24 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       </div>
 
       <div className='shrink-0'>
-        <TypingIndicator text={typingText} />
-        <SendText
-          sendMessage={sendMessage}
-          disabled={sendDisabled}
-          disabledReason={sendDisabledReason}
-          groupId={String(activeGroupId)}
-        />
+        {mlsPreparing ? (
+          // "Down" state: MLS not ready yet — just a spinner on the chat
+          // background where the composer will pop up.
+          <div className='flex items-center justify-center py-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))]'>
+            <Loader2 size={32} className='animate-spin text-violet-300' />
+          </div>
+        ) : (
+          // Ready: the full composer "pops up" into place.
+          <div className='composer-pop'>
+            <TypingIndicator text={typingText} />
+            <SendText
+              sendMessage={sendMessage}
+              disabled={Boolean(removedInfo)}
+              disabledReason={removedInfo ? 'You are no longer a member of this group' : ''}
+              groupId={String(activeGroupId)}
+            />
+          </div>
+        )}
       </div>
     </div>
   )

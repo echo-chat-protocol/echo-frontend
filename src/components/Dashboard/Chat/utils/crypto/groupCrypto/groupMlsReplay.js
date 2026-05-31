@@ -377,15 +377,21 @@ export async function bootstrapGroupMlsOnDevice({
     /* ignore */
   }
 
-  // Primary may still be publishing the add+Welcome for this device leaf.
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  // Primary may still be publishing the add+Welcome for this device leaf. Poll
+  // briefly (~1.25s worst case) for the init secret to land. If it doesn't, we
+  // fall through to the server catch-up below and the live `groupWelcome`
+  // handler will re-sync once the Welcome finally arrives — far better than
+  // blocking the group open for ~10s on every stale-state reopen.
+  const WELCOME_WAIT_ATTEMPTS = 6
+  const WELCOME_WAIT_MS = 250
+  for (let attempt = 0; attempt < WELCOME_WAIT_ATTEMPTS; attempt += 1) {
     state = await loadGroupState(gid).catch(() => null)
     if (state?.initSecretB64) break
-    if (attempt > 0 && attempt % 4 === 0) {
+    if (attempt === 2) {
       await requestSiblingGroupMlsBootstrap(socket, gid)
     }
     if (attempt > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 500))
+      await new Promise((resolve) => setTimeout(resolve, WELCOME_WAIT_MS))
     }
     await fetchAndApplyPendingWelcomes({ socket, userId, groupId: gid })
   }

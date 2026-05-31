@@ -727,6 +727,21 @@ code,
   animation-delay: 0.3s;
 }
 
+/* Group composer "pops up" when MLS becomes ready (replaces the securing bar). */
+@keyframes echo-composer-pop {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.composer-pop {
+  animation: echo-composer-pop 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 /* Incoming-call auto-dismiss countdown bar. */
 @keyframes echo-call-countdown {
   from {
