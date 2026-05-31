@@ -613,7 +613,10 @@ const Dashboard = () => {
       if (!groupId) return
 
       let profilePicture = group.profilePicture || null
-      if (profilePicture) {
+      // Only cache-bust server-hosted images (e.g. /uploads). A data: URL is
+      // self-contained — appending `?v=` corrupts the base64 payload — and a new
+      // data URL is already fresh content, so it needs no cache-bust.
+      if (profilePicture && !profilePicture.startsWith('data:')) {
         const base = formatProfileImage(profilePicture, group.name || 'Group')
         profilePicture = `${base}${base.includes('?') ? '&' : '?'}v=${Date.now()}`
       }

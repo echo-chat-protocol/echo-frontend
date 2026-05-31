@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import PropTypes from 'prop-types'
-import { Camera, Plus, Search, X, ArrowLeft, UserPlus } from 'lucide-react'
+import { Camera, Plus, Search, X, ArrowLeft, Users } from 'lucide-react'
 import { getSocket } from '../../../../socket'
 import { formatProfileImage } from '../utils/helpers'
 import { searchUsersByUsername } from '@/utils/userSearch'
@@ -46,8 +46,9 @@ const GroupHeader = ({
   const socket = useMemo(() => getSocket(), [])
   const [members, setMembers] = useState([])
   const [role, setRole] = useState(null)
-  const [membersOpen, setMembersOpen] = useState(false)
-  const [profileOpen, setProfileOpen] = useState(false)
+  // Single "Group info" panel (picture, description, add member, member list),
+  // opened by clicking the group top bar.
+  const [infoOpen, setInfoOpen] = useState(false)
 
   const [searchTerm, setSearchTerm] = useState('')
   const [searchResult, setSearchResult] = useState(null)
@@ -146,8 +147,7 @@ const GroupHeader = ({
 
   useEffect(() => {
     refresh()
-    setMembersOpen(false)
-    setProfileOpen(false)
+    setInfoOpen(false)
     setPendingRemovals(new Set())
   }, [groupId, refresh])
 
@@ -173,7 +173,7 @@ const GroupHeader = ({
       })
       if (removedMemberId === String(userId)) {
         setRole(null)
-        setMembersOpen(false)
+        setInfoOpen(false)
       }
     }
 
@@ -189,11 +189,22 @@ const GroupHeader = ({
     }
   }, [groupId, refresh, socket, userId])
 
-  // Ensure latest membership is shown whenever the Members modal opens
-  useEffect(() => {
-    if (!membersOpen) return
+  // Open the Group info panel: load latest data and seed the editable drafts.
+  const openInfo = () => {
     refresh()
-  }, [membersOpen, refresh])
+    setDescriptionDraft(groupMeta.description || '')
+    setProfilePictureDraft(groupMeta.profilePicture || '')
+    setProfileError('')
+    setSearchTerm('')
+    setSearchResult(null)
+    setInfoOpen(true)
+  }
+
+  // Keep membership fresh while the panel is open.
+  useEffect(() => {
+    if (!infoOpen) return
+    refresh()
+  }, [infoOpen, refresh])
 
   const visibleMembers = members
     .filter((member) => member?.status !== 'removed')
@@ -263,7 +274,8 @@ const GroupHeader = ({
       }
 
       refresh()
-      setProfileOpen(false)
+      // Keep the panel open (it also hosts members/add) — the server broadcast
+      // refreshes the avatar/description and posts the "changed picture" row.
     } catch (err) {
       console.error('[GroupHeader] Failed to update group profile:', err)
       setProfileError(err?.message || 'Failed to update group profile.')
@@ -306,7 +318,6 @@ const GroupHeader = ({
       setSearchResult(null)
 
       if (!groupMeta.mlsEnabled) {
-        setMembersOpen(false)
         refresh()
         return
       }
@@ -438,7 +449,6 @@ const GroupHeader = ({
 
       await saveGroupState(groupId, workingState)
       refresh()
-      setMembersOpen(false)
     } catch (err) {
       console.error('[GroupHeader] Failed to add member:', err)
     } finally {
@@ -657,267 +667,282 @@ const GroupHeader = ({
             <ArrowLeft className='w-4 h-4' />
           </button>
         )}
-        <img
-          src={avatarSrc}
-          alt={displayName}
-          className='w-12 h-12 rounded-full border-2 border-black object-cover bg-gray-700'
-          onError={(e) => {
-            e.target.src = formatProfileImage('', displayName)
-          }}
-        />
+        {/* Clicking the group identity opens the Group info panel. */}
+        <button
+          type='button'
+          onClick={openInfo}
+          title='Group info'
+          className='-mx-1 flex min-w-0 items-center gap-2 rounded-xl px-1 py-1 text-left transition hover:bg-white/[0.04] md:gap-4'
+        >
+          <img
+            src={avatarSrc}
+            alt={displayName}
+            className='w-12 h-12 rounded-full border-2 border-black object-cover bg-gray-700'
+            onError={(e) => {
+              e.target.src = formatProfileImage('', displayName)
+            }}
+          />
 
-        <div className='min-w-0'>
-          <h3 className='font-semibold text-white truncate'>{displayName}</h3>
-          <p className='text-sm text-gray-300 truncate'>{displayDescription || subtitle}</p>
-          {displayDescription && <p className='text-xs text-gray-500 truncate'>{subtitle}</p>}
-        </div>
+          <div className='min-w-0'>
+            <h3 className='font-semibold text-white truncate'>{displayName}</h3>
+            <p className='text-sm text-gray-300 truncate'>{displayDescription || subtitle}</p>
+            {displayDescription && <p className='text-xs text-gray-500 truncate'>{subtitle}</p>}
+          </div>
+        </button>
       </div>
 
       <div className='flex gap-2 md:gap-4 relative items-center'>
         <button
-          onClick={() => setMembersOpen(true)}
-          aria-label={canAdd ? 'Members and add member' : 'Members'}
-          title={canAdd ? 'Members · Add member' : 'Members'}
+          onClick={openInfo}
+          aria-label='Group info'
+          title='Group info'
           className='grid h-10 w-10 place-items-center rounded-full border border-white/[0.08] text-white/70 transition-all hover:border-violet-400/40 hover:bg-white/[0.05] hover:text-white'
         >
-          <UserPlus className='w-5 h-5' />
+          <Users className='w-5 h-5' />
         </button>
       </div>
 
-      {profileOpen && (
-        <div className='fixed inset-0 bg-black/70 flex items-center justify-center z-50'>
-          <div className='bg-gray-900 rounded-lg p-4 max-w-lg w-full mx-4 border border-gray-700'>
-            <div className='flex items-center justify-between mb-4'>
-              <h3 className='text-lg font-semibold text-white'>Group profile</h3>
+      {infoOpen && (
+        <>
+          {/* Backdrop */}
+          <button
+            type='button'
+            aria-label='Close group info'
+            onClick={() => setInfoOpen(false)}
+            className='fixed inset-0 z-40 bg-black/50 backdrop-blur-sm'
+          />
+
+          {/* Slide-in panel — matches the 1:1 contact info panel style. */}
+          <aside className='echo-floating fixed inset-y-0 right-0 z-50 flex w-full max-w-[390px] flex-col overflow-y-auto border-l border-white/[0.05] animate-slide-in-right'>
+            {/* Sticky header */}
+            <div className='sticky top-0 z-10 flex items-center justify-between border-b border-white/[0.05] bg-black/40 px-5 py-3 backdrop-blur'>
+              <h3 className='text-[13px] font-semibold tracking-[-0.01em] text-white'>
+                Group info
+              </h3>
               <button
-                onClick={() => setProfileOpen(false)}
-                className='text-gray-400 hover:text-white'
+                onClick={() => setInfoOpen(false)}
+                className='grid h-8 w-8 place-items-center rounded-lg text-white/45 hover:bg-white/[0.04] hover:text-white'
               >
-                <X className='w-5 h-5' />
+                <X size={15} />
               </button>
             </div>
 
-            <div className='space-y-4'>
-              <div className='flex items-center gap-4'>
+            {/* Hero */}
+            <div className='relative px-5 pb-6 pt-8 text-center'>
+              <div className='echo-aurora' />
+              <div className='relative mx-auto h-24 w-24'>
                 <img
                   src={formatProfileImage(profilePictureDraft, displayName)}
                   alt={displayName}
-                  className='w-20 h-20 rounded-full border-2 border-black object-cover bg-gray-700'
+                  className='h-24 w-24 rounded-full object-cover ring-1 ring-white/10'
                   onError={(e) => {
                     e.target.src = formatProfileImage('', displayName)
                   }}
                 />
-                <div className='flex flex-col gap-2'>
-                  <label className='inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-gray-800 text-white hover:bg-gray-700 cursor-pointer'>
-                    <Camera className='w-4 h-4' />
-                    Change photo
+                {canEditProfile && (
+                  <label
+                    title='Change photo'
+                    className='absolute -bottom-1 -right-1 grid h-8 w-8 cursor-pointer place-items-center rounded-full border border-white/10 bg-violet-600 text-white shadow-lg transition hover:bg-violet-500'
+                  >
+                    <Camera size={14} />
                     <input
                       type='file'
                       accept='image/*'
                       className='hidden'
                       onChange={handleProfilePictureChange}
-                      disabled={!canEditProfile || savingProfile}
+                      disabled={savingProfile}
                     />
                   </label>
+                )}
+              </div>
+              <h2 className='relative mt-4 text-[18px] font-semibold tracking-[-0.02em] text-white'>
+                {displayName}
+              </h2>
+              <p className='relative mt-0.5 text-[12px] text-white/45'>
+                {memberCount} {memberCount === 1 ? 'member' : 'members'}
+                {role === 'admin' ? ' · Admin' : ''}
+              </p>
+              {canEditProfile && profilePictureDraft && (
+                <button
+                  type='button'
+                  onClick={() => {
+                    setProfilePictureDraft('')
+                    setProfileError('')
+                  }}
+                  disabled={savingProfile}
+                  className='relative mt-2 text-[11px] text-white/45 transition hover:text-white disabled:opacity-50'
+                >
+                  Remove photo
+                </button>
+              )}
+            </div>
+
+            {/* Description */}
+            <Section title='Description'>
+              <textarea
+                value={descriptionDraft}
+                onChange={(e) => setDescriptionDraft(e.target.value)}
+                maxLength={280}
+                rows={3}
+                className='echo-input w-full resize-none rounded-2xl px-4 py-3 text-[13px] leading-6 echo-focus-ring disabled:cursor-not-allowed disabled:opacity-60'
+                placeholder={canEditProfile ? 'Add a description for this group' : 'No description'}
+                disabled={!canEditProfile || savingProfile}
+              />
+              {canEditProfile && (
+                <>
+                  <div className='mt-1 text-right text-[10px] text-white/35'>
+                    {descriptionDraft.length}/280
+                  </div>
+                  {profileError && (
+                    <div className='mt-2 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[12px] text-red-200'>
+                      {profileError}
+                    </div>
+                  )}
+                  {processingProfileImage && (
+                    <div className='mt-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-[12px] text-white/65'>
+                      Processing image…
+                    </div>
+                  )}
                   <button
                     type='button'
-                    className='text-left text-sm text-gray-400 hover:text-white disabled:opacity-50'
-                    onClick={() => {
-                      setProfilePictureDraft('')
-                      setProfileError('')
-                    }}
-                    disabled={!canEditProfile || savingProfile}
+                    className='echo-cta mt-3 w-full rounded-full py-2.5 text-[12px] font-medium disabled:opacity-50 disabled:saturate-50'
+                    onClick={handleSaveProfile}
+                    disabled={savingProfile || processingProfileImage}
                   >
-                    Remove photo
+                    {savingProfile ? 'Saving…' : 'Save changes'}
                   </button>
-                </div>
-              </div>
-
-              <div className='space-y-2'>
-                <label className='block text-sm text-gray-300'>Description</label>
-                <textarea
-                  value={descriptionDraft}
-                  onChange={(e) => setDescriptionDraft(e.target.value)}
-                  maxLength={280}
-                  rows={4}
-                  className='w-full p-3 bg-gray-800 text-white rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-[#8e79f2]'
-                  placeholder='Add a description for this group'
-                  disabled={!canEditProfile || savingProfile}
-                />
-                <div className='text-xs text-gray-500 text-right'>
-                  {descriptionDraft.length}/280
-                </div>
-              </div>
-
-              {profileError && (
-                <div className='rounded-lg border border-red-800 bg-red-950/40 px-3 py-2 text-sm text-red-200'>
-                  {profileError}
-                </div>
+                </>
               )}
+            </Section>
 
-              {processingProfileImage && (
-                <div className='rounded-lg border border-gray-700 bg-gray-800/60 px-3 py-2 text-sm text-gray-200'>
-                  Processing image...
-                </div>
-              )}
-
-              <div className='flex justify-end gap-2'>
-                <button
-                  type='button'
-                  className='px-4 py-2 rounded-lg text-sm bg-gray-800 text-white hover:bg-gray-700'
-                  onClick={() => setProfileOpen(false)}
-                  disabled={savingProfile}
-                >
-                  Cancel
-                </button>
-                <button
-                  type='button'
-                  className='px-4 py-2 rounded-lg text-sm bg-indigo-700 text-white hover:bg-[#8e79f2] disabled:opacity-50'
-                  onClick={handleSaveProfile}
-                  disabled={!canEditProfile || savingProfile || processingProfileImage}
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {membersOpen && (
-        <div className='fixed inset-0 bg-black/70 flex items-center justify-center z-50'>
-          <div className='bg-gray-900 rounded-lg p-4 max-w-xl w-full mx-4 border border-gray-700'>
-            <div className='flex items-center justify-between mb-4'>
-              <h3 className='text-lg font-semibold text-white'>Members</h3>
-              <button
-                onClick={() => setMembersOpen(false)}
-                className='text-gray-400 hover:text-white'
-              >
-                <X className='w-5 h-5' />
-              </button>
-            </div>
-
+            {/* Add member (admins) */}
             {canAdd && (
-              <div className='space-y-2 mb-4'>
-                <div className='text-sm text-gray-300'>Add member</div>
-                <div className='flex gap-2'>
-                  <div className='relative w-full'>
-                    <input
-                      type='text'
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                      placeholder='Search username...'
-                      className='w-full p-3 pr-10 bg-gray-800 text-white rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-[#8e79f2]'
-                    />
-                    <button
-                      className='absolute right-3 top-3 text-gray-400 hover:text-white'
-                      onClick={handleSearch}
-                      disabled={loading}
-                    >
-                      <Search className='h-5 w-5' />
-                    </button>
-                  </div>
+              <Section title='Add member'>
+                <div className='relative'>
+                  <input
+                    type='text'
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                    placeholder='Search username...'
+                    className='echo-input w-full rounded-2xl px-4 py-3 pr-11 text-[13px] echo-focus-ring'
+                  />
+                  <button
+                    className='absolute right-3 top-1/2 -translate-y-1/2 text-white/45 hover:text-white disabled:opacity-50'
+                    onClick={handleSearch}
+                    disabled={loading}
+                  >
+                    <Search className='h-4 w-4' />
+                  </button>
                 </div>
 
                 {searchResult && (
-                  <div className='flex items-center justify-between p-3 bg-gray-800 rounded-lg border border-gray-700'>
-                    <div className='flex items-center gap-3 min-w-0'>
+                  <div className='mt-2 flex items-center justify-between gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5'>
+                    <div className='flex min-w-0 items-center gap-3'>
                       <img
                         src={searchResult.profileImage}
                         alt={searchResult.username}
-                        className='w-9 h-9 rounded-full object-cover border-2 border-black'
+                        className='h-9 w-9 rounded-full object-cover ring-1 ring-white/10'
                         onError={(e) => {
                           e.target.src = `https://ui-avatars.com/api/?name=${searchResult.username}&background=8e79f2&color=fff`
                         }}
                       />
-                      <div className='truncate text-white'>{searchResult.username}</div>
+                      <div className='truncate text-[13px] text-white/90'>
+                        {searchResult.username}
+                      </div>
                     </div>
                     {(() => {
                       const userIdStr = String(searchResult.id)
                       const isAlreadyMember = members.some((m) => String(m.userId) === userIdStr)
                       const isRemoving = pendingRemovals.has(userIdStr)
                       const disabled = loading || isAlreadyMember || isRemoving
-                      const classes = disabled
-                        ? 'bg-gray-700 text-gray-300 cursor-not-allowed'
-                        : 'bg-indigo-700 text-white hover:bg-[#8e79f2]'
-                      const label = isRemoving
-                        ? 'Removing…'
-                        : isAlreadyMember
-                          ? 'Already in group'
-                          : 'Add'
+                      const label = isRemoving ? 'Removing…' : isAlreadyMember ? 'In group' : 'Add'
                       return (
                         <button
-                          className={`px-3 py-2 rounded-lg text-sm flex items-center gap-2 ${classes}`}
+                          className={`inline-flex shrink-0 items-center gap-1 rounded-full px-3 py-1.5 text-[11px] font-medium transition ${
+                            disabled
+                              ? 'cursor-not-allowed bg-white/[0.04] text-white/40'
+                              : 'echo-cta'
+                          }`}
                           disabled={disabled}
                           onClick={() => handleAdd(searchResult.id)}
                         >
-                          <Plus className='w-4 h-4' />
+                          <Plus className='h-3.5 w-3.5' />
                           {label}
                         </button>
                       )
                     })()}
                   </div>
                 )}
-              </div>
+              </Section>
             )}
 
-            <div className='space-y-2 max-h-80 overflow-y-auto'>
-              {visibleMembers.map((m) => {
-                const isSelf = String(m.userId) === String(userId)
-                const canKick = role === 'admin' && !isSelf && m.role !== 'admin'
-                const canLeave = isSelf
-                return (
-                  <div
-                    key={m.userId}
-                    className='flex items-center justify-between p-3 bg-gray-800 rounded-lg border border-gray-700'
-                  >
-                    <div className='flex items-center gap-3 min-w-0'>
-                      <img
-                        src={
-                          m.profilePicture
-                            ? formatProfileImage(m.profilePicture, m.username || m.userId)
-                            : `https://ui-avatars.com/api/?name=${m.username || m.userId}&background=8e79f2&color=fff`
-                        }
-                        alt={m.username || m.userId}
-                        className='w-9 h-9 rounded-full object-cover border-2 border-black'
-                      />
-                      <div className='min-w-0'>
-                        <div className='text-white truncate'>
-                          {m.username || m.userId}{' '}
+            {/* Members */}
+            <Section title={`Members · ${memberCount}`}>
+              <div className='grid gap-2'>
+                {visibleMembers.map((m) => {
+                  const isSelf = String(m.userId) === String(userId)
+                  const canKick = role === 'admin' && !isSelf && m.role !== 'admin'
+                  const canLeave = isSelf
+                  const removing = pendingRemovals.has(String(m.userId))
+                  return (
+                    <div
+                      key={m.userId}
+                      className='flex items-center justify-between gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5'
+                    >
+                      <div className='flex min-w-0 items-center gap-3'>
+                        <img
+                          src={
+                            m.profilePicture
+                              ? formatProfileImage(m.profilePicture, m.username || m.userId)
+                              : `https://ui-avatars.com/api/?name=${m.username || m.userId}&background=8e79f2&color=fff`
+                          }
+                          alt={m.username || m.userId}
+                          className='h-9 w-9 rounded-full object-cover ring-1 ring-white/10'
+                        />
+                        <div className='min-w-0 truncate text-[13px] text-white/90'>
+                          {m.username || m.userId}
                           {m.role === 'admin' && (
-                            <span className='text-xs text-indigo-300'>(admin)</span>
+                            <span className='ml-1 text-[10px] text-violet-300/80'>admin</span>
                           )}
-                          {isSelf && <span className='text-xs text-gray-300'> (you)</span>}
+                          {isSelf && <span className='ml-1 text-[10px] text-white/40'>you</span>}
                         </div>
                       </div>
+                      {(canKick || canLeave) && (
+                        <button
+                          className='shrink-0 rounded-full border border-red-500/25 bg-red-500/10 px-3 py-1.5 text-[11px] font-medium text-red-300 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50'
+                          disabled={loading || removing}
+                          onClick={() => handleRemove(m.userId)}
+                        >
+                          {removing ? 'Removing…' : isSelf ? 'Leave' : 'Remove'}
+                        </button>
+                      )}
                     </div>
-                    {(canKick || canLeave) && (
-                      <button
-                        className={`px-3 py-2 rounded-lg text-sm ${
-                          pendingRemovals.has(String(m.userId))
-                            ? 'bg-red-900 text-white cursor-not-allowed'
-                            : 'bg-red-700 text-white hover:bg-red-600'
-                        }`}
-                        disabled={loading || pendingRemovals.has(String(m.userId))}
-                        onClick={() => handleRemove(m.userId)}
-                      >
-                        {pendingRemovals.has(String(m.userId))
-                          ? 'Removing…'
-                          : isSelf
-                            ? 'Leave'
-                            : 'Remove'}
-                      </button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </div>
+                  )
+                })}
+              </div>
+            </Section>
+          </aside>
+        </>
       )}
     </div>
   )
+}
+
+function Section({ title, children }) {
+  return (
+    <div className='border-t border-white/[0.05] px-5 py-4'>
+      <div className='mb-2.5 text-[10px] font-medium uppercase tracking-[0.18em] text-white/40'>
+        {title}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+Section.propTypes = {
+  title: PropTypes.node,
+  children: PropTypes.node,
 }
 
 GroupHeader.propTypes = {

@@ -235,39 +235,18 @@ describe('GroupHeader MLS membership updates', () => {
     })
   }
 
-  async function openMembersModal() {
-    const optionsButton = container.querySelector('button[aria-label="Group options"]')
+  // Picture, description, add-member and the member list now live in one
+  // "Group info" panel, opened from the group top bar.
+  async function openGroupInfo() {
+    const infoButton = container.querySelector('button[aria-label="Group info"]')
     await act(async () => {
-      optionsButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await flush()
-    })
-
-    const membersButton = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Members')
-    )
-
-    await act(async () => {
-      membersButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      infoButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await flush()
     })
   }
 
-  async function openProfileModal() {
-    const optionsButton = container.querySelector('button[aria-label="Group options"]')
-    await act(async () => {
-      optionsButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await flush()
-    })
-
-    const profileButton = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Group profile')
-    )
-
-    await act(async () => {
-      profileButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await flush()
-    })
-  }
+  const openMembersModal = openGroupInfo
+  const openProfileModal = openGroupInfo
 
   async function searchForBob() {
     const searchInput = container.querySelector('input[placeholder="Search username..."]')
@@ -474,7 +453,7 @@ describe('GroupHeader MLS membership updates', () => {
     })
 
     const saveButton = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Save'
+      (button) => button.textContent?.trim() === 'Save changes'
     )
 
     await act(async () => {
@@ -511,14 +490,10 @@ describe('GroupHeader MLS membership updates', () => {
 
     await renderHeader()
 
-    const optionsButton = container.querySelector('button[aria-label="Group options"]')
-    await act(async () => {
-      optionsButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await flush()
-    })
+    await openGroupInfo()
 
-    const leaveButton = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Leave group')
+    const leaveButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Leave'
     )
 
     await act(async () => {

@@ -1452,7 +1452,29 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       setTypists((prev) => removeTypist(prev, typistId))
     }
 
+    // A member changed the group picture/description (server `groupUpdated`).
+    // On a picture change, drop a yellow "X changed group picture" system row
+    // (deduped by `at` via the message _id), mirroring the commit system rows.
+    const handleGroupUpdated = (evt) => {
+      if (String(evt?.groupId ?? evt?.group?.groupId ?? '') !== String(activeGroupId)) return
+      if (!evt?.pictureChanged) return
+      const at = evt?.at || new Date().toISOString()
+      const isSelf = String(evt?.changedByUserId ?? '') === String(userId)
+      const changedBy = evt?.changedBy || 'A member'
+      const systemMsg = {
+        _id: `group-pic:${String(activeGroupId)}:${at}`,
+        userId: String(evt?.changedByUserId ?? ''),
+        username: changedBy,
+        text: isSelf ? 'You changed group picture' : `${changedBy} changed group picture`,
+        createdAt: at,
+        messageType: 'system',
+        seenStatus: true,
+      }
+      updateSavedMessages(userId, getGroupCacheId(activeGroupId), systemMsg, setMessages)
+    }
+
     socket.on('groupCommit', handleGroupCommit)
+    socket.on('groupUpdated', handleGroupUpdated)
     socket.on('groupWelcome', handleGroupWelcome)
     socket.on('newGroupMessage', handleNewGroupMessage)
     socket.on('groupMemberAdded', handleMembershipChanged)
@@ -1465,6 +1487,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     return () => {
       cancelled = true
       socket.off('groupCommit', handleGroupCommit)
+      socket.off('groupUpdated', handleGroupUpdated)
       socket.off('groupWelcome', handleGroupWelcome)
       socket.off('newGroupMessage', handleNewGroupMessage)
       socket.off('groupMemberAdded', handleMembershipChanged)

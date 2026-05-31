@@ -38,7 +38,8 @@ function Avatar({ src, name, isBot, isGroup }) {
       </div>
     )
   }
-  if (isGroup || !src) {
+  // Groups with a custom picture show it; otherwise the generic group glyph.
+  if (!src) {
     return (
       <div className='grid h-[53px] w-[53px] place-items-center rounded-full bg-gradient-to-br from-indigo-500/40 to-violet-700/60 ring-1 ring-white/10'>
         {isGroup ? (
