@@ -1,19 +1,21 @@
 name: Release (Tauri)
 
 # Builds the Echo desktop app for macOS, Linux and Windows and uploads the
-# installers to a GitHub Release.
+# installers to a single GitHub Release.
 #
 # Trigger it by pushing a version tag:
-#     npm version patch          # bumps package.json + creates a git tag
-#     # (or edit src-tauri/tauri.conf.json "version" and tag manually)
-#     git tag v0.1.0
-#     git push origin v0.1.0
-#
+#     git tag v0.1.1
+#     git push origin v0.1.1
 # ...or run it manually from the Actions tab (workflow_dispatch), which builds
 # against the version in src-tauri/tauri.conf.json.
 #
-# The release is created as a DRAFT so you can review the assets before
-# publishing. Set `releaseDraft: false` below to publish automatically.
+# Flow (the official Tauri multi-platform pattern so the matrix doesn't create
+# duplicate draft releases):
+#   1. create-release  — make ONE draft release, output its id
+#   2. build-tauri      — matrix builds, each uploads its installers to that id
+#   3. publish-release  — flip the release from draft to published
+# Don't want it auto-published? Delete the publish-release job (it then stays a
+# draft for you to review and publish manually).
 
 on:
   push:
@@ -22,9 +24,57 @@ on:
   workflow_dispatch:
 
 jobs:
-  publish-tauri:
+  create-release:
     permissions:
-      contents: write # required for tauri-action to create the release + upload assets
+      contents: write
+    runs-on: ubuntu-22.04
+    outputs:
+      release_id: ${{ steps.create-release.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read app version
+        run: echo "PACKAGE_VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")" >> "$GITHUB_ENV"
+
+      - name: Create (or reuse) the release
+        id: create-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = process.env.PACKAGE_VERSION
+            const tag = context.ref.startsWith('refs/tags/')
+              ? context.ref.replace('refs/tags/', '')
+              : `v${version}`
+
+            // Reuse a published release for this tag if one already exists
+            // (re-runs); otherwise create a fresh draft.
+            try {
+              const existing = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag,
+              })
+              core.info(`Reusing existing release ${existing.data.id} for ${tag}`)
+              return existing.data.id
+            } catch (e) {
+              const { data } = await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                target_commitish: context.sha,
+                name: `Echo v${version}`,
+                body: 'Download the installer for your platform from the assets below.',
+                draft: true,
+                prerelease: false,
+              })
+              core.info(`Created draft release ${data.id} for ${tag}`)
+              return data.id
+            }
+
+  build-tauri:
+    needs: create-release
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -53,7 +103,6 @@ jobs:
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
         with:
-          # macOS builds both architectures; other platforms use the host target.
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Rust cache
@@ -80,16 +129,29 @@ jobs:
           HUSKY: 0
         run: npm install --no-audit --no-fund
 
-      - name: Build app and upload to release
+      - name: Build app and upload installers to the release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # On a tag push use the pushed tag; on manual runs fall back to the
-          # app version from tauri.conf.json (tauri-action expands __VERSION__).
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'app-v__VERSION__' }}
-          releaseName: 'Echo v__VERSION__'
-          releaseBody: 'Download the installer for your platform from the assets below.'
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+
+  publish-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    needs: [create-release, build-tauri]
+    steps:
+      - name: Publish the release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: Number(process.env.RELEASE_ID),
+              draft: false,
+            })
