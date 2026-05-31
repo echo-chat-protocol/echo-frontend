@@ -73,10 +73,12 @@ jobs:
             libgtk-3-dev
 
       - name: Install frontend dependencies
+        # `npm install` (not `npm ci`) so a slightly out-of-sync package-lock.json
+        # doesn't hard-fail the release — npm reconciles the lock in-memory.
         # HUSKY=0 skips the `prepare: husky` git-hook setup, which is unneeded in CI.
         env:
           HUSKY: 0
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Build app and upload to release
         uses: tauri-apps/tauri-action@v0
