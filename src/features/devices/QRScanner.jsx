@@ -15,6 +15,17 @@ const stopStream = (stream) => stream?.getTracks().forEach((track) => track.stop
 const isLoopbackHost = (host) =>
   host === 'localhost' || host === '127.0.0.1' || host === '::1' || /\.localhost$/i.test(host)
 
+// iOS (every browser there is WebKit) silently rejects camera access that is
+// not triggered by a user gesture, so auto-starting the scanner on mount fails
+// with no useful error. Detect iOS so we can require a tap instead. Note iPadOS
+// 13+ reports a "Macintosh" UA — disambiguate it via touch-point support.
+const isIOS = () => {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent || ''
+  if (/iP(hone|ad|od)/.test(ua)) return true
+  return /Macintosh/.test(ua) && navigator.maxTouchPoints > 1
+}
+
 const cameraRequestAttempts = [
   {
     label: 'environment camera at preferred resolution',
@@ -370,10 +381,22 @@ export default function QRScanner({ onScanRaw } = {}) {
         const scanner = new Html5Qrcode('qr-h5-container')
         h5Ref.current = scanner
 
+        const onDecoded = (raw) => {
+          log(`html5-qrcode decoded (${raw.length} chars)`, '#4ade80')
+          scanner.stop().catch(() => {})
+          h5Ref.current = null
+          setStarted(false)
+          handleScan(raw)
+        }
+        const onScanTick = () => {
+          scanCountRef.current++
+        }
+
+        // iOS Safari is fussy about facingMode constraint shapes — try the
+        // object form, then the legacy string form before falling back.
         const html5StartAttempts = [
           { label: 'environment camera', cameraConfig: { facingMode: { ideal: 'environment' } } },
           { label: 'legacy environment camera', cameraConfig: { facingMode: 'environment' } },
-          { label: 'any available camera', cameraConfig: {} },
         ]
         let startedHtml5 = false
         let lastHtml5Error = null
@@ -381,25 +404,35 @@ export default function QRScanner({ onScanRaw } = {}) {
         for (const attempt of html5StartAttempts) {
           try {
             log(`Starting html5-qrcode (${attempt.label})…`)
-            await scanner.start(
-              attempt.cameraConfig,
-              { fps: 10 },
-              (raw) => {
-                log(`html5-qrcode decoded (${raw.length} chars)`, '#4ade80')
-                scanner.stop().catch(() => {})
-                h5Ref.current = null
-                setStarted(false)
-                handleScan(raw)
-              },
-              () => {
-                scanCountRef.current++
-              }
-            )
+            await scanner.start(attempt.cameraConfig, { fps: 10 }, onDecoded, onScanTick)
             startedHtml5 = true
             break
           } catch (e) {
             lastHtml5Error = e
             log(`html5-qrcode attempt failed: ${e.name} — ${e.message}`, '#f59e0b')
+          }
+        }
+
+        // Final fallback: enumerate cameras and start by explicit deviceId. This
+        // works on iOS when facingMode constraints don't resolve. getCameras()
+        // itself needs camera permission, which the attempts above prompt for
+        // (and which iOS only grants inside a user gesture — hence tap-to-start).
+        if (!startedHtml5) {
+          try {
+            log('Enumerating cameras for deviceId fallback…')
+            const cameras = await Html5Qrcode.getCameras()
+            log(`Cameras found: ${cameras?.length || 0}`)
+            if (cameras && cameras.length) {
+              const back =
+                cameras.find((c) => /back|rear|environment/i.test(c.label || '')) ||
+                cameras[cameras.length - 1]
+              log(`Starting html5-qrcode (deviceId "${back.label || back.id}")…`)
+              await scanner.start(back.id, { fps: 10 }, onDecoded, onScanTick)
+              startedHtml5 = true
+            }
+          } catch (e) {
+            lastHtml5Error = e
+            log(`html5-qrcode deviceId fallback failed: ${e.name} — ${e.message}`, '#f59e0b')
           }
         }
 
@@ -443,6 +476,10 @@ export default function QRScanner({ onScanRaw } = {}) {
   useEffect(() => {
     if (started || result || error || autoStartAttemptedRef.current) return
     if (!onScanRaw && !ik) return
+    // iOS WebKit rejects getUserMedia / camera start that isn't initiated by a
+    // user gesture, so auto-starting here would just fail. Require a tap (the
+    // idle frame below is the start button) instead.
+    if (isIOS()) return
 
     autoStartAttemptedRef.current = true
     startScanner()
@@ -628,7 +665,14 @@ export default function QRScanner({ onScanRaw } = {}) {
         />
 
         {!started && (
-          <div className='flex min-h-80 flex-col items-center justify-center gap-5 p-8'>
+          // A real button so the tap counts as the user gesture iOS WebKit
+          // requires before it will start the camera. Doubles as the retry
+          // control after a camera error.
+          <button
+            type='button'
+            onClick={startScanner}
+            className='flex min-h-80 w-full flex-col items-center justify-center gap-5 p-8'
+          >
             <div className='relative h-48 w-48 rounded-[28px] border border-white/12 bg-white/[0.03]'>
               <span className='absolute left-4 top-4 h-9 w-9 rounded-tl-2xl border-l-2 border-t-2 border-white/70' />
               <span className='absolute right-4 top-4 h-9 w-9 rounded-tr-2xl border-r-2 border-t-2 border-white/70' />
@@ -636,7 +680,10 @@ export default function QRScanner({ onScanRaw } = {}) {
               <span className='absolute bottom-4 right-4 h-9 w-9 rounded-br-2xl border-b-2 border-r-2 border-white/70' />
               <span className='absolute left-7 right-7 top-1/2 h-px bg-emerald-300/80 shadow-[0_0_24px_rgba(110,231,183,0.75)]' />
             </div>
-          </div>
+            <span className='text-sm font-medium text-white/65'>
+              {error ? 'Tap to try again' : 'Tap to start camera'}
+            </span>
+          </button>
         )}
       </div>
 
