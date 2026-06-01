@@ -5,11 +5,20 @@ import { getSocket } from '../../../socket'
 import { formatProfileImage } from '../DashboardComponents/utils/helpers'
 import { searchUsersByUsername } from '@/utils/userSearch'
 import { getIdentityKeys } from '../Chat/utils/chat/keyManagement'
+import { compressImage } from '../Chat/utils/imageUtils'
 import {
   createNewGroupState,
   buildInitialWelcomes,
   saveGroupState,
 } from '../Chat/utils/crypto/groupCryptoProvider'
+
+const blobToDataUrl = (blob) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(new Error('Failed to read image'))
+    reader.readAsDataURL(blob)
+  })
 
 /**
  * Premium CreateGroupModal — keeps full MLS crypto creation logic,
@@ -18,6 +27,8 @@ import {
 const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
   const [name, setName] = useState('')
   const [desc, setDesc] = useState('')
+  const [profilePicture, setProfilePicture] = useState('')
+  const fileInputRef = useRef(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [results, setResults] = useState([])
   const [selected, setSelected] = useState(new Set())
@@ -47,6 +58,23 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
       }
     }
   }, [open])
+
+  const handlePickImage = () => fileInputRef.current?.click()
+
+  const handleImageChange = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-selecting the same file
+    if (!file) return
+    try {
+      // Match the group-info panel: small square (256px) so the data URL stays
+      // well under the server's per-group picture cap.
+      const compressed = await compressImage(file, 256, 0.6)
+      setProfilePicture(await blobToDataUrl(compressed))
+      setError('')
+    } catch {
+      setError('Failed to load that image. Try another one.')
+    }
+  }
 
   const isSelected = (id) => selected.has(String(id))
 
@@ -321,9 +349,25 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
           setError(`Group created but encryption setup failed: ${err.message}`)
         }
 
-        onCreated?.(ack.group)
+        // The createGroup handler doesn't persist the picture/description, so
+        // set them via updateGroupProfile once the group exists. Non-fatal: the
+        // group is already created either way.
+        if (profilePicture || description) {
+          try {
+            await emitWithAck('updateGroupProfile', {
+              groupId: ack.group.groupId,
+              ...(profilePicture ? { profilePicture } : {}),
+              ...(description ? { description } : {}),
+            })
+          } catch (profileErr) {
+            console.warn('[CreateGroupModal] Failed to set group profile:', profileErr)
+          }
+        }
+
+        onCreated?.({ ...ack.group, profilePicture, description })
         setName('')
         setDesc('')
+        setProfilePicture('')
         setSearchTerm('')
         setResults([])
         setSelected(new Set())
@@ -366,12 +410,32 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
         <div className='p-6'>
           {/* Group name + avatar row */}
           <div className='flex items-start gap-4'>
-            <button className='relative grid h-20 w-20 shrink-0 place-items-center rounded-2xl border border-dashed border-white/[0.12] bg-white/[0.02] text-white/45 hover:border-violet-400/40 hover:text-violet-200 transition'>
-              <Camera size={18} />
+            <button
+              type='button'
+              onClick={handlePickImage}
+              aria-label='Set group picture'
+              className='relative grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-2xl border border-dashed border-white/[0.12] bg-white/[0.02] text-white/45 hover:border-violet-400/40 hover:text-violet-200 transition'
+            >
+              {profilePicture ? (
+                <img
+                  src={profilePicture}
+                  alt='Group'
+                  className='absolute inset-0 h-full w-full object-cover'
+                />
+              ) : (
+                <Camera size={18} />
+              )}
               <span className='absolute -bottom-1.5 -right-1.5 grid h-6 w-6 place-items-center rounded-lg echo-violet-gradient echo-violet-glow text-white text-[10px] font-bold'>
                 +
               </span>
             </button>
+            <input
+              ref={fileInputRef}
+              type='file'
+              accept='image/*'
+              onChange={handleImageChange}
+              className='hidden'
+            />
             <div className='flex-1 space-y-3'>
               <input
                 data-testid='group-name-input'

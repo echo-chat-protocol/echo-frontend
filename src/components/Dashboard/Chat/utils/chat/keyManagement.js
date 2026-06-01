@@ -55,6 +55,7 @@ export const setPendingOutgoingGroupMessage = ({
   ciphertextB64,
   text,
   image = null,
+  replyTo = null,
 }) => {
   prunePendingGroupPlaintexts()
   const cacheKey = getPendingGroupPlaintextKey({
@@ -68,12 +69,15 @@ export const setPendingOutgoingGroupMessage = ({
   pendingGroupPlaintextCache.set(cacheKey, {
     text,
     image: image ?? null,
+    replyTo: replyTo ?? null,
     createdAt: Date.now(),
   })
 }
 
-// Returns the cached self-echo payload `{ text, image }` (so an outgoing image
-// renders immediately without re-decrypting), or null when nothing is cached.
+// Returns the cached self-echo payload `{ text, image, replyTo }` (so an
+// outgoing image or reply renders immediately without re-decrypting — the
+// sender can't decrypt their own MLS message because the sender ratchet has
+// already advanced), or null when nothing is cached.
 export const consumePendingOutgoingGroupMessage = ({
   groupId,
   encryptedSenderDataB64,
@@ -92,7 +96,7 @@ export const consumePendingOutgoingGroupMessage = ({
   const entry = pendingGroupPlaintextCache.get(cacheKey)
   pendingGroupPlaintextCache.delete(cacheKey)
   if (typeof entry?.text !== 'string') return null
-  return { text: entry.text, image: entry.image ?? null }
+  return { text: entry.text, image: entry.image ?? null, replyTo: entry.replyTo ?? null }
 }
 
 export const deletePendingOutgoingGroupMessage = ({

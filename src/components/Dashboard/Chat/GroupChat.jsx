@@ -1772,6 +1772,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                     ...retryPendingOutgoingMessage,
                     text,
                     image: imageData ?? null,
+                    replyTo: replyTo ?? null,
                   })
                   socket.emit(
                     'sendGroupMessage',
