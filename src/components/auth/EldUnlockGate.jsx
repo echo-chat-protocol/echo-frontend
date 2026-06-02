@@ -99,12 +99,14 @@ const EldUnlockGate = ({ token, children }) => {
     }
   }
 
-  const handleLogout = async () => {
-    try {
-      await revokeCurrentDeviceForLogout()
-    } catch (err) {
+  const handleLogout = () => {
+    // Best-effort device revoke runs in the background. It captures the token
+    // internally, so it survives the local-state wipe below — and crucially it
+    // does NOT block navigation, which previously hung for ~20-30s whenever the
+    // backend was slow or unreachable.
+    revokeCurrentDeviceForLogout().catch((err) => {
       console.warn('[EldUnlockGate] Failed to revoke current device during logout:', err)
-    }
+    })
 
     try {
       eld.lock()

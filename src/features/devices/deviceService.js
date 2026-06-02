@@ -151,10 +151,12 @@ export const deviceService = {
   reject: (body) => request('POST', '/pairing/reject', body),
   pollResult: (sessionId) => request('GET', `/pairing/poll/${sessionId}`),
 
-  listDevices: (userId) => request('GET', `/users/${userId}/devices`),
+  listDevices: (userId, authToken = null) =>
+    request('GET', `/users/${userId}/devices`, undefined, BASE, true, authToken),
   getDeviceBundles: (userId) => request('GET', `/users/${userId}/devices/bundles`),
   getDeviceIdentities: (userId) => request('GET', `/users/${userId}/devices/identities`),
-  revokeDevice: (deviceId) => request('POST', `/devices/${deviceId}/revoke`, {}),
+  revokeDevice: (deviceId, authToken = null) =>
+    request('POST', `/devices/${deviceId}/revoke`, {}, BASE, true, authToken),
   registerDeviceKeys: (deviceId, keyBundle) =>
     request('POST', `/devices/${deviceId}/keys`, keyBundle),
   completeSyncTarget: ({ sessionId, targetAccessToken, targetDevice = {}, serverUrl = null }) =>

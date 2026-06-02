@@ -8,7 +8,7 @@ import { resolveApiBase } from '@/utils/network/apiBase'
 
 // Firebase config
 const firebaseConfig = {
-  apiKey: 'AIzaSyC3dqQgY1dEE4F2Cdb6zv0rQRcC91CxZVo',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: 'webrtc-app-a0607.firebaseapp.com',
   projectId: 'webrtc-app-a0607',
   storageBucket: 'webrtc-app-a0607.firebasestorage.app',

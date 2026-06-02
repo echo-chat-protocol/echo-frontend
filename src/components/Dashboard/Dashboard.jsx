@@ -2197,8 +2197,13 @@ const Dashboard = () => {
     navigate(`/profile/${userId}`, { state: { username, userId } })
   }
 
-  const handleLogout = async () => {
-    await revokeCurrentDeviceForLogout()
+  const handleLogout = () => {
+    // Fire-and-forget device revoke: it captures the token internally so it
+    // survives the local-state wipe below, and it must not block navigation
+    // (the network call could otherwise hang for ~20-30s).
+    revokeCurrentDeviceForLogout().catch((err) => {
+      console.warn('[Dashboard] Failed to revoke current device during logout:', err)
+    })
 
     eld.lock()
 
