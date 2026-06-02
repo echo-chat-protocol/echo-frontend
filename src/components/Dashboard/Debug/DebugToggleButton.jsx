@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import PropTypes from 'prop-types'
-import { Bug } from 'lucide-react'
+import GeckoIcon from './GeckoIcon'
 
 const STORAGE_KEY = 'echo-debug-toggle-pos'
 const SIZE = 44 // px (matches h-11 / w-11)
@@ -104,8 +104,8 @@ export default function DebugToggleButton({ active, onToggle }) {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      aria-label='Toggle debug console'
-      title='Debug console (drag to move · Ctrl+`)'
+      aria-label='Toggle Gecho console'
+      title='Gecho console (drag to move · Ctrl+`)'
       style={{
         left: `${pos.x}px`,
         top: `${pos.y}px`,
@@ -117,7 +117,7 @@ export default function DebugToggleButton({ active, onToggle }) {
         active ? 'text-violet-200 ring-1 ring-violet-400/40' : 'text-violet-300'
       } cursor-grab active:cursor-grabbing`}
     >
-      <Bug size={18} />
+      <GeckoIcon size={20} />
     </button>
   )
 }

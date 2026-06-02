@@ -1615,7 +1615,10 @@ export default function DebugPanel({ open, onClose, activeChat, userId, removedG
         <div className='flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3'>
           <div className='flex items-center gap-2'>
             <span className='inline-block h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' />
-            <h3 className='text-[13px] font-semibold tracking-tight text-white'>Debug Console</h3>
+            <h3 className='text-[13px] font-semibold tracking-tight'>
+              <span className='text-white'>G</span>
+              <span className='text-violet-400'>echo</span>
+            </h3>
           </div>
           <div className='flex items-center gap-1'>
             <button
