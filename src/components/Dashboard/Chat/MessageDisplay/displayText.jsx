@@ -167,6 +167,20 @@ function MessageBubble({
     a.click()
   }
 
+  // Images/GIFs have zero height when the new-message auto-scroll runs, so the
+  // view ends up stranded above the bottom once the media loads and grows the
+  // layout. Re-anchor to the bottom on load — but only when the user was still
+  // pinned near the bottom, so we don't yank them up while reading history.
+  // Works for both the DM and group lists, which share `.messages-container`.
+  const handleImageLoad = (e) => {
+    const container = e.currentTarget.closest('.messages-container')
+    if (!container) return
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    if (distanceFromBottom <= 600) {
+      container.scrollTop = container.scrollHeight
+    }
+  }
+
   return (
     <div
       className={`group flex min-w-0 items-center gap-2.5 ${
@@ -262,6 +276,7 @@ function MessageBubble({
               alt='Shared image'
               className='block max-h-52 w-full cursor-zoom-in object-cover'
               onClick={() => setLightboxOpen(true)}
+              onLoad={handleImageLoad}
             />
             <button
               onClick={handleDownload}

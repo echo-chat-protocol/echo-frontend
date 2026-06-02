@@ -217,7 +217,15 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
 
     socket.emit(
       'createGroup',
-      { name: groupName, desc: description || undefined, memberIds, mlsEnabled, cipherSuite },
+      {
+        name: groupName,
+        desc: description || undefined,
+        description: description || undefined,
+        profilePicture: profilePicture || undefined,
+        memberIds,
+        mlsEnabled,
+        cipherSuite,
+      },
       async (ack) => {
         setLoading(false)
         creatingRef.current = false
@@ -349,21 +357,9 @@ const CreateGroupModal = ({ open, onClose, onCreated, userId }) => {
           setError(`Group created but encryption setup failed: ${err.message}`)
         }
 
-        // The createGroup handler doesn't persist the picture/description, so
-        // set them via updateGroupProfile once the group exists. Non-fatal: the
-        // group is already created either way.
-        if (profilePicture || description) {
-          try {
-            await emitWithAck('updateGroupProfile', {
-              groupId: ack.group.groupId,
-              ...(profilePicture ? { profilePicture } : {}),
-              ...(description ? { description } : {}),
-            })
-          } catch (profileErr) {
-            console.warn('[CreateGroupModal] Failed to set group profile:', profileErr)
-          }
-        }
-
+        // createGroup now persists the picture/description atomically (they're
+        // in ack.group and the groupAdded broadcast), so no follow-up round-trip
+        // is needed. Pass them through to seed the active chat immediately.
         onCreated?.({ ...ack.group, profilePicture, description })
         setName('')
         setDesc('')
