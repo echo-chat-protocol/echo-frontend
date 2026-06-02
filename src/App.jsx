@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import {
   BrowserRouter as Router,
   Route,
@@ -11,6 +11,7 @@ import {
 import PropTypes from 'prop-types'
 import { useTauri } from '@/hooks/useTauri'
 import { tokenStorage } from '@services/api'
+import { getSocket } from './socket'
 import './App.css'
 import ErrorBoundary from './components/common/ErrorBoundary'
 import ScrollToTop from './components/common/ScrollToTop'
@@ -143,15 +144,69 @@ function AuthenticatedBackGuard() {
 }
 
 // ─── Profile route wrapper ───────────────────────────────────────────────────
+// PrivateRoute already requires a valid session, but the `:userId` segment is
+// attacker-controlled — previously any string (e.g. /profile/Hdadadad) rendered
+// a blank profile shell for a user that doesn't exist. Verify the target user
+// actually exists via the authenticated socket before rendering, and bounce to
+// the dashboard otherwise. Fails closed if the server never answers.
 function UserProfileRoute() {
   const { userId } = useParams()
   const location = useLocation()
   const navigate = useNavigate()
-  const user = location.state?.user || { id: userId }
+  const [status, setStatus] = useState('loading') // 'loading' | 'ok' | 'invalid'
+  const [resolvedUser, setResolvedUser] = useState(null)
 
-  if (!user) return <Navigate to='/login' replace />
+  useEffect(() => {
+    if (!userId) {
+      setStatus('invalid')
+      return undefined
+    }
 
-  return <UserProfile user={user} open onClose={() => navigate(-1)} />
+    let settled = false
+    setStatus('loading')
+
+    const finish = (ok, user) => {
+      if (settled) return
+      settled = true
+      if (ok) {
+        setResolvedUser(user)
+        setStatus('ok')
+      } else {
+        setStatus('invalid')
+      }
+    }
+
+    getSocket().emit('getUserInfo', { userId }, (res) => {
+      if (res?.success && res?.user) {
+        // Server data wins; trust the authenticated lookup over the URL/state.
+        finish(true, {
+          ...(location.state?.user || {}),
+          ...res.user,
+          id: res.user.id ?? userId,
+        })
+      } else {
+        finish(false)
+      }
+    })
+
+    const timer = window.setTimeout(() => finish(false), 8000)
+    return () => {
+      settled = true
+      window.clearTimeout(timer)
+    }
+  }, [userId, location.state])
+
+  if (status === 'loading') {
+    return (
+      <div className='grid min-h-screen place-items-center bg-black'>
+        <Spinner />
+      </div>
+    )
+  }
+
+  if (status === 'invalid') return <Navigate to='/dashboard' replace />
+
+  return <UserProfile user={resolvedUser} open onClose={() => navigate(-1)} />
 }
 
 function App() {

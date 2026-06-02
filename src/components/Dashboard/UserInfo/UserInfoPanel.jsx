@@ -1,25 +1,14 @@
 import { useState, useEffect } from 'react'
-import {
-  X,
-  Phone,
-  Video,
-  Bell,
-  BellOff,
-  Trash2,
-  Ban,
-  Fingerprint,
-  ShieldCheck,
-  Hash,
-  Copy,
-} from 'lucide-react'
+import { X, Phone, Video, ImageIcon, Copy } from 'lucide-react'
 import { getSocket } from '../../../socket'
-import { getPeerIdentityKeys } from '../Chat/utils/chat/keyManagement'
 import { formatProfileImage } from '../DashboardComponents/utils/helpers'
 import ImageLightbox from '../Chat/MessageDisplay/ImageLightbox'
+import eld from '../../../utils/storage/EncryptedLocalDatabase'
 
 /**
  * UserInfoPanel — contact info side panel.
- * Fetches live info from socket and cryptographic fingerprint from ELD.
+ * Fetches the contact's live profile (incl. their description) from the server
+ * and lists all media exchanged in the conversation from the local store.
  *
  * Props:
  *  - contact: { id, username, profileImage } (the active chat object from Dashboard)
@@ -27,7 +16,8 @@ import ImageLightbox from '../Chat/MessageDisplay/ImageLightbox'
  */
 export default function UserInfoPanel({ contact, onClose }) {
   const [profile, setProfile] = useState(null)
-  const [fingerprint, setFingerprint] = useState(null)
+  const [media, setMedia] = useState([])
+  const [activeMedia, setActiveMedia] = useState(null)
   const [copied, setCopied] = useState(false)
   const [lightboxOpen, setLightboxOpen] = useState(false)
 
@@ -47,33 +37,41 @@ export default function UserInfoPanel({ contact, onClose }) {
     }
   }, [contact?.id])
 
-  // Load peer identity keys for fingerprint display
+  // Load every media message exchanged with this contact from the local store,
+  // newest first. Refreshes whenever a new message is persisted for this peer.
   useEffect(() => {
     if (!contact?.id) return
     let cancelled = false
-    setFingerprint(null)
-    getPeerIdentityKeys(String(contact.id))
-      .then((keys) => {
+
+    const load = async () => {
+      try {
+        if (!eld.isUnlocked?.()) return
+        const msgs = await eld.getMessages(String(contact.id))
         if (cancelled) return
-        if (keys?.publicKeyX25519) {
-          // Build a readable hex fingerprint from the base64 key
-          try {
-            const raw = atob(keys.publicKeyX25519)
-            const hex = Array.from(raw)
-              .map((b) => b.charCodeAt(0).toString(16).padStart(2, '0'))
-              .join('')
-            // Group into 4-char chunks
-            const chunks = hex.match(/.{1,4}/g) || []
-            setFingerprint(chunks.join(' '))
-          } catch {
-            if (cancelled) return
-            setFingerprint(keys.publicKeyX25519.slice(0, 40) + '…')
-          }
-        }
-      })
-      .catch(() => {})
+        const withMedia = (msgs || [])
+          .filter((m) => m?.image)
+          .sort(
+            (a, b) =>
+              new Date(b.createdAt || b.timestamp || 0) - new Date(a.createdAt || a.timestamp || 0)
+          )
+        setMedia(withMedia)
+      } catch {
+        /* local store unavailable — leave media empty */
+      }
+    }
+
+    setMedia([])
+    load()
+
+    const onUpdate = (e) => {
+      const target = e?.detail?.targetUserId
+      if (target == null || String(target) === String(contact.id)) load()
+    }
+    window.addEventListener('localStorageUpdated', onUpdate)
+
     return () => {
       cancelled = true
+      window.removeEventListener('localStorageUpdated', onUpdate)
     }
   }, [contact?.id])
 
@@ -89,9 +87,10 @@ export default function UserInfoPanel({ contact, onClose }) {
   const avatarSource =
     profile?.avatar_url || profile?.profilePicture || contact?.profileImage || contact?.avatar || ''
   const avatar = avatarSource ? formatProfileImage(avatarSource, profileName) : null
+  // The user's profile description (saved as `bio`, persisted server-side as
+  // `aboutme`). Falls back through the aliases before the empty placeholder.
   const about = profile?.bio || profile?.aboutme || profile?.about || 'No bio yet.'
   const userId = String(profile?.id || contact?.id || '')
-  const fingerprintChunks = fingerprint ? fingerprint.split(' ') : Array(8).fill('????')
 
   const copyUserId = async () => {
     if (!userId) return
@@ -102,14 +101,6 @@ export default function UserInfoPanel({ contact, onClose }) {
     } catch {
       setCopied(false)
     }
-  }
-
-  const handleCompareNumbers = () => {
-    window.dispatchEvent(
-      new CustomEvent('verifySafetyNumber', {
-        detail: { peerId: String(contact.id) },
-      })
-    )
   }
 
   return (
@@ -185,7 +176,6 @@ export default function UserInfoPanel({ contact, onClose }) {
           <div className='relative mt-4 flex justify-center gap-2'>
             <ActionBtn icon={<Phone size={14} />} label='Call' />
             <ActionBtn icon={<Video size={14} />} label='Video' />
-            <ActionBtn icon={<Bell size={14} />} label='Mute' />
           </div>
         </div>
 
@@ -194,51 +184,30 @@ export default function UserInfoPanel({ contact, onClose }) {
           <p className='text-[12.5px] leading-relaxed text-white/65'>{about}</p>
         </Section>
 
-        {/* Cryptographic fingerprint */}
-        <Section title='Cryptographic fingerprint' icon={<Fingerprint size={11} />}>
-          <div className='echo-glass rounded-xl p-3.5'>
-            <div className='flex items-center gap-2'>
-              <ShieldCheck size={14} className='text-emerald-400/90' />
-              <span className='text-[11px] text-emerald-300/90 mono'>
-                {fingerprint ? 'Verified · Ed25519' : 'No key on record yet'}
-              </span>
+        {/* Media — every photo/GIF exchanged in this conversation. */}
+        <Section title='Media' icon={<ImageIcon size={11} />}>
+          {media.length === 0 ? (
+            <p className='text-[12px] text-white/40'>No media shared yet.</p>
+          ) : (
+            <div className='grid grid-cols-3 gap-1.5'>
+              {media.map((m) => (
+                <button
+                  key={m._id || m.image}
+                  type='button'
+                  onClick={() => setActiveMedia(m.image)}
+                  title='View media'
+                  className='group relative aspect-square overflow-hidden rounded-lg border border-white/[0.06] bg-black/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60'
+                >
+                  <img
+                    src={m.image}
+                    alt=''
+                    loading='lazy'
+                    className='h-full w-full cursor-zoom-in object-cover transition group-hover:scale-105 group-hover:opacity-90'
+                  />
+                </button>
+              ))}
             </div>
-            {fingerprint && (
-              <div className='mt-2 grid grid-cols-4 gap-1.5'>
-                {fingerprintChunks.slice(0, 8).map((g, i) => (
-                  <div
-                    key={i}
-                    className='rounded-md border border-white/[0.06] bg-black/40 py-1.5 text-center text-[11px] mono text-violet-200/90 tracking-widest'
-                  >
-                    {g}
-                  </div>
-                ))}
-              </div>
-            )}
-            <button
-              data-testid='compare-numbers-btn'
-              onClick={handleCompareNumbers}
-              className='echo-cta mt-3 w-full rounded-full py-2 text-[11.5px] font-medium'
-            >
-              Compare safety numbers
-            </button>
-          </div>
-        </Section>
-
-        {/* Settings */}
-        <Section title='Options' icon={<Hash size={11} />}>
-          <Row icon={<BellOff size={14} />} label='Mute notifications' trailing={<Switch />} />
-          <Row
-            icon={<Trash2 size={14} className='text-red-400' />}
-            label='Clear chat history'
-            hover
-          />
-          <Row
-            icon={<Ban size={14} className='text-red-400' />}
-            label='Block contact'
-            hover
-            danger
-          />
+          )}
         </Section>
 
         <div className='px-5 pb-6 pt-2 text-center text-[10px] text-white/25 mono'>
@@ -247,6 +216,10 @@ export default function UserInfoPanel({ contact, onClose }) {
 
         {lightboxOpen && avatar && (
           <ImageLightbox src={avatar} alt={profileName} onClose={() => setLightboxOpen(false)} />
+        )}
+
+        {activeMedia && (
+          <ImageLightbox src={activeMedia} alt='' onClose={() => setActiveMedia(null)} />
         )}
       </aside>
     </>
@@ -270,36 +243,6 @@ function ActionBtn({ icon, label }) {
     <button className='flex flex-col items-center gap-1 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-[10.5px] text-white/70 hover:border-violet-400/40 hover:text-white hover:bg-violet-500/[0.06] transition-all'>
       <span className='text-violet-300'>{icon}</span>
       {label}
-    </button>
-  )
-}
-
-function Row({ icon, label, trailing, hover, danger }) {
-  return (
-    <div
-      className={`flex items-center gap-3 rounded-lg px-2 py-2 text-[12.5px] ${
-        hover ? 'hover:bg-white/[0.03] cursor-pointer' : ''
-      } ${danger ? 'text-red-300' : 'text-white/80'}`}
-    >
-      <span className='text-white/55'>{icon}</span>
-      <span className='flex-1'>{label}</span>
-      {trailing}
-    </div>
-  )
-}
-
-function Switch() {
-  const [on, setOn] = useState(false)
-  return (
-    <button
-      onClick={() => setOn(!on)}
-      className={`relative h-5 w-9 rounded-full transition ${on ? 'bg-violet-500' : 'bg-white/10'}`}
-    >
-      <span
-        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
-          on ? 'left-[18px]' : 'left-0.5'
-        }`}
-      />
     </button>
   )
 }
