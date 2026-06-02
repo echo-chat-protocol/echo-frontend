@@ -113,128 +113,143 @@ export default function UserInfoPanel({ contact, onClose }) {
   }
 
   return (
-    <aside
-      data-testid='user-info-panel'
-      className='echo-floating relative h-full w-full max-w-[390px] shrink-0 overflow-y-auto animate-slide-in-right border-l border-white/[0.05] rounded-none'
-      style={{
-        borderRadius: 0,
-        paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)',
-        paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)',
-      }}
-    >
-      {/* Sticky header */}
-      <div className='sticky top-0 z-10 flex items-center justify-between border-b border-white/[0.05] px-5 py-3 backdrop-blur bg-black/40'>
-        <h3 className='text-[13px] font-semibold tracking-[-0.01em]'>Contact info</h3>
-        <button
-          onClick={onClose}
-          data-testid='user-info-close'
-          className='grid h-8 w-8 place-items-center rounded-lg text-white/45 hover:bg-white/[0.04] hover:text-white'
-        >
-          <X size={15} />
-        </button>
-      </div>
+    <>
+      {/* Backdrop — overlays the chat instead of squishing it. */}
+      <button
+        type='button'
+        aria-label='Close contact info'
+        onClick={onClose}
+        className='fixed inset-0 z-40 bg-black/50 backdrop-blur-sm'
+      />
 
-      {/* Hero */}
-      <div className='relative px-5 pb-6 pt-8 text-center'>
-        <div className='echo-aurora' />
-        <div className='relative mx-auto h-24 w-24'>
-          {avatar ? (
-            <button
-              type='button'
-              onClick={() => setLightboxOpen(true)}
-              title='View photo'
-              aria-label='View photo'
-              className='block h-24 w-24 cursor-zoom-in rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60'
-            >
-              <img
-                src={avatar}
-                alt={profileName}
-                className='h-24 w-24 rounded-full object-cover ring-1 ring-white/10 transition hover:ring-violet-400/40'
-                onError={(e) => {
-                  e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(profileName)}&background=8e79f2&color=fff`
-                }}
-              />
-            </button>
-          ) : (
-            <div className='grid h-24 w-24 place-items-center rounded-full bg-gradient-to-br from-violet-500/40 to-violet-700/70 ring-1 ring-white/10 text-white text-3xl font-bold'>
-              {profileName[0]}
-            </div>
-          )}
-        </div>
-        <h2 className='relative mt-4 text-[18px] font-semibold tracking-[-0.02em]'>
-          {profileName}
-        </h2>
-        <button
-          type='button'
-          onClick={copyUserId}
-          className='relative mx-auto mt-3 inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-3.5 py-1.5 text-[11px] text-white/65 transition hover:border-violet-400/30 hover:bg-violet-500/[0.06] hover:text-white'
-        >
-          <span className='mono'>ID {userId || 'unknown'}</span>
-          <Copy size={11} />
-          {copied && <span className='text-emerald-300'>Copied</span>}
-        </button>
-        <div className='relative mt-4 flex justify-center gap-2'>
-          <ActionBtn icon={<Phone size={14} />} label='Call' />
-          <ActionBtn icon={<Video size={14} />} label='Video' />
-          <ActionBtn icon={<Bell size={14} />} label='Mute' />
-        </div>
-      </div>
-
-      {/* About */}
-      <Section title='About'>
-        <p className='text-[12.5px] leading-relaxed text-white/65'>{about}</p>
-      </Section>
-
-      {/* Cryptographic fingerprint */}
-      <Section title='Cryptographic fingerprint' icon={<Fingerprint size={11} />}>
-        <div className='echo-glass rounded-xl p-3.5'>
-          <div className='flex items-center gap-2'>
-            <ShieldCheck size={14} className='text-emerald-400/90' />
-            <span className='text-[11px] text-emerald-300/90 mono'>
-              {fingerprint ? 'Verified · Ed25519' : 'No key on record yet'}
-            </span>
-          </div>
-          {fingerprint && (
-            <div className='mt-2 grid grid-cols-4 gap-1.5'>
-              {fingerprintChunks.slice(0, 8).map((g, i) => (
-                <div
-                  key={i}
-                  className='rounded-md border border-white/[0.06] bg-black/40 py-1.5 text-center text-[11px] mono text-violet-200/90 tracking-widest'
-                >
-                  {g}
-                </div>
-              ))}
-            </div>
-          )}
+      <aside
+        data-testid='user-info-panel'
+        className='echo-floating fixed inset-y-0 right-0 z-50 h-full w-full max-w-[390px] overflow-y-auto animate-slide-in-right border-l border-white/[0.05] rounded-none'
+        style={{
+          borderRadius: 0,
+          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)',
+          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)',
+        }}
+      >
+        {/* Sticky header */}
+        <div className='sticky top-0 z-10 flex items-center justify-between border-b border-white/[0.05] px-5 py-3 backdrop-blur bg-black/40'>
+          <h3 className='text-[13px] font-semibold tracking-[-0.01em]'>Contact info</h3>
           <button
-            data-testid='compare-numbers-btn'
-            onClick={handleCompareNumbers}
-            className='echo-cta mt-3 w-full rounded-full py-2 text-[11.5px] font-medium'
+            onClick={onClose}
+            data-testid='user-info-close'
+            className='grid h-8 w-8 place-items-center rounded-lg text-white/45 hover:bg-white/[0.04] hover:text-white'
           >
-            Compare safety numbers
+            <X size={15} />
           </button>
         </div>
-      </Section>
 
-      {/* Settings */}
-      <Section title='Options' icon={<Hash size={11} />}>
-        <Row icon={<BellOff size={14} />} label='Mute notifications' trailing={<Switch />} />
-        <Row
-          icon={<Trash2 size={14} className='text-red-400' />}
-          label='Clear chat history'
-          hover
-        />
-        <Row icon={<Ban size={14} className='text-red-400' />} label='Block contact' hover danger />
-      </Section>
+        {/* Hero */}
+        <div className='relative px-5 pb-6 pt-8 text-center'>
+          <div className='echo-aurora' />
+          <div className='relative mx-auto h-24 w-24'>
+            {avatar ? (
+              <button
+                type='button'
+                onClick={() => setLightboxOpen(true)}
+                title='View photo'
+                aria-label='View photo'
+                className='block h-24 w-24 cursor-zoom-in rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60'
+              >
+                <img
+                  src={avatar}
+                  alt={profileName}
+                  className='h-24 w-24 rounded-full object-cover ring-1 ring-white/10 transition hover:ring-violet-400/40'
+                  onError={(e) => {
+                    e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(profileName)}&background=8e79f2&color=fff`
+                  }}
+                />
+              </button>
+            ) : (
+              <div className='grid h-24 w-24 place-items-center rounded-full bg-gradient-to-br from-violet-500/40 to-violet-700/70 ring-1 ring-white/10 text-white text-3xl font-bold'>
+                {profileName[0]}
+              </div>
+            )}
+          </div>
+          <h2 className='relative mt-4 text-[18px] font-semibold tracking-[-0.02em]'>
+            {profileName}
+          </h2>
+          <button
+            type='button'
+            onClick={copyUserId}
+            className='relative mx-auto mt-3 inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-3.5 py-1.5 text-[11px] text-white/65 transition hover:border-violet-400/30 hover:bg-violet-500/[0.06] hover:text-white'
+          >
+            <span className='mono'>ID {userId || 'unknown'}</span>
+            <Copy size={11} />
+            {copied && <span className='text-emerald-300'>Copied</span>}
+          </button>
+          <div className='relative mt-4 flex justify-center gap-2'>
+            <ActionBtn icon={<Phone size={14} />} label='Call' />
+            <ActionBtn icon={<Video size={14} />} label='Video' />
+            <ActionBtn icon={<Bell size={14} />} label='Mute' />
+          </div>
+        </div>
 
-      <div className='px-5 pb-6 pt-2 text-center text-[10px] text-white/25 mono'>
-        ECHO · zero-knowledge · keys live on-device only
-      </div>
+        {/* About */}
+        <Section title='About'>
+          <p className='text-[12.5px] leading-relaxed text-white/65'>{about}</p>
+        </Section>
 
-      {lightboxOpen && avatar && (
-        <ImageLightbox src={avatar} alt={profileName} onClose={() => setLightboxOpen(false)} />
-      )}
-    </aside>
+        {/* Cryptographic fingerprint */}
+        <Section title='Cryptographic fingerprint' icon={<Fingerprint size={11} />}>
+          <div className='echo-glass rounded-xl p-3.5'>
+            <div className='flex items-center gap-2'>
+              <ShieldCheck size={14} className='text-emerald-400/90' />
+              <span className='text-[11px] text-emerald-300/90 mono'>
+                {fingerprint ? 'Verified · Ed25519' : 'No key on record yet'}
+              </span>
+            </div>
+            {fingerprint && (
+              <div className='mt-2 grid grid-cols-4 gap-1.5'>
+                {fingerprintChunks.slice(0, 8).map((g, i) => (
+                  <div
+                    key={i}
+                    className='rounded-md border border-white/[0.06] bg-black/40 py-1.5 text-center text-[11px] mono text-violet-200/90 tracking-widest'
+                  >
+                    {g}
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              data-testid='compare-numbers-btn'
+              onClick={handleCompareNumbers}
+              className='echo-cta mt-3 w-full rounded-full py-2 text-[11.5px] font-medium'
+            >
+              Compare safety numbers
+            </button>
+          </div>
+        </Section>
+
+        {/* Settings */}
+        <Section title='Options' icon={<Hash size={11} />}>
+          <Row icon={<BellOff size={14} />} label='Mute notifications' trailing={<Switch />} />
+          <Row
+            icon={<Trash2 size={14} className='text-red-400' />}
+            label='Clear chat history'
+            hover
+          />
+          <Row
+            icon={<Ban size={14} className='text-red-400' />}
+            label='Block contact'
+            hover
+            danger
+          />
+        </Section>
+
+        <div className='px-5 pb-6 pt-2 text-center text-[10px] text-white/25 mono'>
+          ECHO · zero-knowledge · keys live on-device only
+        </div>
+
+        {lightboxOpen && avatar && (
+          <ImageLightbox src={avatar} alt={profileName} onClose={() => setLightboxOpen(false)} />
+        )}
+      </aside>
+    </>
   )
 }
 

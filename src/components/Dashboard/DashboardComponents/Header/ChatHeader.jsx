@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Phone, Video, Lock, Fingerprint, ArrowLeft } from 'lucide-react'
+import { Phone, Video, ArrowLeft } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { getSocket } from '../../../../socket'
 
@@ -7,7 +7,7 @@ import { getSocket } from '../../../../socket'
  * Premium ChatHeader — keeps all existing socket logic (online tracking,
  * add-friend, safety-number verify) with the new premium UI design.
  */
-const ChatHeader = ({ activeChat, token, onOpenInfo, onCompareNumbers, onBack }) => {
+const ChatHeader = ({ activeChat, token, onOpenInfo, onBack }) => {
   const navigate = useNavigate()
   const [onlineUsers, setOnlineUsers] = useState([])
   // Note: friendship/loading state removed as unused; can be restored when needed
@@ -35,18 +35,6 @@ const ChatHeader = ({ activeChat, token, onOpenInfo, onCompareNumbers, onBack })
       socket.off('userOffline', onOffline)
     }
   }, [token])
-
-  const handleVerifySafetyNumber = () => {
-    if (onCompareNumbers) {
-      onCompareNumbers()
-    } else {
-      window.dispatchEvent(
-        new CustomEvent('verifySafetyNumber', {
-          detail: { peerId: String(activeChat?.id) },
-        })
-      )
-    }
-  }
 
   if (!activeChat) return null
 
@@ -114,18 +102,6 @@ const ChatHeader = ({ activeChat, token, onOpenInfo, onCompareNumbers, onBack })
           </span>
         </div>
       </div>
-
-      {/* E2EE pill */}
-      <button
-        data-testid='chat-header-compare'
-        onClick={handleVerifySafetyNumber}
-        className='hidden md:inline-flex items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-400/[0.04] px-3 py-1 text-[10.5px] font-medium tracking-[0.04em] text-emerald-300/90 hover:border-emerald-400/40 transition-all'
-        title='Verify safety numbers'
-      >
-        <Lock size={11} strokeWidth={2.4} />
-        <span className='mono'>Secured</span>
-        <Fingerprint size={11} className='text-emerald-300/80' />
-      </button>
 
       {/* Action icons */}
       <div className='flex items-center gap-1 ml-auto'>

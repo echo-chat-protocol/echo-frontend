@@ -2530,13 +2530,6 @@ const Dashboard = () => {
                     onOpenInfo={() => setShowInfoPanel((v) => !v)}
                     onOpenMenu={() => setIsMobileMenuOpen(true)}
                     onBack={handleMobileBack}
-                    onCompareNumbers={() => {
-                      window.dispatchEvent(
-                        new CustomEvent('verifySafetyNumber', {
-                          detail: { peerId: String(activeChat.id) },
-                        })
-                      )
-                    }}
                   />
                 )}
                 <div className='min-h-0 flex-1 overflow-hidden'>

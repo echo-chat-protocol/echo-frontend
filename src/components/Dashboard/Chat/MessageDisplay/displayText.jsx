@@ -191,8 +191,10 @@ function MessageBubble({
           <div className='w-7 shrink-0' aria-hidden='true' />
         ))}
 
-      {/* Desktop hover affordance: a Reply button beside the bubble. order-first
-          puts it on the left for our own (right-aligned) messages. */}
+      {/* Desktop hover affordance: a Reply button beside the bubble. It always
+          sits on the inner (toward-center) side of the bubble: order-first puts
+          it left of our own right-aligned messages, order-last puts it right of
+          received left-aligned messages — never out toward the chat edge. */}
       {onReply && (
         <button
           type='button'
@@ -200,7 +202,7 @@ function MessageBubble({
           title='Reply'
           aria-label='Reply'
           className={`hidden h-8 w-8 shrink-0 self-center place-items-center rounded-full text-white/35 opacity-0 transition hover:bg-white/10 hover:text-violet-200 group-hover:opacity-100 md:grid ${
-            isSelf ? 'order-first' : ''
+            isSelf ? 'order-first' : 'order-last'
           }`}
         >
           <Reply size={15} />
