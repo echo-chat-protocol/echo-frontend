@@ -37,6 +37,7 @@ const CommunityPage = lazy(() => import('@/pages/public/CommunityPage'))
 const HelpPage = lazy(() => import('@/pages/public/HelpPage'))
 const AboutPage = lazy(() => import('@/pages/public/AboutPage'))
 const BlogPage = lazy(() => import('@/pages/public/BlogPage'))
+const BlogWhatIsEcho = lazy(() => import('@/pages/public/BlogWhatIsEcho'))
 const ContactPage = lazy(() => import('@/pages/public/ContactPage'))
 const PrivacyPage = lazy(() => import('@/pages/public/PrivacyPage'))
 const TermsPage = lazy(() => import('@/pages/public/TermsPage'))
@@ -264,6 +265,7 @@ function App() {
             <Route path='/about' element={<AboutPage />} />
             <Route path='/careers' element={<Navigate to='/' replace />} />
             <Route path='/blog' element={<BlogPage />} />
+            <Route path='/blog/what-is-echo' element={<BlogWhatIsEcho />} />
             <Route path='/contact' element={<ContactPage />} />
 
             {/* Legal (new short URLs) */}
