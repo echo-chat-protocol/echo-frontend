@@ -291,7 +291,7 @@ export default function PricingPage() {
               {/* Price */}
               <div className="mt-6 flex items-end gap-2">
                 {p.price === null ? (
-                  <span className="text-4xl font-semibold">Let&aposs talk</span>
+                  <span className="text-4xl font-semibold">Let&apos;s talk</span>
                 ) : (
                   <>
                     <span className="text-5xl font-semibold tracking-tight">
