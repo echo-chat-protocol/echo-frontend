@@ -42,7 +42,7 @@ export default function Hero() {
           className='anim-fade-up mt-9 flex items-center justify-center gap-3'
           style={{ animationDelay: '360ms' }}
         >
-          <a data-testid='hero-cta-primary' href='#playground' className='btn-primary mx-auto'>
+          <a data-testid='hero-cta-primary' href='/register' className='btn-primary mx-auto'>
             {t('hero.start')}
           </a>
         </div>
