@@ -6,8 +6,8 @@ import { useTranslation } from 'react-i18next'
 const NAV = [
   { key: 'features', href: '#features' },
   { key: 'security', href: '#security' },
-  { key: 'pricing', href: '#pricing' },
-  { key: 'docs', href: '#docs' },
+  { key: 'pricing', href: '/pricingpage' },
+  { key: 'docs', href: '/docs' },
 ]
 
 export default function Navbar() {
@@ -88,7 +88,7 @@ export default function Navbar() {
             <Link
               data-testid='navbar-cta'
               to='/register'
-              className='btn-primary !py-2.5 !px-5 text-sm'
+              className='inline-flex items-center justify-center gap-2 rounded-full bg-white text-black px-5 py-2.5 text-sm font-semibold transition-colors hover:bg-white/90'
             >
               {t('nav.signup')}
             </Link>
@@ -120,7 +120,7 @@ export default function Navbar() {
                 <a
                   href='/register'
                   onClick={() => setOpen(false)}
-                  className='btn-primary w-full mt-2 !py-2.5 text-sm'
+                  className='mt-2 inline-flex w-full items-center justify-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-black transition-colors hover:bg-white/90'
                 >
                   {t('nav.signup')}
                 </a>

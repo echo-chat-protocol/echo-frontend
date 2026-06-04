@@ -2,77 +2,54 @@
 
 /* Code block typing */
 .echo-code-window {
-    background: rgba(0, 0, 0, 0.7);
-    border: 1px solid rgba(168, 85, 247, 0.25);
-    border-radius: 14px;
-    box-shadow:
-        inset 0 0 0 1px rgba(255, 255, 255, 0.02),
-        0 30px 80px -30px rgba(168, 85, 247, 0.4);
-    backdrop-filter: blur(10px);
-    overflow: hidden;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  border-radius: 14px;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02),
+    0 30px 80px -30px rgba(168, 85, 247, 0.4);
+  backdrop-filter: blur(10px);
+  overflow: hidden;
 }
 
 .echo-code-window header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 16px;
-    border-bottom: 1px solid rgba(168, 85, 247, 0.18);
-    background: rgba(255, 255, 255, 0.02);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(168, 85, 247, 0.18);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .echo-code-dot {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
 }
 
 .echo-syntax-keyword {
-    color: #ec4899;
+  color: #ec4899;
 }
 
 .echo-syntax-string {
-    color: #d8b4fe;
+  color: #d8b4fe;
 }
 
 .echo-syntax-fn {
-    color: #a855f7;
+  color: #a855f7;
 }
 
 .echo-syntax-comment {
-    color: #6b7280;
-    font-style: italic;
+  color: #6b7280;
+  font-style: italic;
 }
 
 .echo-syntax-num {
-    color: #f9a8d4;
+  color: #f9a8d4;
 }
 
 /* Ticker mask edges */
 .ticker-mask {
-    mask-image: linear-gradient(90deg,
-            transparent 0%,
-            #000 10%,
-            #000 90%,
-            transparent 100%);
-    -webkit-mask-image: linear-gradient(90deg,
-            transparent 0%,
-            #000 10%,
-            #000 90%,
-            transparent 100%);
-}
-
-/* Pricing card highlight */
-.pricing-pop {
-    position: relative;
-}
-
-.pricing-pop::after {
-    content: "";
-    position: absolute;
-    inset: -1px;
-    border-radius: 18px;
-    background: linear-gradient(135deg, #a855f7, #ec4899, #8b5cf6);
-    z-index: -1;
-    filter: blur(0.5px);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 10%, #000 90%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 10%, #000 90%, transparent 100%);
 }

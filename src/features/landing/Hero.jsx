@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { ArrowRight } from 'lucide-react'
 import { useTranslation, Trans } from 'react-i18next'
 import ParticlesBackground from '@/components/animations/ParticlesBackground'
 
@@ -27,7 +26,7 @@ export default function Hero() {
           style={{ animationDelay: '120ms' }}
         >
           {t('hero.title_1')} <br className='hidden sm:block' />
-          <span className='echo-gradient-text'>{t('hero.title_2')}</span>
+          <span className='text-white'>{t('hero.title_2')}</span>
         </h1>
 
         <p
@@ -40,14 +39,10 @@ export default function Hero() {
 
         {/* CTAs */}
         <div
-          className='anim-fade-up mt-9 flex flex-col sm:flex-row items-center justify-center gap-3'
+          className='anim-fade-up mt-9 flex items-center justify-center gap-3'
           style={{ animationDelay: '360ms' }}
         >
-          <a data-testid='hero-cta-primary' href='#download' className='btn-primary'>
-            {t('hero.download')}
-            <ArrowRight className='h-4 w-4' />
-          </a>
-          <a data-testid='hero-cta-secondary' href='#playground' className='btn-ghost'>
+          <a data-testid='hero-cta-primary' href='#playground' className='btn-primary mx-auto'>
             {t('hero.start')}
           </a>
         </div>
@@ -197,9 +192,6 @@ function HeroAppPreview() {
             <span className='h-2.5 w-2.5 rounded-full bg-[#28c840]' />
           </div>
           <span className='font-mono text-xs text-white/90'>echo://chat/zero-knowledge</span>
-          <span className='rounded-full border border-[#a855f7]/30 bg-[#a855f7]/10 px-2 py-0.5 text-[10px] text-[#e9d5ff]'>
-            256-bit
-          </span>
         </div>
 
         <div className='grid grid-cols-1 lg:grid-cols-[240px_1fr]'>
