@@ -273,10 +273,9 @@ export default function RegisterPage() {
       footerLinkTo="/login"
       testimonial={{
         quote:
-          "Onboarding took 38 seconds. No SMS, no email verification cascade. Just keys.",
-        initials: "JK",
-        name: "Jonas Klein",
-        role: "Investigative journalist · Berlin",
+          "The destruction of privacy is the first hallmark of totalitarianism. The right to keep our secrets is the fundamental line that separates a free human being from a subject.",
+        name: "Milan Kundera",
+        role: 'Novelist and essayist · Author of "The Betrayed Testaments"',
       }}
     >
       <form onSubmit={onSubmit} className="space-y-4" data-testid="register-form">
