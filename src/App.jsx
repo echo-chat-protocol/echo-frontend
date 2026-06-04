@@ -22,7 +22,6 @@ import PrivateRoute from './components/auth/PrivateRoute' // NOT lazy — used a
 const Dashboard = lazy(() => import('./components/Dashboard/Dashboard'))
 const Chat = lazy(() => import('./components/Dashboard/Chat/Chat'))
 const UserProfile = lazy(() => import('./components/Dashboard/UserProfileModal'))
-const Pricing = lazy(() => import('./features/landing/Pricing'))
 const VideoCall = lazy(() => import('./components/VideoCall/VideoCall'))
 
 // ─── New public pages (lazy, feature-based architecture) ─────────────────────
@@ -44,6 +43,7 @@ const TermsPage = lazy(() => import('@/pages/public/TermsPage'))
 const CookiesPage = lazy(() => import('@/pages/public/CookiesPage'))
 const GdprPage = lazy(() => import('@/pages/public/GdprPage'))
 const LicensesPage = lazy(() => import('@/pages/public/LicensesPage'))
+const PricingPage = lazy(() => import('@/pages/public/PricingPage'))
 // DeviceSyncPage is eagerly imported to avoid dynamic import issues on mobile
 import DeviceSyncPage from '@/pages/DeviceSyncPage'
 
@@ -259,7 +259,6 @@ function App() {
             <Route path='/docs' element={<DocsPage />} />
             <Route path='/community' element={<CommunityPage />} />
             <Route path='/help' element={<HelpPage />} />
-            <Route path='/status' element={<Navigate to='/' replace />} />
 
             {/* Company */}
             <Route path='/about' element={<AboutPage />} />
@@ -279,7 +278,8 @@ function App() {
             <Route path='/documentation' element={<Navigate to='/docs' replace />} />
             <Route path='/documentation/guides' element={<Navigate to='/docs' replace />} />
             <Route path='/documentation/protocols' element={<Navigate to='/docs' replace />} />
-            <Route path='/pricing' element={<Pricing />} />
+            <Route path='/pricing' element={<Navigate to='/pricingpage' replace />} />
+            <Route path='/pricingpage' element={<PricingPage />} />
 
             {/* Legacy event/tool paths → new public pages */}
             <Route path='/community/events/*' element={<Navigate to='/community' replace />} />

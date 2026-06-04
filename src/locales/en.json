@@ -10,9 +10,9 @@
     "signup": "Sign Up"
   },
   "hero": {
-    "title_1": "The messenger your",
-    "title_2": "conversations deserve.",
-    "subtitle": "ECHO is a privacy-first communication layer with <1>E2EE</1>, on-device key generation and a transparent cryptographic stack. No metadata. No backdoors. No compromises.",
+    "title_1": "Talk freely.",
+    "title_2": "Stay private.",
+    "subtitle": "The right to whisper is as old as language itself and as essential as the spoken word. A society that cannot whisper cannot think aloud.",
     "download": "Download Echo",
     "start": "Start For Free"
   }

@@ -10,6 +10,7 @@ const COLS = [
       { label: 'Features', to: '/features' },
       { label: 'Security', to: '/security' },
       { label: 'Download', to: '/download' },
+      { label: 'Pricing', to: '/pricingpage' },
     ],
   },
   {

@@ -147,8 +147,8 @@ code,
   background: rgba(10, 10, 14, 0.55);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  border: 1px solid rgba(168, 85, 247, 0.18);
-  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
   transition:
     border-color 280ms ease,
     box-shadow 280ms ease,
@@ -156,17 +156,18 @@ code,
 }
 
 .glass:hover {
-  border-color: rgba(196, 168, 255, 0.45);
+  border-color: rgba(255, 255, 255, 0.14);
   box-shadow:
-    0 0 0 1px rgba(168, 85, 247, 0.18),
-    0 20px 60px -20px rgba(168, 85, 247, 0.4);
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 20px 60px -24px rgba(255, 255, 255, 0.18);
 }
 
 .glass-strong {
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(22px);
   -webkit-backdrop-filter: blur(22px);
-  border: 1px solid rgba(168, 85, 247, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
 }
 
 /* Cyber-border with shimmer wave on hover */
@@ -183,9 +184,9 @@ code,
   background: linear-gradient(
     120deg,
     transparent 0%,
-    rgba(124, 58, 237, 0.45) 30%,
-    rgba(168, 85, 247, 0.6) 50%,
-    rgba(196, 168, 255, 0.5) 70%,
+    rgba(255, 255, 255, 0.08) 30%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0.08) 70%,
     transparent 100%
   );
   background-size: 250% 100%;
@@ -203,7 +204,7 @@ code,
 
 .cyber-border:hover::before {
   opacity: 1;
-  animation: shimmer-wave 2.4s linear infinite;
+  animation: shimmer-wave 3.2s linear infinite;
 }
 
 /* =====================================================
@@ -494,7 +495,7 @@ code,
 
 .divider-glow {
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(168, 85, 247, 0.6), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.14), transparent);
 }
 
 /* === Echo utilities === */
@@ -808,18 +809,21 @@ code,
   background: rgba(255, 255, 255, 0.025);
   border: 1px solid var(--echo-border);
   color: #fff;
-  transition: all 0.2s ease;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
 }
 .echo-input::placeholder {
   color: rgba(255, 255, 255, 0.32);
 }
 .echo-input:focus {
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 24px;
   border-color: rgba(168, 85, 247, 0.45);
   box-shadow:
     0 0 0 4px rgba(168, 85, 247, 0.1),
     inset 0 0 24px rgba(168, 85, 247, 0.05);
-  outline: none;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 22px;
 }
 
 /* Star background subtle */

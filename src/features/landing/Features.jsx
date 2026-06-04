@@ -14,49 +14,41 @@ const FEATURES = [
     icon: Lock,
     title: 'AES-256-GCM Encryption',
     desc: 'Authenticated encryption via WASM. Keys are forged on-device and never reconstructed anywhere else.',
-    accent: 'from-[#a855f7] to-[#8b5cf6]',
   },
   {
     icon: EyeOff,
     title: 'Zero-Knowledge Relays',
     desc: 'Our relays only ever see ciphertext. Even if seized, our servers literally cannot decrypt your messages.',
-    accent: 'from-[#7c3aed] to-[#a855f7]',
   },
   {
     icon: Zap,
     title: 'Sub-40ms Delivery',
     desc: 'A multi-region mesh routes your sealed packets through the fastest hop. Optimized for real-time video and audio.',
-    accent: 'from-[#8b5cf6] to-[#a855f7]',
   },
   {
     icon: Fingerprint,
     title: 'XEdDSA Verifiable Identities',
     desc: 'Every contact has an Ed25519 identity key. Verify in person or via the safety-numbers protocol.',
-    accent: 'from-[#7c3aed] to-[#a855f7]',
   },
   {
     icon: GitBranch,
     title: 'Asynchronous E2EE',
     desc: 'Using X25519 One-Time PreKeys (OPK). Start encrypted conversations even when your contacts are offline.',
-    accent: 'from-[#a855f7] to-[#8b5cf6]',
   },
   {
     icon: Network,
     title: 'MLS Group Messaging',
     desc: 'Scalable end-to-end encryption for large groups using the Messaging Layer Security (MLS) protocol.',
-    accent: 'from-[#8b5cf6] to-[#a855f7]',
   },
   {
     icon: Globe2,
     title: 'Metadata Minimisation',
     desc: "Sealed sender, padded packet sizes, randomised timing. We can't profile you or your connections.",
-    accent: 'from-[#7c3aed] to-[#a855f7]',
   },
   {
     icon: ShieldCheck,
     title: 'Quantum-resistant handshakes',
     desc: 'Hybrid Kyber + X25519 key exchange planned for future-proof security against harvest-now-decrypt-later.',
-    accent: 'from-[#7c3aed] to-[#a855f7]',
   },
 ]
 
@@ -67,15 +59,11 @@ export default function Features() {
       data-testid='features-section'
       className='relative py-24 sm:py-32 section-fade overflow-hidden'
     >
-      <div className='absolute inset-0'>
-        <div className='aurora-bg opacity-50' />
-      </div>
-
       <div className='relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8'>
         <div className='max-w-3xl'>
           <h2 className='mt-5 text-4xl sm:text-5xl lg:text-6xl font-semibold tracking-tight leading-[1.02]'>
             Privacy isn&apos;t a setting. <br />
-            <span className='echo-gradient-text'>It&apos;s the architecture.</span>
+            <span className='text-white'>It&apos;s the architecture.</span>
           </h2>
           <p className='mt-5 text-[#b9b9c4] leading-relaxed max-w-2xl'>
             Eight non-negotiable pillars that turn a chat app into a true zero-trust communication
@@ -84,16 +72,14 @@ export default function Features() {
         </div>
 
         <div className='mt-14 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5'>
-          {FEATURES.map(({ icon: Icon, title, desc, accent }, i) => (
+          {FEATURES.map(({ icon: Icon, title, desc }, i) => (
             <article
               key={title}
               data-testid={`feature-card-${i}`}
-              className='group cyber-border glass rounded-2xl p-6 anim-fade-up'
+              className='group rounded-2xl border border-white/10 bg-[#0b0b0f] p-6 anim-fade-up'
               style={{ animationDelay: `${i * 80}ms` }}
             >
-              <div
-                className={`inline-flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br ${accent} shadow-[0_8px_30px_-8px_rgba(168,85,247,0.6)]`}
-              >
+              <div className='inline-flex h-11 w-11 items-center justify-center rounded-xl bg-white/[0.08]'>
                 <Icon className='h-5 w-5 text-white' strokeWidth={2.2} />
               </div>
               <h3 className='mt-5 text-lg font-semibold tracking-tight'>{title}</h3>
