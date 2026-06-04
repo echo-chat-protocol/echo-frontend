@@ -41,7 +41,6 @@ const BlogWhatIsEcho = lazy(() => import('@/pages/public/BlogWhatIsEcho'))
 const ContactPage = lazy(() => import('@/pages/public/ContactPage'))
 const PrivacyPage = lazy(() => import('@/pages/public/PrivacyPage'))
 const TermsPage = lazy(() => import('@/pages/public/TermsPage'))
-const CookiesPage = lazy(() => import('@/pages/public/CookiesPage'))
 const GdprPage = lazy(() => import('@/pages/public/GdprPage'))
 const LicensesPage = lazy(() => import('@/pages/public/LicensesPage'))
 // DeviceSyncPage is eagerly imported to avoid dynamic import issues on mobile
@@ -271,7 +270,6 @@ function App() {
             {/* Legal (new short URLs) */}
             <Route path='/privacy' element={<PrivacyPage />} />
             <Route path='/terms' element={<TermsPage />} />
-            <Route path='/cookies' element={<CookiesPage />} />
             <Route path='/gdpr' element={<GdprPage />} />
             <Route path='/licenses' element={<LicensesPage />} />
 
@@ -293,7 +291,6 @@ function App() {
             {/* Legacy legal long paths → new short paths */}
             <Route path='/legal/privacy-policy' element={<Navigate to='/privacy' replace />} />
             <Route path='/legal/terms-of-service' element={<Navigate to='/terms' replace />} />
-            <Route path='/legal/cookie-policy' element={<Navigate to='/cookies' replace />} />
             <Route path='/legal/gdpr' element={<Navigate to='/gdpr' replace />} />
             <Route path='/legal/licenses' element={<Navigate to='/licenses' replace />} />
 
