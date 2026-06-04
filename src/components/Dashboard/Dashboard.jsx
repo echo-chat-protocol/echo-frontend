@@ -1191,13 +1191,37 @@ const Dashboard = () => {
 
             sharedSocket.emit('getUserInfo', { userId: senderId }, (response) => {
               if (response.success && response.user) {
+                // Mirror handleChatSelect: the raw profilePicture is a relative
+                // /uploads path that resolves against the frontend origin (404 →
+                // generic initials avatar). formatProfileImage rewrites it to the
+                // API origin so the real photo + name show without opening the chat.
+                const base = formatProfileImage(
+                  response.user.profilePicture,
+                  response.user.username
+                )
+                const busted = base
+                  ? `${base}${base.includes('?') ? '&' : '?'}v=${Date.now()}`
+                  : null
                 const conversationUser = {
                   id: senderId,
                   username: response.user.username,
-                  profileImage: response.user.profilePicture,
+                  profileImage: busted || base,
+                  targetUserId: senderId,
                 }
 
                 updateRecentConversationsRef.current?.(conversationUser, null)
+
+                // Keep the fallback cache fresh so notification avatars and any
+                // later lookups don't re-derive the broken raw path.
+                try {
+                  localStorage.setItem(
+                    `profile-${senderId}`,
+                    JSON.stringify({
+                      username: response.user.username,
+                      profilePicture: response.user.profilePicture,
+                    })
+                  )
+                } catch {}
               } else {
                 console.error('❌ Failed to fetch user info')
               }

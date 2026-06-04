@@ -1278,6 +1278,24 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           const myInitPrivKeyB64 = resolveMyInitPrivKeyB64(priorState, fallbackPriv)
           const systemMessage = buildCommitSystemMessage({ commit, priorState })
 
+          // Save the "X added Y" / "X removed Y" row before the epoch guards
+          // below can bail. The row is idempotent (deterministic _id
+          // commit:group:epoch, deduped in updateSavedMessages), and it must
+          // not depend on whether THIS device still needs to advance its MLS
+          // state. The actor is the case that matters: GroupHeader already
+          // advanced their state to commit.epoch (via groupStateSynced), so the
+          // echoed commit hits `priorState.epoch >= commit.epoch` and returns —
+          // which is exactly why the member who did the add was the only one not
+          // seeing the system row.
+          if (systemMessage) {
+            await updateSavedMessages(
+              userId,
+              getGroupCacheId(activeGroupId),
+              systemMessage,
+              setMessages
+            )
+          }
+
           if (
             Number.isInteger(priorState?.epoch) &&
             Number.isInteger(commit?.epoch) &&
@@ -1324,14 +1342,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                 groupMetaRef.current = nextMeta
                 return nextMeta
               })
-              if (systemMessage) {
-                await updateSavedMessages(
-                  userId,
-                  getGroupCacheId(activeGroupId),
-                  systemMessage,
-                  setMessages
-                )
-              }
+              // system row already saved up front (idempotent)
             }
             // either way, never applyCommit our own commit. keeping the pre-remove
             // ref state is fine (applicationSecretB64 is still set from the last
@@ -1358,14 +1369,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             groupMetaRef.current = nextMeta
             return nextMeta
           })
-          if (systemMessage) {
-            await updateSavedMessages(
-              userId,
-              getGroupCacheId(activeGroupId),
-              systemMessage,
-              setMessages
-            )
-          }
+          // system row already saved up front (idempotent)
 
           // commit bumped keys/epoch, retry buffered messages
           const key = String(groupId)
