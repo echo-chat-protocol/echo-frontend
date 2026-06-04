@@ -67,6 +67,7 @@ import {
   broadcastSessionSync,
   invalidatePairedDevicesCache,
   forwardGroupStateToPairedDevices,
+  forwardGroupMessageToPairedDevices,
 } from '../../utils/deviceForward'
 import wasmInit, { diffie_hellman } from '@mascaro101/echo-protocol'
 import { getDeviceMetadata } from '../../features/devices/deviceMetadata'
@@ -97,6 +98,11 @@ const Dashboard = () => {
   const token = tokenStorage.getAccess()
   const navigate = useNavigate()
   const { username, userId, profileImage } = getUserData(token)
+  // The sidebar identity is rendered from this reactive copy rather than the
+  // raw JWT-derived `username`: a username change refreshes the token, but
+  // React won't re-read it without a state update, so the bottom-left would
+  // otherwise show the stale name until a full reload.
+  const [selfUsername, setSelfUsername] = useState(username)
 
   // Estados
   const [activeChat, setActiveChat] = useState(null)
@@ -524,6 +530,12 @@ const Dashboard = () => {
     sharedSocket.on('userProfileUpdated', (data) => {
       const { userId: updatedUserId, username, profilePicture } = data
 
+      // Our own profile changed (e.g. edited on another paired device). Keep the
+      // sidebar identity in lockstep so it doesn't show the old name.
+      if (updatedUserId && String(updatedUserId) === String(userId) && username) {
+        setSelfUsername(username)
+      }
+
       updateRecentConversations((prevConversations) => {
         return prevConversations.map((conv) => {
           if (conv.id === updatedUserId || conv.targetUserId === updatedUserId) {
@@ -799,6 +811,29 @@ const Dashboard = () => {
           // Image-aware preview: "📷 caption" when captioned, else "📷 Photo"
           // (or "🎞️ GIF"); plain text otherwise.
           msgText = getMessagePreview(result?.formattedMessage)
+
+          // Relay the decrypted plaintext to our own paired/synced devices. A
+          // sibling that can't yet decrypt this message on its own — most often
+          // the very first message of a brand-new group, before its MLS state
+          // has landed — would otherwise be stuck showing a "New message"
+          // preview. GroupChat already does this on send / while the chat is
+          // open; the Dashboard owns it for background messages, which is
+          // exactly the first-message case (the group isn't open yet).
+          const fm = result?.formattedMessage
+          if (fm && (fm.text || fm.image)) {
+            forwardGroupMessageToPairedDevices({
+              userId: userIdRef.current,
+              groupId: gid,
+              groupName: message.groupName || null,
+              text: fm.text ?? '',
+              image: fm.image ?? null,
+              replyTo: fm.replyTo ?? null,
+              messageId: fm._id,
+              createdAt: fm.createdAt,
+              seenStatus: true,
+              username: fm.username ?? message.username ?? '',
+            }).catch(() => {})
+          }
         } catch {
           console.warn('[Dashboard] Failed to decrypt incoming group message')
           // Do not persist placeholder into storage — background state may not be ready yet
@@ -1218,17 +1253,9 @@ const Dashboard = () => {
       // it explicitly (rather than relying on the localStorageUpdated event) so an
       // image-only message shows a media placeholder instead of an empty preview.
       if (latest) {
-        const img = latest.fm.image ?? null
-        const previewText =
-          latest.fm.text ||
-          (img
-            ? /\.gif($|\?)/i.test(img) || img.startsWith('data:image/gif')
-              ? '🎞️ GIF'
-              : '📷 Photo'
-            : '')
         upsertGroupRef.current?.(
           { groupId: gid },
-          { text: previewText, timestamp: latest.timestamp }
+          { text: getMessagePreview(latest.fm), timestamp: latest.timestamp }
         )
       }
     }
@@ -1846,7 +1873,7 @@ const Dashboard = () => {
 
   // Listen for profile updates from localStorage
   useEffect(() => {
-    const handleProfileUpdate = () => {
+    const handleProfileUpdate = (event) => {
       if (userId) {
         const cachedProfile = getCachedUserProfile(userId)
         if (cachedProfile && cachedProfile.profilePicture) {
@@ -1854,6 +1881,16 @@ const Dashboard = () => {
           setUserProfileImage(formattedImage)
         }
       }
+      // Refresh the sidebar identity after a self profile edit. Prefer the name
+      // carried on the event (instant), then fall back to the freshly refreshed
+      // JWT so outgoing-message attribution and the bottom-left stay in sync.
+      const detail = event?.detail?.profileData || {}
+      const nextName =
+        detail.display_name ||
+        detail.username ||
+        getUserData(tokenStorage.getAccess()).username ||
+        ''
+      if (nextName) setSelfUsername(nextName)
     }
 
     window.addEventListener('profileUpdated', handleProfileUpdate)
@@ -2433,7 +2470,7 @@ const Dashboard = () => {
               setIsMobileMenuOpen(false)
             }}
             user={{
-              name: username,
+              name: selfUsername || username,
               avatar: userProfileImage,
             }}
             collapsed={sidebarCollapsed}

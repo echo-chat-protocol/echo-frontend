@@ -313,6 +313,10 @@ describe('CreateGroupModal MLS initialization', () => {
       mlsEnabled: true,
       epoch: 0,
       cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
+      // createGroup now persists the picture/description atomically, so the
+      // modal echoes the (empty) local values back through onCreated.
+      profilePicture: '',
+      description: '',
     })
     expect(onClose).toHaveBeenCalled()
   })

@@ -158,11 +158,29 @@ const {
   encryptApplicationMessage,
   processWelcome,
 } = await import('../groupCryptoProvider.js')
+const { generateKeyPackage } = await import('../groupCrypto/keyPackage.js')
 
 const ALICE_KEY = bytesToBase64(new Uint8Array(32).fill(0x01))
 const BOB_KEY = bytesToBase64(new Uint8Array(32).fill(0x02))
 const CAROL_KEY = bytesToBase64(new Uint8Array(32).fill(0x03))
 const EVE_KEY = bytesToBase64(new Uint8Array(32).fill(0x04))
+
+// Adding a member now requires a full signed KeyPackage (signing pubkey +
+// credential), so the fixture mints a real one for Carol and carries her
+// identity on the `newMember` object passed to buildAddCommit.
+const CIPHER_SUITE = 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256'
+const { keyPackage: CAROL_KP } = await generateKeyPackage({
+  userId: 'carol',
+  initKeyB64: CAROL_KEY,
+  cipherSuite: CIPHER_SUITE,
+})
+const CAROL_MEMBER = {
+  userId: 'carol',
+  username: 'Carol',
+  leafIndex: 2,
+  leafSigningPubKeyB64: CAROL_KP.leafSigningPubKeyB64,
+  credential: CAROL_KP.credential,
+}
 
 const ALICE_BOB_ROSTER = [
   { userId: 'alice', username: 'Alice', leafIndex: 0 },
@@ -207,7 +225,7 @@ describe('groupCryptoProvider adversarial welcomes', () => {
     const { creatorState } = await initialPair('adv-welcome-1')
     const { welcome } = await buildAddCommit({
       state: creatorState,
-      newMember: { userId: 'carol', username: 'Carol', leafIndex: 2 },
+      newMember: CAROL_MEMBER,
       memberInitKeys: ALL_INIT_KEYS,
     })
 
@@ -226,7 +244,7 @@ describe('groupCryptoProvider adversarial commits', () => {
     const { creatorState, bobState } = await initialPair('adv-commit-1')
     const { commit } = await buildAddCommit({
       state: creatorState,
-      newMember: { userId: 'carol', username: 'Carol', leafIndex: 2 },
+      newMember: CAROL_MEMBER,
       memberInitKeys: ALL_INIT_KEYS,
     })
 
@@ -243,13 +261,16 @@ describe('groupCryptoProvider adversarial commits', () => {
       })),
     }
 
-    const nextState = await applyCommit({
-      state: bobState,
-      commit: tamperedCommit,
-      myInitPrivKeyB64: BOB_KEY,
-    })
-
-    expect(nextState.applicationSecretB64).toBeNull()
+    // A remaining member who cannot decrypt the tampered path secret now fails
+    // closed by throwing ("refusing to clear keys for remaining member") rather
+    // than silently producing a null-key state.
+    await expect(
+      applyCommit({
+        state: bobState,
+        commit: tamperedCommit,
+        myInitPrivKeyB64: BOB_KEY,
+      })
+    ).rejects.toThrow(/commit secret|path encryption|epoch secrets/i)
   })
 })
 

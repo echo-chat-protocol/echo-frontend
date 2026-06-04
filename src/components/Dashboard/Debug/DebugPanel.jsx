@@ -51,7 +51,7 @@ const LEVEL_COLORS = {
   debug: 'text-violet-300',
 }
 
-// ── Shared in-memory console capture (installed once on window) ─────────────
+// grabs console output, set up once on window
 const sharedBuffer = (() => {
   if (typeof window === 'undefined') return null
   if (window.__echoDebugBuffer) return window.__echoDebugBuffer
@@ -127,7 +127,7 @@ const sharedBuffer = (() => {
   return buffer
 })()
 
-// ── Group-message trace buffer (populated by messageFlow.js / groupMessageDecryption.js) ─
+// trace buffer for group msgs (filled by messageFlow / groupMessageDecryption)
 const GROUP_TRACE_MAX = 200
 const groupTraceBuffer = (() => {
   if (typeof window === 'undefined') return null
@@ -173,7 +173,7 @@ const groupTraceBuffer = (() => {
   return buffer
 })()
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// helpers
 function safeStringify(value) {
   if (value instanceof Error) return value.stack || `${value.name}: ${value.message}`
   if (typeof value === 'string') return value
@@ -231,7 +231,7 @@ async function copyText(text) {
   }
 }
 
-// ── Reusable bits ───────────────────────────────────────────────────────────
+// small reusable bits
 function KeyValue({ label, value, mono = true, copy = true }) {
   const display = value === null || value === undefined || value === '' ? '—' : String(value)
   return (
@@ -324,7 +324,7 @@ SectionHeader.propTypes = {
   onRefresh: PropTypes.func,
 }
 
-// ── Sections ────────────────────────────────────────────────────────────────
+// sections
 function DevicesSection({ userId, refreshTick }) {
   const [state, setState] = useState({ loading: true, devices: [], error: null })
 
@@ -530,23 +530,21 @@ GroupSection.propTypes = {
   refreshTick: PropTypes.number.isRequired,
 }
 
-// ── Ratchet-tree (TreeKEM/MLS) visualization ────────────────────────────────
-// Node-box geometry for the inverted (root-on-top) diagram.
+// ratchet tree (treekem) viz
+// box sizes for the root-on-top layout
 const TREE_NODE_W = 124
 const TREE_NODE_H = 48
 const TREE_H_GAP = 18
 const TREE_V_GAP = 38
 
-// Build a laid-out, top-down binary tree from the flat left-balanced node array.
-// Root sits at depth 0; leaves fan out along the bottom. Virtual (out-of-array)
-// internal nodes are flattened so incomplete trees still render as a clean
-// binary structure. Returns positioned nodes + parent→child edges, or null.
+// turn the flat node array into a positioned top-down tree.
+// virtual internal nodes get flattened so partial trees still draw ok
 function buildTreeLayout(nodes, leafData, selfLeafIndex) {
   const width = Array.isArray(nodes) ? nodes.length : 0
   if (width === 0) return null
   const leafCount = Math.floor((width + 1) / 2)
 
-  // Node indices on the path from our own leaf to the root.
+  // path from our leaf up to root
   const selfPath = new Set()
   if (Number.isInteger(selfLeafIndex) && selfLeafIndex >= 0) {
     const selfNode = leafNode(selfLeafIndex)
@@ -554,14 +552,14 @@ function buildTreeLayout(nodes, leafData, selfLeafIndex) {
     for (const idx of directPath(selfNode, leafCount)) selfPath.add(idx)
   }
 
-  // Real children of a node, descending through virtual internal nodes.
+  // real kids, descending past the virtual nodes
   const realChildren = (x) => {
     if (level(x) === 0) return []
     const out = []
     for (const child of [left(x), right(x)]) {
       if (child < width) out.push(child)
       else if (level(child) > 0) out.push(...realChildren(child))
-      // virtual leaf (>= width, level 0): no real node, skip
+      // nothing real here, skip
     }
     return out
   }
@@ -593,8 +591,7 @@ function buildTreeLayout(nodes, leafData, selfLeafIndex) {
   let leafCol = 0
   let maxDepth = 0
 
-  // DFS in left→right order: leaves get sequential columns, parents centre over
-  // their children, depth increases downward.
+  // dfs left to right; leaves take columns, parents center over their kids
   const build = (x, depth, isRoot) => {
     maxDepth = Math.max(maxDepth, depth)
     const info = describe(x, isRoot)
@@ -630,7 +627,7 @@ function buildTreeLayout(nodes, leafData, selfLeafIndex) {
   return { laid, edges, dims: { svgW, svgH }, leafCount, nodeCount: width }
 }
 
-// Plain-text rendering (indented, root-first) for the copy button.
+// text dump for the copy button
 function treeLayoutToText(layout) {
   if (!layout) return ''
   const lines = []
@@ -649,7 +646,7 @@ function treeLayoutToText(layout) {
   return lines.join('\n')
 }
 
-// One positioned node box in the diagram.
+// one node box
 function TreeNodeBox({ node }) {
   const dotColor = node.hasPub
     ? node.hasPriv
@@ -735,7 +732,7 @@ TreeNodeBox.propTypes = {
   node: PropTypes.object.isRequired,
 }
 
-// SVG + positioned-box diagram. Edges are drawn parent-bottom → child-top.
+// svg edges with the boxes drawn on top
 function TreeDiagram({ layout }) {
   const { svgW, svgH } = layout.dims
   return (
@@ -807,7 +804,7 @@ function GroupTreeSection({ activeChat, userId, refreshTick }) {
 
   const layout = useMemo(() => {
     if (!gs?.tree?.nodes) return null
-    // Prefer the explicit selfLeafIndex; fall back to a roster lookup by userId.
+    // use selfLeafIndex if set, otherwise find it in the roster
     let selfLeafIndex = gs.selfLeafIndex
     if (!Number.isInteger(selfLeafIndex)) {
       const mine = (gs.roster ?? []).find((m) => String(m.userId) === String(userId ?? ''))
@@ -1084,7 +1081,7 @@ CryptoSection.propTypes = {
   refreshTick: PropTypes.number.isRequired,
 }
 
-// ── Group Messages section ──────────────────────────────────────────────────
+// group messages trace
 function GroupMessagesSection({ activeChat }) {
   const [, force] = useState(0)
   const [onlyThisGroup, setOnlyThisGroup] = useState(true)
@@ -1108,8 +1105,7 @@ function GroupMessagesSection({ activeChat }) {
     })
   }, [entries, onlyThisGroup, showOutgoing, showIncoming, activeGroupId])
 
-  // Keep each trace event visible. Re-add flows can legitimately reuse the same
-  // leaf/generation, so the generated trace id is part of the fallback key.
+  // re-adds can reuse a leaf/gen, so the trace id goes in the key too
   const merged = useMemo(() => {
     const byKey = new Map()
     for (const e of filtered) {
@@ -1328,7 +1324,7 @@ Toggle.propTypes = {
   children: PropTypes.node,
 }
 
-// ── Console pane ────────────────────────────────────────────────────────────
+// console pane
 function ConsolePane() {
   const [, force] = useState(0)
   const [paused, setPaused] = useState(false)
@@ -1483,7 +1479,7 @@ function ConsolePane() {
   )
 }
 
-// ── Main panel ──────────────────────────────────────────────────────────────
+// main panel
 export default function DebugPanel({ open, onClose, activeChat, userId, removedGroups = {} }) {
   const [tab, setTab] = useState('overview')
   const [refreshTick, setRefreshTick] = useState(0)
@@ -1504,14 +1500,14 @@ export default function DebugPanel({ open, onClose, activeChat, userId, removedG
     localStorage.setItem('echo-debug-width-pct', String(widthPct))
   }, [widthPct])
 
-  // Auto-refresh data sections every 5s while open
+  // poke the data sections every 5s while open
   useEffect(() => {
     if (!open) return undefined
     const t = setInterval(() => setRefreshTick((n) => n + 1), 5000)
     return () => clearInterval(t)
   }, [open])
 
-  // Pointer-driven resize handle (desktop only)
+  // drag-to-resize handle
   useEffect(() => {
     const handle = dragRef.current
     if (!handle) return undefined
@@ -1576,9 +1572,8 @@ export default function DebugPanel({ open, onClose, activeChat, userId, removedG
 
   return (
     <>
-      {/* Backdrop — only when the panel covers most of the screen.
-          At smaller widths the chat behind stays interactive so users can
-          read the chat alongside the debug panel. */}
+      {/* backdrop only when we cover most of the screen,
+          otherwise leave the chat behind clickable */}
       <div
         onClick={onClose}
         className={`fixed inset-0 z-[60] bg-black/50 transition-opacity duration-200 ${
@@ -1598,7 +1593,7 @@ export default function DebugPanel({ open, onClose, activeChat, userId, removedG
           open ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
-        {/* Resize handle — works on mobile (wider grab area) and desktop */}
+        {/* resize handle, wider grab zone on mobile */}
         <div
           ref={dragRef}
           className='absolute inset-y-0 -left-3 z-10 w-6 cursor-col-resize md:-left-1 md:w-3'

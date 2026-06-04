@@ -63,6 +63,7 @@ describe('decryptIncomingGroupMessage', () => {
       userId: 'bob',
       username: 'Bob',
       text: 'plain group text',
+      image: null,
       createdAt: '2026-03-22T15:59:00.000Z',
       seenStatus: true,
     })
@@ -91,7 +92,10 @@ describe('decryptIncomingGroupMessage', () => {
   })
 
   it('uses pending plaintext for self MLS echoes without decrypting', async () => {
-    consumePendingOutgoingGroupMessageMock.mockReturnValue('my pending plaintext')
+    consumePendingOutgoingGroupMessageMock.mockReturnValue({
+      text: 'my pending plaintext',
+      image: null,
+    })
 
     const result = await decryptIncomingGroupMessage({
       message: {
@@ -236,7 +240,7 @@ describe('decryptIncomingGroupMessage', () => {
   })
 
   it("uses the current user's username for self-authored messages missing a username", async () => {
-    consumePendingOutgoingGroupMessageMock.mockReturnValue('self text')
+    consumePendingOutgoingGroupMessageMock.mockReturnValue({ text: 'self text', image: null })
 
     const result = await decryptIncomingGroupMessage({
       message: {
@@ -376,7 +380,10 @@ describe('decryptIncomingGroupMessage', () => {
   })
 
   it('passes encryptedSenderDataB64 to consumePendingOutgoingGroupMessage for self-authored messages', async () => {
-    consumePendingOutgoingGroupMessageMock.mockReturnValue('my outgoing text')
+    consumePendingOutgoingGroupMessageMock.mockReturnValue({
+      text: 'my outgoing text',
+      image: null,
+    })
 
     await decryptIncomingGroupMessage({
       message: {

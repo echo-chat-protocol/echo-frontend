@@ -38,6 +38,7 @@ import {
   encodeGroupMessagePayload,
 } from './utils/chat/groupMessageDecryption'
 import {
+  forwardGroupMessageToPairedDevices,
   forwardGroupStateToPairedDevices,
   processIncomingEnvelopes,
 } from '../../../utils/deviceForward'
@@ -125,15 +126,14 @@ const buildRemovedMessage = (activeGroupId, removedInfo = {}) => ({
 const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedInfo = null }) => {
   const socket = useMemo(() => getSocket(), [])
   const [messages, setMessages] = useState([])
-  // True from the moment a group opens until we've determined MLS readiness, so
-  // the composer shows the "securing" bar immediately instead of flashing the
-  // input and then collapsing.
+  // stays true until we know mls is ready, keeps the securing bar up
+  // instead of flashing the input then yanking it
   const [opening, setOpening] = useState(true)
   const [typists, setTypists] = useState({})
-  // Swipe/click-to-reply target (compact reply context) for the composer.
+  // reply target for the composer
   const [replyTarget, setReplyTarget] = useState(null)
   const typingPruneRef = useRef(null)
-  // Drop reply + typing state when switching between groups.
+  // reset reply + typing when the group changes
   useEffect(() => {
     setReplyTarget(null)
     setTypists({})
@@ -171,10 +171,9 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     removedInfoRef.current = removedInfo
 
     if (removedInfo) {
-      // Don't wipe the message history on removal — that's handled by the main
-      // load effect below, which preserves cached plaintext and appends the
-      // "you were removed" placeholder. Here we only need to drop crypto state
-      // and any in-flight encrypted messages whose keys we'll never see.
+      // don't clear history here, the load effect below does that and keeps
+      // cached plaintext. just drop crypto state + any in-flight ciphertext
+      // whose keys we'll never get.
       setGroupCryptoState(null)
       groupCryptoStateRef.current = null
       pendingEncryptedGroupMessagesRef.current.set(String(activeGroupId), [])
@@ -182,21 +181,17 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     }
 
     if (!wasRemoved) return
-    // Re-add path: this effect cleared groupCryptoState when removedInfo was
-    // set; nothing else proactively restores it once the user is re-added.
-    // The Welcome / groupStateSynced handlers do repopulate eventually, but
-    // they're re-bound by the dep change on this effect, so a Welcome that
-    // arrives in the unbinding window is missed — the input then stays
-    // disabled ("MLS state is not ready") with no console error, and the
-    // re-added user can't send. Force a disk reload so groupCryptoState is
-    // restored from whatever the Welcome already persisted.
+    // re-add path. we nulled groupCryptoState above and nothing puts it back
+    // on its own. the Welcome handler can land in the rebind gap and get missed,
+    // leaving the input stuck on "MLS state is not ready" with no error. reload
+    // from disk so we pick up whatever the Welcome already saved.
     void (async () => {
       try {
         const fresh = await loadGroupState(activeGroupId)
         if (fresh) {
           setGroupCryptoState(fresh)
           groupCryptoStateRef.current = fresh
-          // Nudge any listeners (Dashboard, buffered decrypts) to refresh
+          // wake up listeners (dashboard, buffered decrypts)
           try {
             window.dispatchEvent(
               new CustomEvent('groupStateSynced', { detail: { groupId: activeGroupId } })
@@ -206,12 +201,12 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           }
         }
       } catch {
-        /* loadGroupState is best-effort here; the live handlers still get another shot */
+        /* best-effort, the live handlers retry anyway */
       }
     })()
   }, [activeGroupId, removedInfo])
 
-  // Update in-view avatars when any user updates their profile picture
+  // refresh visible avatars when someone changes their pfp
   useEffect(() => {
     const socket = getSocket()
     const onUserProfileUpdated = ({ userId: updatedUserId, username, profilePicture }) => {
@@ -244,8 +239,8 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     []
   )
 
-  // Ask Dashboard to re-run the device-leaf sweep, which can publish a fresh
-  // Welcome for this device to the current epoch when drift is detected.
+  // nudge dashboard to re-sweep device leaves, can republish a Welcome
+  // for this device if it drifted
   const requestDeviceLeafSweep = useCallback(() => {
     try {
       window.dispatchEvent(new CustomEvent('echo-request-device-leaf-sweep'))
@@ -324,12 +319,9 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
 
       const targetUserIdStr = String(commit?.targetUserId ?? '')
       const targetIsSelf = targetUserIdStr !== '' && targetUserIdStr === String(userId)
-      // A sibling-device add re-adds a userId that already holds a leaf — it is
-      // device management, not a membership change, so it gets no system row.
-      // Detect it two ways so a stale priorState can't let it slip through:
-      //   1. the target userId is already present in priorState.roster, or
-      //   2. the target userId owns more than one leaf in the post-add roster
-      //      (i.e. it had at least one leaf before this Add).
+      // sibling-device add: the userId already has a leaf, so this is device
+      // management not a real join, no system row. catch it either via the prior
+      // roster, or by the userId owning more than one leaf after the add.
       const targetAlreadyMember =
         targetUserIdStr !== '' &&
         Array.isArray(priorState?.roster) &&
@@ -370,10 +362,9 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     [activeGroupId, findMemberByLeafIndex, findMemberByUserId, userId]
   )
 
-  // Synthetic "X created <group>" row shown as the first message of every group.
-  // Derived locally from the openGroup response (createdBy + members + name), so
-  // every member renders it without it having to be sent over the wire. Stable
-  // _id keeps it de-duplicated across reopens.
+  // fake "X created <group>" row at the top of every group. built locally from
+  // the openGroup response so it never goes over the wire. fixed _id keeps it
+  // deduped across reopens.
   const buildGroupCreatedSystemMessage = useCallback(
     ({ createdBy, members, groupName, createdAt }) => {
       const creatorName =
@@ -429,18 +420,13 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         : (roster.find((member) => String(member.userId) === String(userId))?.leafIndex ?? null)
 
       if (!currentState) {
-        // For MLS groups, NEVER take the createNewGroupState path here.
-        // Group creation happens in CreateGroupModal; by the time the creator
-        // opens GroupChat, currentState exists.  If we reach this branch with
-        // a missing local state, this device is either:
-        //   1. a freshly-synced sibling whose Welcome hasn't arrived yet, or
-        //   2. a device whose local storage was reset.
-        // In both cases the right answer is a placeholder, then catch-up via
-        // pending Welcomes / sibling-bootstrap.  Becoming "creator" again would
-        // mint a parallel epoch-0 state with the wrong roster (account-level,
-        // missing the primary's per-device leaf), and the local state would
-        // never advance epoch because subsequent Add commits target the real
-        // group's epoch, not this synthetic one.
+        // never createNewGroupState for mls here. creation lives in
+        // CreateGroupModal, so if local state is missing this device is either a
+        // freshly-synced sibling still waiting on its Welcome, or one whose
+        // storage got wiped. either way: placeholder now, catch up later. minting
+        // a fresh epoch-0 state would fork the group with the wrong roster
+        // (account-level, no primary device leaf) and it'd never advance, since
+        // real Add commits target the actual epoch not this synthetic one.
         if (responseGroup?.mlsEnabled) {
           return saveGroupState(activeGroupId, {
             groupId: activeGroupId,
@@ -457,7 +443,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           })
         }
 
-        // Legacy non-MLS groups (no MLS enabled): keep the original behaviour.
+        // legacy non-mls groups keep the old behaviour
         return createNewGroupState({
           groupId: activeGroupId,
           creatorUserId: userId,
@@ -467,7 +453,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       }
 
       const nextSelfLeafIndex = resolveLocalSelfLeafIndex(currentState, serverLeafIndex)
-      // Account roster is one row per user; local MLS roster is one leaf per device.
+      // account roster is one row per user, mls roster is one leaf per device
       const mergedRoster = mergeAccountRosterIntoMlsRoster({
         localRoster: currentState.roster ?? [],
         accountRoster: roster ?? [],
@@ -507,11 +493,9 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         (message?.encryptedSenderDataB64 || message?.headerB64) &&
         message?.ciphertextB64
       if (hasAppMessage) {
-        // Skip silently when this device has no key material for the relevant
-        // epoch (e.g. message sent while we were removed, before the Welcome
-        // that re-adds us has been processed). The replay caller drops the
-        // resulting UNAVAILABLE row, and cached plaintext from before removal
-        // is preserved via mergeCachedMessages.
+        // no key material for this epoch (e.g. sent while we were removed,
+        // before the re-add Welcome processed). skip quietly, replay drops the
+        // UNAVAILABLE row and mergeCachedMessages keeps the old plaintext.
         if (!hasGroupKeyMaterial(cryptoState)) {
           text = MLS_UNAVAILABLE_TEXT
         } else {
@@ -570,16 +554,15 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         }
       )
 
-      // Messages already decrypted and saved on a previous visit. The persisted
-      // senderGenerations already accounts for them, so re-decrypting would fail
-      // with a generation mismatch. Use cached plaintext instead.
+      // already decrypted on a past visit. senderGenerations counts them, so
+      // re-decrypting would fail on a gen mismatch. use the cache.
       const cachedById = new Map(
         (Array.isArray(cachedMessages) ? cachedMessages : [])
           .filter((m) => m?._id && m.text && m.text !== MLS_UNAVAILABLE_TEXT)
           .map((m) => [String(m._id), m])
       )
 
-      // Prefer the device-specific MLS init private if present; fall back to ELD identity key.
+      // device-specific mls init priv if we have it, else the eld identity key
       const identityKeys = await getIdentityKeys()
       const fallbackPriv =
         localStorage.getItem('echo-device-mls-priv') || identityKeys?.privateKeyX25519 || null
@@ -594,22 +577,21 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             message,
             actorUsername: message?.username,
           })
-          // Idempotent gate: skip if we already applied this commit or are ahead.
+          // skip if we already applied this commit or we're ahead
           if (Number.isInteger(replayState?.epoch) && commit.epoch <= replayState.epoch) {
             if (systemMessage) formattedMessages.push(systemMessage)
             continue
           }
-          // Order gate: only attempt the exact next epoch. If we are missing
-          // an earlier commit/welcome, let subsequent replay iterations handle
-          // it after state catches up (e.g., once the corresponding Welcome is
-          // processed). This avoids spurious "Invalid commit epoch" errors.
+          // only try the exact next epoch. if an earlier commit/welcome is
+          // missing, let later replay passes get it once state catches up.
+          // avoids bogus "Invalid commit epoch" errors.
           if (
             Number.isInteger(replayState?.epoch) &&
             Number.isInteger(commit?.epoch) &&
             commit.epoch !== replayState.epoch + 1
           ) {
-            // Defer this commit; a missing intermediate artifact should fill in
-            // first. We still append the system row so UI reflects membership changes.
+            // defer this commit, a missing piece should land first. still add
+            // the system row so the ui shows the membership change.
             if (systemMessage) formattedMessages.push(systemMessage)
             continue
           }
@@ -628,8 +610,8 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             if (systemMessage) formattedMessages.push(systemMessage)
           } catch (err) {
             console.warn('[GroupChat] Skipping stored MLS commit during replay:', err)
-            // Signal a device-leaf sweep in case drift is due to a missing or
-            // stale device leaf; primary can publish a fresh welcome.
+            // ask for a device-leaf sweep in case a stale leaf caused the drift,
+            // primary can then send a fresh welcome
             requestDeviceLeafSweep()
           }
           continue
@@ -638,9 +620,8 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         if (initialMeta?.mlsEnabled && message?.contentType === 'welcome') {
           const welcome = parseArtifactPayload(message)
           if (!welcome || String(welcome.recipientUserId ?? '') !== String(userId)) continue
-          // Skip welcomes addressed to another device on this same account.
-          // They are encrypted to a different init key and would noisily fail
-          // unwrap with "Decryption failed".
+          // welcomes for another device on this account use a different init key
+          // and would just spam "Decryption failed", so skip them
           if (!isGroupWelcomeForThisDevice(welcome)) continue
           if (!shouldApplyGroupWelcome(replayState, welcome)) continue
 
@@ -660,9 +641,8 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           continue
         }
 
-        // If we already have the decrypted plaintext in cache, use it directly.
-        // Attempting to re-decrypt would fail because senderGenerations has
-        // already been advanced past this message's generation.
+        // use cached plaintext if we have it. re-decrypting fails here because
+        // senderGenerations already moved past this message's gen.
         const msgId = String(message?._id ?? '')
         if (msgId && cachedById.has(msgId)) {
           formattedMessages.push(cachedById.get(msgId))
@@ -672,10 +652,9 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
 
         const formatted = await formatMessage(message, replayState, replayMeta)
         replayState = formatted.nextState ?? replayState
-        // Drop messages we can't decrypt during replay. These are typically
-        // messages from epochs the current device was not a member for (e.g.
-        // sent while the user was removed and before being re-added). Showing
-        // them as "[Unable to decrypt message]" is noisy and misleading.
+        // toss anything we can't decrypt on replay, usually from epochs this
+        // device wasn't a member for. showing "[Unable to decrypt message]" is
+        // just noise.
         if (formatted.formattedMessage?.text === MLS_UNAVAILABLE_TEXT) continue
         formattedMessages.push(formatted.formattedMessage)
       }
@@ -702,8 +681,8 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         )
         if (cancelledRemoved) return
         const placeholder = buildRemovedMessage(activeGroupId, removedInfo)
-        // Strip any cached decryption-failure rows so the history view stays
-        // clean. Plaintext rows from before the removal are preserved.
+        // drop cached decrypt-failure rows to keep history clean, real plaintext
+        // from before the removal stays
         const history = Array.isArray(cached)
           ? cached.filter((m) => m?._id !== placeholder._id && m?.text !== MLS_UNAVAILABLE_TEXT)
           : []
@@ -717,10 +696,9 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
 
     setMessages([])
     setOpening(true)
-    // Instant render: paint this group's cached messages from ELD right away,
-    // BEFORE the slow openGroup + MLS prep + fetch/replay below. New or
-    // not-yet-cached messages merge in once the replay completes. This is what
-    // makes reopening a group feel instant instead of waiting on MLS.
+    // paint cached messages from eld right away, before the slow openGroup +
+    // mls prep + replay below. new ones merge in after replay. this is what
+    // makes reopening a group feel instant.
     getSavedMessages(userId, getGroupCacheId(activeGroupId))
       .then((cached) => {
         if (cancelled || !Array.isArray(cached) || cached.length === 0) return
@@ -747,18 +725,16 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     liveMessageQueueRef.current = Promise.resolve()
     sendQueueRef.current = Promise.resolve()
 
-    // Defined here so the initial load can be enqueued before any live-message
-    // handler tasks, ensuring groupCryptoStateRef is fully up-to-date before
-    // incoming newGroupMessage events attempt to decrypt with it.
+    // defined up here so initial load queues before any live-message handler,
+    // so groupCryptoStateRef is current before newGroupMessage tries to decrypt
     const enqueueLiveGroupMessageTask = (task) => {
       const queuedTask = liveMessageQueueRef.current.catch(() => {}).then(task)
       liveMessageQueueRef.current = queuedTask
       return queuedTask
     }
 
-    // Serialise the full initial load (openGroup + fetchGroupMessages + replay)
-    // with the live-message queue.  Any newGroupMessage that arrives while the
-    // replay is in flight will wait in the queue and see the final state.
+    // run the whole initial load on the live-message queue so a newGroupMessage
+    // that shows up mid-replay waits and sees the final state
     enqueueLiveGroupMessageTask(async () => {
       const res = await new Promise((resolve) =>
         socket.emit('openGroup', { groupId: activeGroupId }, resolve)
@@ -779,8 +755,8 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       setMembers(Array.isArray(res.members) ? res.members : [])
       setRole(res?.membership?.role ?? null)
       setGroupMeta(nextMeta)
-      // We now know whether this is an MLS group; `mlsPreparing` takes over the
-      // composer state from here (down while securing, up once key material lands).
+      // now we know if it's mls. mlsPreparing drives the composer from here
+      // (down while securing, up once keys land)
       setOpening(false)
 
       let localState = await syncLocalStateFromServer({
@@ -796,9 +772,8 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             groupId: activeGroupId,
             userId,
             currentState: localState,
-            // The openGroup response above already told us the server epoch, so
-            // pass it as the hint: when our saved state is current, prepare can
-            // skip a second openGroup round-trip (and the bootstrap) entirely.
+            // openGroup already gave us the server epoch, pass it as a hint so
+            // prepare can skip a second round-trip when our state is current
             knownServerEpoch: Number.isInteger(nextMeta.epoch) ? nextMeta.epoch : null,
           })
           if (prepared?.state) localState = prepared.state
@@ -808,7 +783,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             setGroupMeta({ ...nextMeta })
           }
         } catch (err) {
-          // Fallback: if state/server epoch mismatch, hard-align then retry once.
+          // epoch mismatch: hard-align then retry once
           try {
             const msg = String(err?.message || err || '')
             const isEpochMismatch =
@@ -840,8 +815,8 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             }
           } catch (fallbackErr) {
             console.warn('[GroupChat] MLS bootstrap (fallback) on open failed:', fallbackErr)
-            // Escalate: ask the account primary to sweep device leaves and
-            // publish fresh welcomes to repair drift.
+            // last resort, get the primary to sweep device leaves and resend
+            // welcomes to fix the drift
             requestDeviceLeafSweep()
           }
         }
@@ -853,8 +828,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
 
       setGroupCryptoState(localState)
       groupCryptoStateRef.current = localState
-      // Defensively strip any cached decryption-failure rows persisted by
-      // older versions before the replay completes.
+      // older builds saved decrypt-failure rows, strip them before replay
       setMessages(
         Array.isArray(cachedMessages)
           ? cachedMessages.filter((m) => m?.text !== MLS_UNAVAILABLE_TEXT)
@@ -885,14 +859,13 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         createdSystemMessage,
         ...replayed.formattedMessages,
       ])
-      // Drop any decryption-failure rows (e.g. cached UNAVAILABLE text from
-      // older versions) so they neither render nor get re-persisted.
+      // drop decrypt-failure rows (old UNAVAILABLE text) so they don't render
+      // or get saved again
       const visibleMessages = mergedMessages.filter((m) => m?.text !== MLS_UNAVAILABLE_TEXT)
 
-      // Save using mergedMessages so cached plaintext is never overwritten by a
-      // decryption failure text from the replay pass. Batched (parallel writes,
-      // one event) instead of an awaited write + event per message — the old
-      // per-message loop was an O(messages) serial IndexedDB cost on every open.
+      // save mergedMessages so cached plaintext doesn't get clobbered by a
+      // replay failure. batched (parallel writes, one event) instead of the old
+      // per-message loop that hit indexeddb serially on every open.
       await storeSavedMessagesBatch(userId, getGroupCacheId(activeGroupId), visibleMessages)
 
       if (!cancelled) {
@@ -907,12 +880,11 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     const handleMembershipChanged = (evt) => {
       if (String(evt?.groupId ?? '') !== String(activeGroupId)) return
 
-      // Serialize with the commit/welcome/message handlers so the openGroup +
-      // syncLocalStateFromServer write doesn't race with an in-flight commit
-      // application and clobber the freshly-advanced epoch keys. Without this,
-      // a `groupMemberAdded` that arrives near `groupCommit` can stomp the new
-      // applicationSecret with the pre-add one and leave the input disabled
-      // with "MLS state is not ready" until the user refreshes.
+      // run on the same queue as the commit/welcome/message handlers so the
+      // syncLocalStateFromServer write can't race an in-flight commit and stomp
+      // the freshly-advanced epoch keys. otherwise a groupMemberAdded landing
+      // near a groupCommit overwrites applicationSecret with the pre-add one and
+      // the input sticks on "MLS state is not ready" until a refresh.
       const isPeerRemoval =
         evt?.removedByUserId != null && String(evt?.memberId ?? '') !== String(userId)
 
@@ -935,9 +907,8 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         setGroupMeta(nextMeta)
         groupMetaRef.current = nextMeta
 
-        // When another member is removed, the server roster updates before peers
-        // have applied the remove commit. Do not rewrite local MLS roster/tree
-        // from that snapshot — groupCommit + replay below advance crypto state.
+        // server roster updates before peers apply the remove commit, so don't
+        // rewrite local roster/tree from it. groupCommit + replay handle that.
         let synced
         if (isPeerRemoval && nextMeta.mlsEnabled) {
           synced =
@@ -950,9 +921,9 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           })
         }
 
-        // On peer removal, replay remove commits before prepareGroupMlsForSend.
-        // prepare first was running catch-up with a stale roster and could persist
-        // applicationSecretB64=null (see EchoLogs: myInitPrivKeyB64 ReferenceError).
+        // replay remove commits before prepareGroupMlsForSend. doing prepare
+        // first ran catch-up on a stale roster and could save a null
+        // applicationSecretB64 (the myInitPrivKeyB64 ReferenceError in EchoLogs).
         if (nextMeta.mlsEnabled && !isPeerRemoval) {
           try {
             let prepared = await prepareGroupMlsForSend({
@@ -970,7 +941,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
               setGroupMeta({ ...nextMeta })
             }
           } catch (err) {
-            // Fallback: align to server epoch then retry once
+            // align to server epoch then retry
             try {
               const msg = String(err?.message || err || '')
               const isEpochMismatch =
@@ -1020,11 +991,10 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
 
         if (!nextMeta.mlsEnabled) return
 
-        // The live `groupCommit` broadcast can be lost (handler not yet bound on
-        // mount, queue race, transient disconnect). Use the membership event as
-        // the recovery trigger: fetch persisted artifacts and replay any
-        // commit/welcome that hasn't been applied locally yet. Replay is
-        // idempotent — commits at or below the current epoch are skipped.
+        // the live groupCommit can get lost (handler not bound yet, queue race,
+        // a brief disconnect). use the membership event to recover: fetch saved
+        // artifacts and replay whatever we haven't applied. replay is idempotent,
+        // commits at or below the current epoch are skipped.
         let fetchedMessages = []
         if (isPeerRemoval) {
           fetchedMessages = await fetchAllGroupMessages(socket, activeGroupId).catch(() => [])
@@ -1077,14 +1047,14 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         setGroupMeta(replayed.replayMeta)
         groupMetaRef.current = replayed.replayMeta
 
-        // Persist any system rows the replay produced for commits the live
-        // handler never saw, so "X added Y" still appears without a refresh.
+        // save system rows replay made for commits the live handler missed, so
+        // "X added Y" shows up without a refresh
         for (const message of replayed.formattedMessages) {
           if (!message?._id || message.messageType !== 'system') continue
           await updateSavedMessages(userId, getGroupCacheId(activeGroupId), message, setMessages)
         }
 
-        // Drain buffered ciphertext now that the local state may have caught up.
+        // local state may have caught up, flush buffered ciphertext
         const key = String(activeGroupId)
         const pending = pendingEncryptedGroupMessagesRef.current.get(key) || []
         if (pending.length > 0) {
@@ -1144,14 +1114,14 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             formattedMessage = decrypted.formattedMessage
             nextState = decrypted.nextState ?? currentState
           } catch {
-            // State may not be ready yet (e.g., Welcome/commit not processed). Buffer and retry
-            // after state updates (groupWelcome, groupCommit, or groupStateSynced).
+            // state might not be ready (welcome/commit not in yet). buffer and
+            // retry once it updates (groupWelcome, groupCommit, groupStateSynced)
             const key = String(groupId)
             const list = pendingEncryptedGroupMessagesRef.current.get(key) || []
             list.push({ groupId, ...message })
             pendingEncryptedGroupMessagesRef.current.set(key, list)
 
-            // Preview placeholder so the user sees activity in the sidebar.
+            // placeholder so the sidebar shows something happened
             window.dispatchEvent(
               new CustomEvent('groupMessagePreview', {
                 detail: {
@@ -1163,7 +1133,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             )
           }
 
-          // Let Dashboard update the sidebar preview without touching crypto state.
+          // let dashboard bump the sidebar preview, no crypto state touched
           if (formattedMessage) {
             const previewImg = formattedMessage.image ?? null
             const previewText =
@@ -1207,17 +1177,17 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     const handleGroupWelcome = ({ groupId, welcome }) => {
       if (String(groupId ?? '') !== String(activeGroupId)) return
 
-      // Each device only processes the Welcome addressed to it.
+      // only handle the welcome meant for this device
       const thisDeviceId = localStorage.getItem('echo-device-id')
       const targetClientId = welcome.recipientClientId ?? null
       if (targetClientId !== null && targetClientId !== thisDeviceId) return
 
-      // Same queue as commits/membership so a Welcome can't race a parallel
-      // commit application and leave a stale snapshot of crypto state behind.
+      // same queue as commits/membership so a welcome can't race a commit
+      // and leave stale crypto state behind
       return enqueueLiveGroupMessageTask(async () => {
         try {
           if (cancelled) return
-          // Use the device-specific MLS private key if available; fall back to ELD key.
+          // device-specific mls priv if available, else the eld key
           const myInitPrivKeyB64 =
             localStorage.getItem('echo-device-mls-priv') ||
             (await getIdentityKeys())?.privateKeyX25519 ||
@@ -1235,17 +1205,17 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           if (cancelled) return
           setGroupCryptoState(persistedState)
           groupCryptoStateRef.current = persistedState
-          // Clear local removed flag so live messages resume immediately
+          // clear the removed flag so live messages flow again
           removedInfoRef.current = null
 
-          // Emit an event to let Dashboard clear any stale removed flag for this group
+          // tell dashboard to drop any stale removed flag for this group
           try {
             window.dispatchEvent(new CustomEvent('groupStateSynced', { detail: { groupId } }))
           } catch {
             /* ignore */
           }
 
-          // Add a local system message so the re-joined user sees a visual notification
+          // local system msg so the re-joined user gets a heads up
           const joinedAt = new Date().toISOString()
           const joinedMessage = {
             _id: `group-joined:${String(groupId)}:${joinedAt}`,
@@ -1263,7 +1233,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             setMessages
           )
 
-          // Retry any buffered messages now that state is available
+          // state's ready now, retry buffered messages
           const key = String(groupId)
           const pending = pendingEncryptedGroupMessagesRef.current.get(key) || []
           if (pending.length > 0) {
@@ -1278,7 +1248,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                   setMessages,
                 })
               } catch {
-                // Keep buffered; a subsequent commit/welcome may fix it.
+                // keep buffered, a later commit/welcome might fix it
                 stillPending.push(pendingMsg)
               }
             }
@@ -1294,13 +1264,13 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       if (String(groupId ?? '') !== String(activeGroupId)) return
       if (removedInfoRef.current) return
 
-      // Share the live-message queue so a commit can't be partially applied
-      // while a membership-changed recovery is in flight (and vice versa).
+      // share the live-message queue so a commit and a membership recovery
+      // can't half-apply over each other
       return enqueueLiveGroupMessageTask(async () => {
         try {
           if (cancelled) return
-          // Use this device's MLS init private key when available to keep epoch
-          // secrets consistent with the Welcome processed on this device.
+          // use this device's mls init priv when we have it, keeps epoch secrets
+          // in line with the welcome this device handled
           const identityKeys = await getIdentityKeys()
           const fallbackPriv =
             localStorage.getItem('echo-device-mls-priv') || identityKeys?.privateKeyX25519 || null
@@ -1324,16 +1294,13 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             return
           }
 
-          // Own-commit short-circuit: we already produced and persisted nextState
-          // via buildAddCommit / buildRemoveCommit in GroupHeader, so re-applying
-          // here would re-run applyUpdatePath with the stale localStorage device
-          // init priv key after our leaf has rotated — yielding null commitSecret
-          // and stranding us with applicationSecretB64=null. Adopt GroupHeader's
-          // saved state when it's already on ELD; otherwise defer entirely —
-          // GroupHeader's matching `groupStateSynced` dispatch will deliver the
-          // correct state to handleGroupStateSynced. Falling through to applyCommit
-          // here would write a broken state and risk clobbering that sync if it
-          // arrives later in the event loop.
+          // our own commit: GroupHeader already built + saved nextState via
+          // buildAddCommit/buildRemoveCommit. re-applying would rerun
+          // applyUpdatePath with the stale device init priv after our leaf
+          // rotated, giving a null commitSecret and applicationSecretB64=null.
+          // grab GroupHeader's state if it's on eld already, otherwise just wait
+          // for its groupStateSynced. falling through to applyCommit would write
+          // junk and maybe clobber that sync if it lands later.
           const isOwnCommit =
             Number.isInteger(priorState?.selfLeafIndex) &&
             Number.isInteger(commit?.senderLeafIndex) &&
@@ -1366,10 +1333,9 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                 )
               }
             }
-            // Whether fresh was ready or not, never applyCommit our own commit —
-            // leaving the existing (pre-remove) ref state in place is safe
-            // (applicationSecretB64 is still set from the previous epoch), and the
-            // pending groupStateSynced dispatch will advance us when it fires.
+            // either way, never applyCommit our own commit. keeping the pre-remove
+            // ref state is fine (applicationSecretB64 is still set from the last
+            // epoch), and the pending groupStateSynced moves us forward when it fires.
             return
           }
 
@@ -1401,7 +1367,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             )
           }
 
-          // Retry any buffered messages after commit updates keys/epochs
+          // commit bumped keys/epoch, retry buffered messages
           const key = String(groupId)
           const pending = pendingEncryptedGroupMessagesRef.current.get(key) || []
           if (pending.length > 0) {
@@ -1437,7 +1403,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           setGroupCryptoState(fresh)
           groupCryptoStateRef.current = fresh
 
-          // Retry buffered messages when state is externally synced
+          // retry buffered messages on external sync
           const key = String(activeGroupId)
           const pending = pendingEncryptedGroupMessagesRef.current.get(key) || []
           if (pending.length > 0) {
@@ -1460,7 +1426,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       } catch {}
     }
 
-    // ── Typing indicator (per-member, name-aware) ──────────────────────────────
+    // typing indicator, per-member and name-aware
     const buildTypistMap = (active, prev) =>
       active.reduce((acc, t) => {
         acc[t.userId] = prev[t.userId]
@@ -1485,9 +1451,9 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       setTypists((prev) => removeTypist(prev, typistId))
     }
 
-    // A member changed the group picture/description (server `groupUpdated`).
-    // On a picture change, drop a yellow "X changed group picture" system row
-    // (deduped by `at` via the message _id), mirroring the commit system rows.
+    // someone changed the group pic/description (server groupUpdated). on a pic
+    // change drop a yellow "X changed group picture" row, deduped by _id like
+    // the commit rows.
     const handleGroupUpdated = (evt) => {
       if (String(evt?.groupId ?? evt?.group?.groupId ?? '') !== String(activeGroupId)) return
       if (!evt?.pictureChanged) return
@@ -1550,16 +1516,15 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
   useEffect(() => {
     if (!messagesEndRef.current) return
     const behavior = isInitialLoadRef.current ? 'auto' : 'smooth'
-    // block: 'nearest' keeps scrollIntoView confined to the nearest scrollable
-    // ancestor (the messages container). With the default 'start' alignment,
-    // mobile Safari walks up to the window scroller and yanks the whole
-    // dashboard, which pushed the input visually toward the middle.
+    // block: 'nearest' keeps scrollIntoView inside the messages container.
+    // with 'start', mobile safari scrolls the whole window and shoves the
+    // input toward the middle.
     messagesEndRef.current.scrollIntoView({ behavior, block: 'nearest' })
     isInitialLoadRef.current = false
   }, [messages])
 
-  // If MLS is enabled but we don't yet have key material, proactively pull any
-  // pending device envelopes to get forwarded epoch secrets sooner.
+  // mls on but no keys yet, pull pending device envelopes to get the
+  // forwarded epoch secrets sooner
   useEffect(() => {
     if (groupMeta?.mlsEnabled && !hasGroupKeyMaterial(groupCryptoState)) {
       processIncomingEnvelopes(userId).catch(() => {})
@@ -1581,8 +1546,8 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           groupId: activeGroupId,
           userId,
           currentState: groupCryptoStateRef.current,
-          // Trust the locally-known epoch to skip a per-send openGroup round-trip;
-          // the server validates and rejects a stale epoch, handled below.
+          // trust the local epoch to skip an openGroup per send, server rejects
+          // a stale one anyway (handled below)
           knownServerEpoch: Number.isInteger(currentMeta?.epoch) ? currentMeta.epoch : null,
         })
       } catch (err) {
@@ -1590,7 +1555,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         const isEpochMismatch =
           /mls state epoch\s+\d+\s+(is behind|is ahead of)\s+server epoch\s+\d+/i.test(raw)
         if (isEpochMismatch) {
-          // Align strictly to server epoch, then retry.
+          // align to server epoch, then retry
           const liveEpoch = await fetchGroupServerEpoch(socket, activeGroupId).catch(() => null)
           if (Number.isInteger(liveEpoch)) {
             await bootstrapGroupMlsOnDevice({
@@ -1607,8 +1572,8 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             currentState: groupCryptoStateRef.current,
           })
         } else {
-          // Deep drift (e.g., confirmation tag mismatch during catch-up). Try a
-          // full rebuild from welcome baseline + strict replay.
+          // deep drift (confirmation tag mismatch on catch-up). rebuild from
+          // the welcome baseline + strict replay.
           try {
             const liveEpoch = await fetchGroupServerEpoch(socket, activeGroupId).catch(() => null)
             const rebuilt = await rebuildMlsStateForDecryptFailure({
@@ -1627,7 +1592,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                 currentState: rebuilt,
               })
             } else {
-              // Ask primary to sweep device leaves, await a short sync signal.
+              // ask primary to sweep device leaves, wait briefly for sync
               requestDeviceLeafSweep()
               await new Promise((resolve) => {
                 let settled = false
@@ -1659,7 +1624,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
               })
             }
           } catch (rebuildErr) {
-            // Trace abort so DebugPanel shows why send didn't start
+            // trace the abort so gecho shows why send didn't start
             try {
               if (typeof window !== 'undefined' && window.__echoGroupTrace) {
                 window.__echoGroupTrace.push({
@@ -1671,7 +1636,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                 })
               }
             } catch {}
-            throw err // bubble the original error; UI will show disabled reason
+            throw err // rethrow, ui shows the disabled reason
           }
         }
       }
@@ -1725,17 +1690,28 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
               forwardGroupStateToPairedDevices(userId, activeGroupId, persistedState).catch(
                 () => {}
               )
+              forwardGroupMessageToPairedDevices({
+                userId,
+                groupId: activeGroupId,
+                text,
+                image: imageData ?? null,
+                replyTo: replyTo ?? null,
+                messageId: ack.messageId,
+                createdAt: ack.createdAt,
+                seenStatus: true,
+                username,
+              }).catch(() => {})
               setGroupCryptoState(persistedState)
               groupCryptoStateRef.current = persistedState
 
-              // Do not append a local echo here; rely on the server broadcast
-              // (`newGroupMessage`) to render the outgoing row. Pending
-              // plaintext is cached so the self-echo decrypts without delay.
+              // no local echo, let the server broadcast (newGroupMessage) render
+              // the outgoing row. pending plaintext is cached so the self-echo
+              // decrypts right away.
               resolve(ack)
               return
             }
 
-            // If server rejected due to epoch mismatch, hard-align then retry once.
+            // server rejected on epoch mismatch, hard-align then retry once
             const errMsg = String(ack?.error || '')
             const isInvalidEpoch = /invalid message epoch/i.test(errMsg)
             if (isInvalidEpoch) {
@@ -1795,6 +1771,17 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                           activeGroupId,
                           persistedState
                         ).catch(() => {})
+                        forwardGroupMessageToPairedDevices({
+                          userId,
+                          groupId: activeGroupId,
+                          text,
+                          image: imageData ?? null,
+                          replyTo: replyTo ?? null,
+                          messageId: ack2.messageId,
+                          createdAt: ack2.createdAt,
+                          seenStatus: true,
+                          username,
+                        }).catch(() => {})
                         setGroupCryptoState(persistedState)
                         groupCryptoStateRef.current = persistedState
                         resolve(ack2)
@@ -1861,15 +1848,14 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     return queuedSend
   }
 
-  // The composer is "down" (a slim securing bar) while the group is still
-  // opening OR MLS key material hasn't landed yet; it pops up to the full input
-  // once MLS is ready (or the group isn't MLS). Removed members keep the
-  // (disabled) input so they still see history.
+  // composer sits "down" (slim securing bar) while opening or waiting on mls
+  // keys, pops up to the full input once mls is ready (or it's not mls).
+  // removed members keep the disabled input so they can still read history.
   const mlsPreparing =
     !removedInfo && (opening || (groupMeta.mlsEnabled && !hasGroupKeyMaterial(groupCryptoState)))
 
-  // Group: name-aware label — "Alice is typing…", "Alice and Bob are typing…",
-  // "Alice, Bob and Carol are typing…", then "N people typing…" for >3.
+  // name-aware label: "Alice is typing", "Alice and Bob are typing",
+  // "Alice, Bob and Carol are typing", then "N people typing" past 3
   const typingText = formatTypingText(
     activeTypists(typists).map((t) => t.username),
     { isGroup: true }
@@ -1896,13 +1882,13 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
 
       <div className='shrink-0'>
         {mlsPreparing ? (
-          // "Down" state: MLS not ready yet — just a spinner on the chat
-          // background where the composer will pop up.
+          // "down" state: mls not ready, just a spinner where the composer
+          // will pop up
           <div className='flex items-center justify-center py-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))]'>
             <Loader2 size={32} className='animate-spin text-violet-300' />
           </div>
         ) : (
-          // Ready: the full composer "pops up" into place.
+          // ready, full composer pops up into place
           <div className='composer-pop'>
             <TypingIndicator text={typingText} />
             <SendText

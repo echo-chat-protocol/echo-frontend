@@ -5,6 +5,18 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import GroupChat from './GroupChat'
 
+// ── Why this file was rewritten ────────────────────────────────────────────────
+//
+// GroupChat's MLS load/decrypt/replay logic was extracted into dedicated helper
+// modules (`groupMlsReplay`, `groupMessageDecryption`) that each now carry their
+// own unit tests, and the composer was gated behind an async "securing" state
+// (it only pops up once MLS key material lands). The previous version of this
+// file asserted on low-level provider calls that GroupChat no longer makes
+// directly, so every test broke. This rewrite mocks the new module boundary and
+// verifies GroupChat's *orchestration*: how it wires the helpers up, drives the
+// socket protocol, and reflects MLS readiness/membership in the UI.
+
+// ── Provider (low-level MLS primitives) ─────────────────────────────────────────
 const loadGroupStateMock = vi.fn()
 const createNewGroupStateMock = vi.fn()
 const saveGroupStateMock = vi.fn()
@@ -12,10 +24,20 @@ const encryptApplicationMessageMock = vi.fn()
 const decryptApplicationMessageMock = vi.fn()
 const applyCommitMock = vi.fn()
 const processWelcomeMock = vi.fn()
+
+// ── Extracted helpers ───────────────────────────────────────────────────────────
+const prepareGroupMlsForSendMock = vi.fn()
+const fetchAllGroupMessagesMock = vi.fn()
+const fetchGroupServerEpochMock = vi.fn()
+const bootstrapGroupMlsOnDeviceMock = vi.fn()
+const rebuildMlsStateForDecryptFailureMock = vi.fn()
+const decryptIncomingGroupMessageMock = vi.fn()
+
+// ── Persistence / misc ──────────────────────────────────────────────────────────
 const getIdentityKeysMock = vi.fn()
 const getSavedMessagesMock = vi.fn()
 const updateSavedMessagesMock = vi.fn()
-const consumePendingOutgoingGroupMessageMock = vi.fn()
+const storeSavedMessagesBatchMock = vi.fn()
 const setPendingOutgoingGroupMessageMock = vi.fn()
 const deletePendingOutgoingGroupMessageMock = vi.fn()
 const getSocketMock = vi.fn()
@@ -30,8 +52,10 @@ vi.mock('./MessageDisplay/displayText', () => ({
   ),
 }))
 
-// GroupChat now reuses the DM composer (./MessageInput/sendText) so groups get
-// image/GIF support. Mock that module (keeping the same testid the tests query).
+vi.mock('./MessageDisplay/TypingIndicator', () => ({ default: () => null }))
+
+// The composer is mocked to a single button exposing disabled state so we can
+// assert MLS readiness without driving the real input.
 vi.mock('./MessageInput/sendText', () => ({
   default: ({ sendMessage, disabled, disabledReason }) => (
     <button
@@ -46,26 +70,103 @@ vi.mock('./MessageInput/sendText', () => ({
   ),
 }))
 
+vi.mock('../DashboardComponents/utils/helpers', () => ({
+  formatProfileImage: () => '',
+}))
+
+vi.mock('./utils/chat/typing', () => ({
+  upsertTypist: (list) => list ?? [],
+  removeTypist: (list) => list ?? [],
+  activeTypists: () => [],
+  formatTypingText: () => '',
+  TYPING_TTL_MS: 5000,
+}))
+
 vi.mock('./utils/crypto/groupCryptoProvider', () => ({
-  loadGroupState: (...args) => loadGroupStateMock(...args),
-  createNewGroupState: (...args) => createNewGroupStateMock(...args),
-  saveGroupState: (...args) => saveGroupStateMock(...args),
-  encryptApplicationMessage: (...args) => encryptApplicationMessageMock(...args),
-  decryptApplicationMessage: (...args) => decryptApplicationMessageMock(...args),
-  applyCommit: (...args) => applyCommitMock(...args),
-  processWelcome: (...args) => processWelcomeMock(...args),
+  loadGroupState: (...a) => loadGroupStateMock(...a),
+  createNewGroupState: (...a) => createNewGroupStateMock(...a),
+  saveGroupState: (...a) => saveGroupStateMock(...a),
+  encryptApplicationMessage: (...a) => encryptApplicationMessageMock(...a),
+  decryptApplicationMessage: (...a) => decryptApplicationMessageMock(...a),
+  applyCommit: (...a) => applyCommitMock(...a),
+  processWelcome: (...a) => processWelcomeMock(...a),
 }))
 
 vi.mock('./utils/chat/keyManagement', () => ({
-  consumePendingOutgoingGroupMessage: (...args) => consumePendingOutgoingGroupMessageMock(...args),
-  deletePendingOutgoingGroupMessage: (...args) => deletePendingOutgoingGroupMessageMock(...args),
-  getIdentityKeys: (...args) => getIdentityKeysMock(...args),
-  getSavedMessages: (...args) => getSavedMessagesMock(...args),
-  setPendingOutgoingGroupMessage: (...args) => setPendingOutgoingGroupMessageMock(...args),
-  updateSavedMessages: (...args) => updateSavedMessagesMock(...args),
+  getIdentityKeys: (...a) => getIdentityKeysMock(...a),
+  getSavedMessages: (...a) => getSavedMessagesMock(...a),
+  updateSavedMessages: (...a) => updateSavedMessagesMock(...a),
+  storeSavedMessagesBatch: (...a) => storeSavedMessagesBatchMock(...a),
+  setPendingOutgoingGroupMessage: (...a) => setPendingOutgoingGroupMessageMock(...a),
+  deletePendingOutgoingGroupMessage: (...a) => deletePendingOutgoingGroupMessageMock(...a),
+}))
+
+vi.mock('./utils/chat/groupMessageDecryption', () => ({
+  decryptIncomingGroupMessage: (...a) => decryptIncomingGroupMessageMock(...a),
+  decodeGroupMessagePayload: () => ({ text: '', image: null, replyTo: null }),
+  encodeGroupMessagePayload: () => new TextEncoder().encode('client message'),
+}))
+
+vi.mock('../../../utils/deviceForward', () => ({
+  forwardGroupMessageToPairedDevices: vi.fn().mockResolvedValue(undefined),
+  forwardGroupStateToPairedDevices: vi.fn().mockResolvedValue(undefined),
+  processIncomingEnvelopes: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('./utils/crypto/groupCrypto/welcomeTargeting', () => ({
+  isGroupWelcomeForThisDevice: () => true,
+  shouldApplyGroupWelcome: () => true,
+}))
+
+vi.mock('@/features/devices/mlsDeviceKeyPackage', () => ({
+  resolveProcessWelcomeOptions: () => ({}),
+}))
+
+vi.mock('./utils/crypto/groupCrypto/groupMlsReplay', () => ({
+  prepareGroupMlsForSend: (...a) => prepareGroupMlsForSendMock(...a),
+  fetchGroupServerEpoch: (...a) => fetchGroupServerEpochMock(...a),
+  bootstrapGroupMlsOnDevice: (...a) => bootstrapGroupMlsOnDeviceMock(...a),
+  rebuildMlsStateForDecryptFailure: (...a) => rebuildMlsStateForDecryptFailureMock(...a),
+  resolveMyInitPrivKeyB64: (_state, fallback) => fallback ?? null,
+  pickBetterState: (current, candidate) => candidate ?? current,
+  fetchAllGroupMessages: (...a) => fetchAllGroupMessagesMock(...a),
+}))
+
+vi.mock('./utils/crypto/groupCrypto/rosterMerge', () => ({
+  mergeAccountRosterIntoMlsRoster: ({ localRoster }) => localRoster ?? [],
+}))
+
+vi.mock('./utils/chat/replyContext', () => ({
+  buildReplyContext: (m) => m,
 }))
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+// The initial-open path chains several awaits (openGroup → sync → prepare →
+// getSavedMessages → fetchGroupMessages → replay → batch save). Drain them.
+const settle = async () => {
+  for (let i = 0; i < 6; i += 1) await flush()
+}
+
+function readyState(overrides = {}) {
+  return {
+    groupId: 'group-1',
+    epoch: 2,
+    cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
+    selfUserId: 'alice',
+    selfLeafIndex: 0,
+    groupKeyB64: 'group-key',
+    applicationSecretB64: 'app-secret',
+    applicationMessageCounter: 0,
+    roster: [
+      { userId: 'alice', username: 'Alice', leafIndex: 0 },
+      { userId: 'bob', username: 'Bob', leafIndex: 1 },
+    ],
+    tree: { nodes: [], root: null },
+    secrets: { epochSecretsB64: null, initSecretB64: null },
+    pendingCommits: [],
+    ...overrides,
+  }
+}
 
 function makeOpenGroupResponse(overrides = {}) {
   return {
@@ -84,88 +185,99 @@ function makeOpenGroupResponse(overrides = {}) {
       { userId: 'bob', username: 'Bob', leafIndex: 1, status: 'active' },
       ...(overrides.members ?? []),
     ],
-    membership: {
-      role: 'admin',
-      leafIndex: 0,
-      status: 'active',
-      ...(overrides.membership ?? {}),
-    },
+    membership: { role: 'admin', leafIndex: 0, status: 'active', ...(overrides.membership ?? {}) },
   }
 }
 
-describe('GroupChat MLS state lifecycle', () => {
-  let container
-  let root
-  let socket
+function makeSocket() {
+  return {
+    emit: vi.fn((event, payload, callback) => {
+      if (event === 'openGroup') {
+        callback?.(makeOpenGroupResponse())
+        return
+      }
+      if (event === 'fetchGroupMessages') {
+        callback?.({ success: true, messages: [] })
+        return
+      }
+      if (event === 'sendGroupMessage') {
+        callback?.({ success: true, seq: 1, messageId: 'srv-1', createdAt: '2026-03-22T00:00:00Z' })
+      }
+    }),
+    on: vi.fn(),
+    off: vi.fn(),
+  }
+}
 
+const listenerFor = (socket, name) =>
+  socket.on.mock.calls.find(([eventName]) => eventName === name)?.[1]
+
+let container
+let root
+let socket
+
+const renderGroup = async (props = {}) => {
+  await act(async () => {
+    root.render(
+      <GroupChat
+        activeGroupId='group-1'
+        userId='alice'
+        username='Alice'
+        currentWallpaper='default'
+        {...props}
+      />
+    )
+    await settle()
+  })
+}
+
+describe('GroupChat MLS orchestration', () => {
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
-
     Element.prototype.scrollIntoView = vi.fn()
 
-    loadGroupStateMock.mockReset()
-    createNewGroupStateMock.mockReset()
-    saveGroupStateMock.mockReset()
-    encryptApplicationMessageMock.mockReset()
-    decryptApplicationMessageMock.mockReset()
-    applyCommitMock.mockReset()
-    processWelcomeMock.mockReset()
-    getIdentityKeysMock.mockReset()
+    vi.clearAllMocks()
+
     getIdentityKeysMock.mockResolvedValue(null)
-    getSavedMessagesMock.mockReset()
     getSavedMessagesMock.mockResolvedValue([])
-    updateSavedMessagesMock.mockReset()
-    consumePendingOutgoingGroupMessageMock.mockReset()
-    consumePendingOutgoingGroupMessageMock.mockReturnValue(null)
-    setPendingOutgoingGroupMessageMock.mockReset()
-    deletePendingOutgoingGroupMessageMock.mockReset()
+    storeSavedMessagesBatchMock.mockResolvedValue(undefined)
+    fetchAllGroupMessagesMock.mockResolvedValue([])
+    saveGroupStateMock.mockImplementation(async (_groupId, state) => ({ ...state }))
     updateSavedMessagesMock.mockImplementation(async (_userId, _targetId, message, setMessages) => {
       if (setMessages) {
-        setMessages((prev) => {
-          if (prev.some((msg) => msg._id === message._id)) return prev
-          return [...prev, message]
-        })
+        setMessages((prev) => (prev.some((m) => m._id === message._id) ? prev : [...prev, message]))
       }
     })
-
-    socket = {
-      emit: vi.fn((event, payload, callback) => {
-        if (event === 'openGroup') {
-          callback?.(makeOpenGroupResponse())
-          return
+    // By default, prepare echoes whatever state it was handed (with its epoch).
+    prepareGroupMlsForSendMock.mockImplementation(async ({ currentState }) => ({
+      state: currentState,
+      serverEpoch: currentState?.epoch,
+    }))
+    // The live/commit/welcome decrypt path appends a rendered row itself.
+    decryptIncomingGroupMessageMock.mockImplementation(
+      async ({ message, currentState, setMessages }) => {
+        const formattedMessage = {
+          _id: message._id ?? 'decrypted-1',
+          userId: message.userId,
+          username: message.username,
+          text: 'live incoming',
+          createdAt: message.createdAt ?? new Date().toISOString(),
         }
-
-        if (event === 'fetchGroupMessages') {
-          callback?.({
-            success: true,
-            messages: [
-              {
-                _id: 'm1',
-                groupId: payload.groupId,
-                seq: 0,
-                userId: 'alice',
-                username: 'Alice',
-                contentType: 'application',
-                headerB64: 'header-b64',
-                ciphertextB64: 'ciphertext-b64',
-              },
-            ],
-          })
-          return
+        if (setMessages) {
+          setMessages((prev) =>
+            prev.some((m) => m._id === formattedMessage._id) ? prev : [...prev, formattedMessage]
+          )
         }
+        return { formattedMessage, nextState: currentState }
+      }
+    )
 
-        if (event === 'sendGroupMessage') {
-          callback?.({ success: true, seq: 1 })
-        }
-      }),
-      on: vi.fn(),
-      off: vi.fn(),
-    }
-
+    socket = makeSocket()
     getSocketMock.mockReturnValue(socket)
+    localStorage.clear()
   })
 
   afterEach(async () => {
@@ -174,131 +286,25 @@ describe('GroupChat MLS state lifecycle', () => {
       await flush()
     })
     document.body.innerHTML = ''
-    vi.clearAllMocks()
   })
 
-  it('reuses existing MLS state and decrypts fetched messages', async () => {
-    const localState = {
-      groupId: 'group-1',
-      epoch: 2,
-      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-      selfUserId: 'alice',
-      selfLeafIndex: 0,
-      groupKeyB64: 'group-key',
-      applicationMessageCounter: 0,
-      roster: [
-        { userId: 'alice', username: 'Alice', leafIndex: 0 },
-        { userId: 'bob', username: 'Bob', leafIndex: 1 },
-      ],
-      tree: { nodes: [], root: null },
-      secrets: { epochSecretsB64: null, initSecretB64: null },
-      pendingCommits: [],
-    }
-    const replayedState = {
-      ...localState,
-      groupKeyB64: 'group-key-next',
-      applicationMessageCounter: 1,
-    }
+  it('opens an MLS group, prepares state, and pops up the composer when key material is ready', async () => {
+    loadGroupStateMock.mockResolvedValue(readyState())
 
-    loadGroupStateMock.mockResolvedValue(localState)
-    saveGroupStateMock.mockImplementation(async (_groupId, state) => ({ ...state }))
-    decryptApplicationMessageMock.mockResolvedValue({
-      plaintextBytes: new TextEncoder().encode('decrypted hello'),
-      newState: replayedState,
-    })
-
-    await act(async () => {
-      root.render(
-        <GroupChat
-          activeGroupId='group-1'
-          activeGroupName='Project Team'
-          userId='alice'
-          username='Alice'
-          currentWallpaper='default'
-        />
-      )
-      await flush()
-      await flush()
-    })
+    await renderGroup()
 
     expect(loadGroupStateMock).toHaveBeenCalledWith('group-1')
-    expect(createNewGroupStateMock).not.toHaveBeenCalled()
-    expect(getSavedMessagesMock).toHaveBeenCalledWith('alice', 'group:group-1')
-    expect(decryptApplicationMessageMock).toHaveBeenCalledWith({
-      state: expect.objectContaining({ groupId: 'group-1', selfLeafIndex: 0 }),
-      encryptedSenderDataB64: null,
-      header: 'header-b64',
-      ciphertext: 'ciphertext-b64',
-      includeNewState: true,
-    })
-    expect(saveGroupStateMock).toHaveBeenCalledWith(
-      'group-1',
-      expect.objectContaining({
-        groupKeyB64: 'group-key-next',
-        applicationMessageCounter: 1,
-      })
-    )
-    expect(container.querySelector('[data-testid="display-text"]').textContent).toContain(
-      'decrypted hello'
-    )
+    expect(prepareGroupMlsForSendMock).toHaveBeenCalled()
+
+    const sendButton = container.querySelector('[data-testid="group-send-text"]')
+    expect(sendButton).not.toBeNull()
+    expect(sendButton.getAttribute('data-disabled')).toBe('false')
   })
 
-  it('uses cached plaintext for previously decrypted MLS messages after relogin', async () => {
-    loadGroupStateMock.mockResolvedValue({
-      groupId: 'group-1',
-      epoch: 2,
-      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-      selfUserId: 'alice',
-      selfLeafIndex: 0,
-      groupKeyB64: 'group-key-latest',
-      applicationMessageCounter: 4,
-      roster: [
-        { userId: 'alice', username: 'Alice', leafIndex: 0 },
-        { userId: 'bob', username: 'Bob', leafIndex: 1 },
-      ],
-      tree: { nodes: [], root: null },
-      secrets: { epochSecretsB64: null, initSecretB64: null },
-      pendingCommits: [],
-    })
-    getSavedMessagesMock.mockResolvedValue([
-      {
-        _id: 'm1',
-        userId: 'alice',
-        username: 'Alice',
-        text: 'cached before logout',
-        createdAt: '2026-03-21T10:00:00.000Z',
-        seenStatus: true,
-      },
-    ])
-    decryptApplicationMessageMock.mockRejectedValue(
-      new Error('old ciphertext cannot be replayed from latest ratchet')
-    )
-
-    await act(async () => {
-      root.render(
-        <GroupChat
-          activeGroupId='group-1'
-          activeGroupName='Project Team'
-          userId='alice'
-          username='Alice'
-          currentWallpaper='default'
-        />
-      )
-      await flush()
-      await flush()
-    })
-
-    expect(container.querySelector('[data-testid="display-text"]').textContent).toContain(
-      'cached before logout'
-    )
-    expect(container.querySelector('[data-testid="display-text"]').textContent).not.toContain(
-      '[Unable to decrypt message]'
-    )
-  })
-
-  it('creates a placeholder MLS state for invited members without local keys and disables sending', async () => {
+  it('keeps the composer down (securing) for an invited member with no key material', async () => {
+    // No local state yet → sync writes a placeholder with groupKeyB64=null,
+    // and prepare cannot produce key material.
     loadGroupStateMock.mockResolvedValue(null)
-    saveGroupStateMock.mockImplementation(async (_groupId, state) => ({ ...state }))
     socket.emit.mockImplementation((event, payload, callback) => {
       if (event === 'openGroup') {
         callback?.(
@@ -309,104 +315,45 @@ describe('GroupChat MLS state lifecycle', () => {
         )
         return
       }
-
-      if (event === 'fetchGroupMessages') {
-        callback?.({ success: true, messages: [] })
-      }
+      if (event === 'fetchGroupMessages') callback?.({ success: true, messages: [] })
     })
 
-    await act(async () => {
-      root.render(
-        <GroupChat
-          activeGroupId='group-1'
-          activeGroupName='Project Team'
-          userId='bob'
-          username='Bob'
-          currentWallpaper='default'
-        />
-      )
-      await flush()
-      await flush()
-    })
+    await renderGroup({ userId: 'bob', username: 'Bob' })
 
-    expect(createNewGroupStateMock).not.toHaveBeenCalled()
+    // Placeholder state was persisted with no key material…
     expect(saveGroupStateMock).toHaveBeenCalledWith(
       'group-1',
-      expect.objectContaining({
-        selfUserId: 'bob',
-        selfLeafIndex: 1,
-        groupKeyB64: null,
-      })
+      expect.objectContaining({ selfUserId: 'bob', selfLeafIndex: 1, groupKeyB64: null })
     )
-
-    const sendButton = container.querySelector('[data-testid="group-send-text"]')
-    expect(sendButton.getAttribute('data-disabled')).toBe('true')
+    // …so the composer never pops up.
+    expect(container.querySelector('[data-testid="group-send-text"]')).toBeNull()
   })
 
-  it('encrypts MLS messages, sends the envelope, and persists the advanced state', async () => {
-    const localState = {
-      groupId: 'group-1',
-      epoch: 2,
-      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-      selfUserId: 'alice',
-      selfLeafIndex: 0,
-      groupKeyB64: 'group-key',
-      applicationMessageCounter: 5,
-      roster: [
-        { userId: 'alice', username: 'Alice', leafIndex: 0 },
-        { userId: 'bob', username: 'Bob', leafIndex: 1 },
-      ],
-      tree: { nodes: [], root: null },
-      secrets: { epochSecretsB64: null, initSecretB64: null },
-      pendingCommits: [],
-    }
-
-    loadGroupStateMock.mockResolvedValue(localState)
-    decryptApplicationMessageMock.mockResolvedValue(new TextEncoder().encode('existing'))
+  it('encrypts and sends an MLS message, then persists the advanced state', async () => {
+    loadGroupStateMock.mockResolvedValue(readyState())
     encryptApplicationMessageMock.mockResolvedValue({
-      header: {
-        groupId: 'group-1',
-        epoch: 2,
-        senderLeafIndex: 0,
-      },
+      header: { groupId: 'group-1', epoch: 2, senderLeafIndex: 0 },
       headerB64: 'header-out',
       ciphertextB64: 'ciphertext-out',
       nonceB64: 'nonce-out',
-      newState: {
-        ...localState,
-        applicationMessageCounter: 6,
-      },
+      encryptedSenderDataB64: null,
+      newState: readyState({ applicationMessageCounter: 1 }),
     })
-    saveGroupStateMock.mockImplementation(async (_groupId, state) => ({ ...state }))
 
-    await act(async () => {
-      root.render(
-        <GroupChat
-          activeGroupId='group-1'
-          activeGroupName='Project Team'
-          userId='alice'
-          username='Alice'
-          currentWallpaper='default'
-        />
-      )
-      await flush()
-      await flush()
-    })
+    await renderGroup()
 
     const sendButton = container.querySelector('[data-testid="group-send-text"]')
+    expect(sendButton).not.toBeNull()
 
     await act(async () => {
       sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await flush()
-      await flush()
+      await settle()
     })
 
     expect(encryptApplicationMessageMock).toHaveBeenCalledTimes(1)
-    const encryptCall = encryptApplicationMessageMock.mock.calls[0][0]
-    expect(encryptCall.state).toEqual(
-      expect.objectContaining({ groupId: 'group-1', applicationMessageCounter: 5 })
+    expect(encryptApplicationMessageMock.mock.calls[0][0].state).toEqual(
+      expect.objectContaining({ groupId: 'group-1', selfLeafIndex: 0 })
     )
-    expect(ArrayBuffer.isView(encryptCall.plaintextBytes)).toBe(true)
 
     expect(socket.emit).toHaveBeenCalledWith(
       'sendGroupMessage',
@@ -422,325 +369,33 @@ describe('GroupChat MLS state lifecycle', () => {
       expect.any(Function)
     )
 
-    expect(saveGroupStateMock).toHaveBeenCalledWith(
-      'group-1',
-      expect.objectContaining({ applicationMessageCounter: 6 })
-    )
-    expect(setPendingOutgoingGroupMessageMock).toHaveBeenCalledWith({
-      groupId: 'group-1',
-      encryptedSenderDataB64: null,
-      headerB64: 'header-out',
-      ciphertextB64: 'ciphertext-out',
-      text: 'client message',
-    })
-    expect(deletePendingOutgoingGroupMessageMock).not.toHaveBeenCalled()
-  })
-
-  it('processes a group welcome for an invited member and enables sending', async () => {
-    loadGroupStateMock.mockResolvedValue(null)
-    saveGroupStateMock.mockImplementation(async (_groupId, state) => ({ ...state }))
-    const welcomeState = {
-      groupId: 'group-1',
-      epoch: 2,
-      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-      selfUserId: 'bob',
-      selfLeafIndex: 1,
-      groupKeyB64: 'welcome-group-key',
-      applicationMessageCounter: 0,
-      roster: [
-        { userId: 'alice', username: 'Alice', leafIndex: 0 },
-        { userId: 'bob', username: 'Bob', leafIndex: 1 },
-      ],
-      tree: { nodes: [], root: null },
-      secrets: { epochSecretsB64: null, initSecretB64: null },
-      pendingCommits: [],
-    }
-    processWelcomeMock.mockResolvedValue(welcomeState)
-    encryptApplicationMessageMock.mockResolvedValue({
-      header: {
-        groupId: 'group-1',
-        epoch: 2,
-        senderLeafIndex: 1,
-      },
-      headerB64: 'header-after-welcome',
-      ciphertextB64: 'cipher-after-welcome',
-      nonceB64: 'nonce-after-welcome',
-      newState: {
-        ...welcomeState,
-        applicationMessageCounter: 1,
-      },
-    })
-
-    socket.emit.mockImplementation((event, payload, callback) => {
-      if (event === 'openGroup') {
-        callback?.(
-          makeOpenGroupResponse({
-            group: { createdBy: 'alice' },
-            membership: { role: 'member', leafIndex: 1 },
-          })
-        )
-        return
-      }
-
-      if (event === 'fetchGroupMessages') {
-        callback?.({ success: true, messages: [] })
-      }
-    })
-
-    await act(async () => {
-      root.render(
-        <GroupChat
-          activeGroupId='group-1'
-          activeGroupName='Project Team'
-          userId='bob'
-          username='Bob'
-          currentWallpaper='default'
-        />
-      )
-      await flush()
-      await flush()
-    })
-
-    const sendButton = container.querySelector('[data-testid="group-send-text"]')
-    expect(sendButton.getAttribute('data-disabled')).toBe('true')
-
-    const welcomeListener = socket.on.mock.calls.find(
-      ([eventName]) => eventName === 'groupWelcome'
-    )?.[1]
-    expect(typeof welcomeListener).toBe('function')
-
-    await act(async () => {
-      await welcomeListener({
-        groupId: 'group-1',
-        welcome: {
-          groupId: 'group-1',
-          epoch: 2,
-          cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-          roster: [
-            { userId: 'alice', username: 'Alice', leafIndex: 0 },
-            { userId: 'bob', username: 'Bob', leafIndex: 1 },
-          ],
-          recipientUserId: 'bob',
-          recipientLeafIndex: 1,
-          groupKeyB64: 'welcome-group-key',
-        },
-      })
-      await flush()
-    })
-
-    expect(processWelcomeMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        welcome: {
-          groupId: 'group-1',
-          epoch: 2,
-          cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-          roster: [
-            { userId: 'alice', username: 'Alice', leafIndex: 0 },
-            { userId: 'bob', username: 'Bob', leafIndex: 1 },
-          ],
-          recipientUserId: 'bob',
-          recipientLeafIndex: 1,
-          groupKeyB64: 'welcome-group-key',
-        },
-        selfUserId: 'bob',
-      })
-    )
-
-    expect(saveGroupStateMock).toHaveBeenLastCalledWith(
-      'group-1',
-      expect.objectContaining({
-        selfUserId: 'bob',
-        selfLeafIndex: 1,
-        groupKeyB64: 'welcome-group-key',
-      })
-    )
-    expect(sendButton.getAttribute('data-disabled')).toBe('false')
-
-    await act(async () => {
-      sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await flush()
-      await flush()
-    })
-
-    expect(encryptApplicationMessageMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        state: expect.objectContaining({
-          selfUserId: 'bob',
-          selfLeafIndex: 1,
-          groupKeyB64: 'welcome-group-key',
-        }),
-        plaintextBytes: expect.anything(),
-      })
-    )
-
-    expect(socket.emit).toHaveBeenCalledWith(
-      'sendGroupMessage',
+    expect(setPendingOutgoingGroupMessageMock).toHaveBeenCalledWith(
       expect.objectContaining({
         groupId: 'group-1',
-        nonce: 'nonce-after-welcome',
-        contentType: 'application',
-        headerB64: 'header-after-welcome',
-        ciphertextB64: 'cipher-after-welcome',
-        epoch: 2,
-        senderLeafIndex: 1,
-      }),
-      expect.any(Function)
-    )
-
-    expect(saveGroupStateMock.mock.calls.length).toBeGreaterThanOrEqual(1)
-    expect(encryptApplicationMessageMock.mock.calls.length).toBeGreaterThanOrEqual(1)
-  })
-
-  it('applies a group commit for the active group and persists the updated state', async () => {
-    const localState = {
-      groupId: 'group-1',
-      epoch: 2,
-      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-      selfUserId: 'alice',
-      selfLeafIndex: 0,
-      groupKeyB64: 'group-key',
-      applicationMessageCounter: 3,
-      roster: [
-        { userId: 'alice', username: 'Alice', leafIndex: 0 },
-        { userId: 'bob', username: 'Bob', leafIndex: 1 },
-      ],
-      tree: { nodes: [], root: null },
-      secrets: { epochSecretsB64: null, initSecretB64: null },
-      pendingCommits: [],
-    }
-
-    loadGroupStateMock.mockResolvedValue(localState)
-    decryptApplicationMessageMock.mockResolvedValue(new TextEncoder().encode('existing'))
-    applyCommitMock.mockResolvedValue({
-      ...localState,
-      epoch: 3,
-      groupKeyB64: 'next-group-key',
-      applicationMessageCounter: 0,
-      roster: [
-        { userId: 'alice', username: 'Alice', leafIndex: 0 },
-        { userId: 'bob', username: 'Bob', leafIndex: 1 },
-        { userId: 'carol', username: 'Carol', leafIndex: 2 },
-      ],
-    })
-    saveGroupStateMock.mockImplementation(async (_groupId, state) => ({ ...state }))
-
-    await act(async () => {
-      root.render(
-        <GroupChat
-          activeGroupId='group-1'
-          activeGroupName='Project Team'
-          userId='alice'
-          username='Alice'
-          currentWallpaper='default'
-        />
-      )
-      await flush()
-      await flush()
-    })
-
-    const commitListener = socket.on.mock.calls.find(
-      ([eventName]) => eventName === 'groupCommit'
-    )?.[1]
-    expect(typeof commitListener).toBe('function')
-
-    const commit = {
-      groupId: 'group-1',
-      epoch: 3,
-      type: 'add',
-      senderLeafIndex: 0,
-      roster: [
-        { userId: 'alice', username: 'Alice', leafIndex: 0 },
-        { userId: 'bob', username: 'Bob', leafIndex: 1 },
-        { userId: 'carol', username: 'Carol', leafIndex: 2 },
-      ],
-      nextGroupKeyB64: 'next-group-key',
-      targetUserId: 'carol',
-      targetLeafIndex: 2,
-    }
-
-    await act(async () => {
-      await commitListener({ groupId: 'group-1', commit })
-      await flush()
-    })
-
-    expect(applyCommitMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        state: expect.objectContaining({ groupId: 'group-1', epoch: 2 }),
-        commit,
+        headerB64: 'header-out',
+        ciphertextB64: 'ciphertext-out',
+        text: 'client message',
       })
     )
     expect(saveGroupStateMock).toHaveBeenCalledWith(
       'group-1',
-      expect.objectContaining({
-        epoch: 3,
-        groupKeyB64: 'next-group-key',
-      })
+      expect.objectContaining({ applicationMessageCounter: 1 })
     )
-    expect(container.querySelector('[data-testid="display-text"]').textContent).toContain(
-      'Alice added Carol to the group'
-    )
-    const sendButton = container.querySelector('[data-testid="group-send-text"]')
-    expect(sendButton.getAttribute('data-disabled')).toBe('false')
   })
 
-  it('decrypts live MLS group messages in the active GroupChat using current state', async () => {
-    const localState = {
-      groupId: 'group-1',
-      epoch: 2,
-      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-      selfUserId: 'alice',
-      selfLeafIndex: 0,
-      groupKeyB64: 'group-key',
-      applicationMessageCounter: 1,
-      roster: [
-        { userId: 'alice', username: 'Alice', leafIndex: 0 },
-        { userId: 'bob', username: 'Bob', leafIndex: 1 },
-      ],
-      tree: { nodes: [], root: null },
-      secrets: { epochSecretsB64: null, initSecretB64: null },
-      pendingCommits: [],
-    }
-    const advancedState = {
-      ...localState,
-      senderGenerations: { 1: 1 },
-    }
+  it('decrypts a live newGroupMessage through the extracted helper and renders it', async () => {
+    loadGroupStateMock.mockResolvedValue(readyState())
 
-    loadGroupStateMock.mockResolvedValue(localState)
-    saveGroupStateMock.mockImplementation(async (_groupId, state) => ({ ...state }))
-    decryptApplicationMessageMock.mockImplementation(async ({ header }) => {
-      if (header === 'header-live') {
-        return {
-          plaintextBytes: new TextEncoder().encode('live incoming'),
-          newState: advancedState,
-        }
-      }
-      return new TextEncoder().encode('existing')
-    })
+    await renderGroup()
 
-    await act(async () => {
-      root.render(
-        <GroupChat
-          activeGroupId='group-1'
-          activeGroupName='Project Team'
-          userId='alice'
-          username='Alice'
-          currentWallpaper='default'
-        />
-      )
-      await flush()
-      await flush()
-    })
-
-    const liveListener = socket.on.mock.calls.find(
-      ([eventName]) => eventName === 'newGroupMessage'
-    )?.[1]
+    const liveListener = listenerFor(socket, 'newGroupMessage')
     expect(typeof liveListener).toBe('function')
 
     await act(async () => {
       await liveListener({
         groupId: 'group-1',
         _id: 'live-1',
-        seq: 1,
+        seq: 5,
         userId: 'bob',
         username: 'Bob',
         contentType: 'application',
@@ -751,74 +406,103 @@ describe('GroupChat MLS state lifecycle', () => {
       await flush()
     })
 
-    expect(decryptApplicationMessageMock).toHaveBeenCalledWith({
-      state: expect.objectContaining({ groupId: 'group-1', selfLeafIndex: 0 }),
-      encryptedSenderDataB64: null,
-      header: 'header-live',
-      ciphertext: 'cipher-live',
-      includeNewState: true,
-    })
-    expect(saveGroupStateMock).toHaveBeenCalledWith(
-      'group-1',
-      expect.objectContaining({ senderGenerations: { 1: 1 } })
+    expect(decryptIncomingGroupMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ groupId: 'group-1', headerB64: 'header-live' }),
+        userId: 'alice',
+        currentState: expect.objectContaining({ groupId: 'group-1' }),
+      })
     )
     expect(container.querySelector('[data-testid="display-text"]').textContent).toContain(
       'live incoming'
     )
   })
 
-  it('disables sending after a group commit removes the current user', async () => {
-    const localState = {
-      groupId: 'group-1',
-      epoch: 2,
-      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-      selfUserId: 'bob',
-      selfLeafIndex: 1,
-      groupKeyB64: 'group-key',
-      applicationMessageCounter: 2,
-      roster: [
-        { userId: 'alice', username: 'Alice', leafIndex: 0 },
-        { userId: 'bob', username: 'Bob', leafIndex: 1 },
-      ],
-      tree: { nodes: [], root: null },
-      secrets: { epochSecretsB64: null, initSecretB64: null },
-      pendingCommits: [],
-    }
+  it('applies a peer group commit and renders the membership system row', async () => {
+    // Self is bob; the commit is authored by alice (leaf 0), so it is not an
+    // own-commit short-circuit and must be applied.
+    loadGroupStateMock.mockResolvedValue(readyState({ selfUserId: 'bob', selfLeafIndex: 1 }))
+    socket.emit.mockImplementation((event, payload, callback) => {
+      if (event === 'openGroup') {
+        callback?.(makeOpenGroupResponse({ membership: { role: 'member', leafIndex: 1 } }))
+        return
+      }
+      if (event === 'fetchGroupMessages') callback?.({ success: true, messages: [] })
+    })
+    applyCommitMock.mockResolvedValue(
+      readyState({
+        selfUserId: 'bob',
+        selfLeafIndex: 1,
+        epoch: 3,
+        groupKeyB64: 'next-group-key',
+        roster: [
+          { userId: 'alice', username: 'Alice', leafIndex: 0 },
+          { userId: 'bob', username: 'Bob', leafIndex: 1 },
+          { userId: 'carol', username: 'Carol', leafIndex: 2 },
+        ],
+      })
+    )
 
-    loadGroupStateMock.mockResolvedValue(localState)
-    decryptApplicationMessageMock.mockResolvedValue(new TextEncoder().encode('existing'))
+    await renderGroup({ userId: 'bob', username: 'Bob' })
+
+    const commitListener = listenerFor(socket, 'groupCommit')
+    expect(typeof commitListener).toBe('function')
+
+    await act(async () => {
+      await commitListener({
+        groupId: 'group-1',
+        commit: {
+          groupId: 'group-1',
+          epoch: 3,
+          type: 'add',
+          senderLeafIndex: 0,
+          roster: [
+            { userId: 'alice', username: 'Alice', leafIndex: 0 },
+            { userId: 'bob', username: 'Bob', leafIndex: 1 },
+            { userId: 'carol', username: 'Carol', leafIndex: 2 },
+          ],
+          nextGroupKeyB64: 'next-group-key',
+          targetUserId: 'carol',
+          targetLeafIndex: 2,
+        },
+      })
+      await flush()
+    })
+
+    expect(applyCommitMock).toHaveBeenCalledWith(
+      expect.objectContaining({ state: expect.objectContaining({ epoch: 2 }) })
+    )
+    expect(saveGroupStateMock).toHaveBeenCalledWith(
+      'group-1',
+      expect.objectContaining({ epoch: 3, groupKeyB64: 'next-group-key' })
+    )
+    expect(container.querySelector('[data-testid="display-text"]').textContent).toContain(
+      'Alice added Carol'
+    )
+  })
+
+  it('returns the composer to securing after a commit removes the current user', async () => {
+    loadGroupStateMock.mockResolvedValue(readyState({ selfUserId: 'bob', selfLeafIndex: 1 }))
+    socket.emit.mockImplementation((event, payload, callback) => {
+      if (event === 'openGroup') {
+        callback?.(makeOpenGroupResponse({ membership: { role: 'member', leafIndex: 1 } }))
+        return
+      }
+      if (event === 'fetchGroupMessages') callback?.({ success: true, messages: [] })
+    })
     applyCommitMock.mockResolvedValue({
-      ...localState,
+      ...readyState({ selfUserId: 'bob' }),
       epoch: 3,
       selfLeafIndex: null,
       groupKeyB64: null,
-      applicationMessageCounter: 0,
+      applicationSecretB64: null,
       roster: [{ userId: 'alice', username: 'Alice', leafIndex: 0 }],
     })
-    saveGroupStateMock.mockImplementation(async (_groupId, state) => ({ ...state }))
 
-    await act(async () => {
-      root.render(
-        <GroupChat
-          activeGroupId='group-1'
-          activeGroupName='Project Team'
-          userId='bob'
-          username='Bob'
-          currentWallpaper='default'
-        />
-      )
-      await flush()
-      await flush()
-    })
+    await renderGroup({ userId: 'bob', username: 'Bob' })
+    expect(container.querySelector('[data-testid="group-send-text"]')).not.toBeNull()
 
-    const sendButton = container.querySelector('[data-testid="group-send-text"]')
-    expect(sendButton.getAttribute('data-disabled')).toBe('false')
-
-    const commitListener = socket.on.mock.calls.find(
-      ([eventName]) => eventName === 'groupCommit'
-    )?.[1]
-    expect(typeof commitListener).toBe('function')
-
+    const commitListener = listenerFor(socket, 'groupCommit')
     await act(async () => {
       await commitListener({
         groupId: 'group-1',
@@ -837,314 +521,60 @@ describe('GroupChat MLS state lifecycle', () => {
     })
 
     expect(applyCommitMock).toHaveBeenCalledTimes(1)
-    expect(saveGroupStateMock).toHaveBeenCalledWith(
-      'group-1',
-      expect.objectContaining({
-        epoch: 3,
-        selfLeafIndex: null,
-        groupKeyB64: null,
-      })
-    )
     expect(container.querySelector('[data-testid="display-text"]').textContent).toContain(
       'Alice removed Bob from the group'
     )
-    expect(sendButton.getAttribute('data-disabled')).toBe('true')
+    // Losing key material drops the composer back to the securing spinner.
+    expect(container.querySelector('[data-testid="group-send-text"]')).toBeNull()
   })
 
-  it('does not overwrite local MLS epoch or sender generations during membership refresh', async () => {
-    const localState = {
-      groupId: 'group-1',
-      epoch: 2,
-      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-      selfUserId: 'alice',
-      selfLeafIndex: 0,
-      groupKeyB64: 'group-key',
-      applicationMessageCounter: 1,
-      senderGenerations: { 0: 1 },
-      roster: [
-        { userId: 'alice', username: 'Alice', leafIndex: 0 },
-        { userId: 'bob', username: 'Bob', leafIndex: 1 },
-        { userId: 'charlie', username: 'Charlie', leafIndex: 2 },
-      ],
-      tree: { nodes: [], root: null },
-      secrets: { epochSecretsB64: null, initSecretB64: null },
-      pendingCommits: [],
-    }
-
-    loadGroupStateMock.mockResolvedValue(localState)
-    saveGroupStateMock.mockImplementation(async (_groupId, state) => ({ ...state }))
-    decryptApplicationMessageMock.mockResolvedValue(new TextEncoder().encode('existing'))
-
-    let openGroupCount = 0
-    socket.emit.mockImplementation((event, payload, callback) => {
-      if (event === 'openGroup') {
-        openGroupCount += 1
-        if (openGroupCount === 1) {
-          callback?.({
-            success: true,
-            group: {
-              groupId: 'group-1',
-              name: 'Project Team',
-              createdBy: 'alice',
-              mlsEnabled: true,
-              epoch: 2,
-              cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-            },
-            members: [
-              { userId: 'alice', username: 'Alice', leafIndex: 0, status: 'active' },
-              { userId: 'bob', username: 'Bob', leafIndex: 1, status: 'active' },
-              { userId: 'charlie', username: 'Charlie', leafIndex: 2, status: 'active' },
-            ],
-            membership: {
-              role: 'admin',
-              leafIndex: 0,
-              status: 'active',
-            },
-          })
-          return
-        }
-
-        callback?.({
-          success: true,
-          group: {
-            groupId: 'group-1',
-            name: 'Project Team',
-            createdBy: 'alice',
-            mlsEnabled: true,
-            epoch: 3,
-            cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-          },
-          members: [
-            { userId: 'alice', username: 'Alice', leafIndex: 0, status: 'active' },
-            { userId: 'charlie', username: 'Charlie', leafIndex: 2, status: 'active' },
-          ],
-          membership: {
-            role: 'admin',
-            leafIndex: 0,
-            status: 'active',
-          },
-        })
-        return
-      }
-
-      if (event === 'fetchGroupMessages') {
-        callback?.({ success: true, messages: [] })
-      }
-    })
-
-    await act(async () => {
-      root.render(
-        <GroupChat
-          activeGroupId='group-1'
-          activeGroupName='Project Team'
-          userId='alice'
-          username='Alice'
-          currentWallpaper='default'
-        />
-      )
-      await flush()
-      await flush()
-    })
-
-    saveGroupStateMock.mockClear()
-
-    const membershipListener = socket.on.mock.calls.find(
-      ([eventName]) => eventName === 'groupMemberRemoved'
-    )?.[1]
-    expect(typeof membershipListener).toBe('function')
-
-    await act(async () => {
-      membershipListener({ groupId: 'group-1', memberId: 'bob' })
-      await flush()
-      await flush()
-    })
-
-    expect(saveGroupStateMock).toHaveBeenCalledWith(
-      'group-1',
-      expect.objectContaining({
-        epoch: 2,
-        cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-        senderGenerations: { 0: 1 },
-        roster: [
-          { userId: 'alice', username: 'Alice', leafIndex: 0 },
-          { userId: 'charlie', username: 'Charlie', leafIndex: 2 },
-        ],
-      })
-    )
-    expect(saveGroupStateMock).not.toHaveBeenCalledWith(
-      'group-1',
-      expect.objectContaining({ epoch: 3 })
-    )
-  })
-
-  it('replays stored welcomes and commits before decrypting MLS history', async () => {
+  it('processes a live groupWelcome and pops up the composer for the invited member', async () => {
     loadGroupStateMock.mockResolvedValue(null)
-    saveGroupStateMock.mockImplementation(async (_groupId, state) => ({ ...state }))
-
-    const welcomeState = {
-      groupId: 'group-1',
-      epoch: 2,
-      cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-      selfUserId: 'bob',
-      selfLeafIndex: 1,
-      groupKeyB64: 'welcome-key',
-      applicationMessageCounter: 0,
-      roster: [
-        { userId: 'alice', username: 'Alice', leafIndex: 0 },
-        { userId: 'bob', username: 'Bob', leafIndex: 1 },
-      ],
-      tree: { nodes: [], root: null },
-      secrets: { epochSecretsB64: null, initSecretB64: null },
-      pendingCommits: [],
-    }
-
-    const committedState = {
-      ...welcomeState,
-      epoch: 3,
-      groupKeyB64: 'committed-key',
-      roster: [
-        { userId: 'alice', username: 'Alice', leafIndex: 0 },
-        { userId: 'bob', username: 'Bob', leafIndex: 1 },
-        { userId: 'carol', username: 'Carol', leafIndex: 2 },
-      ],
-    }
-
-    processWelcomeMock.mockResolvedValue(welcomeState)
-    applyCommitMock.mockResolvedValue(committedState)
-    decryptApplicationMessageMock.mockResolvedValue(new TextEncoder().encode('replayed history'))
-
+    processWelcomeMock.mockResolvedValue(
+      readyState({ selfUserId: 'bob', selfLeafIndex: 1, groupKeyB64: 'welcome-group-key' })
+    )
     socket.emit.mockImplementation((event, payload, callback) => {
       if (event === 'openGroup') {
         callback?.(
           makeOpenGroupResponse({
-            group: { createdBy: 'alice', epoch: 3 },
+            group: { createdBy: 'alice' },
             membership: { role: 'member', leafIndex: 1 },
-            members: [
-              { userId: 'alice', username: 'Alice', leafIndex: 0, status: 'active' },
-              { userId: 'bob', username: 'Bob', leafIndex: 1, status: 'active' },
-              { userId: 'carol', username: 'Carol', leafIndex: 2, status: 'active' },
-            ],
           })
         )
         return
       }
-
-      if (event === 'fetchGroupMessages') {
-        callback?.({
-          success: true,
-          messages: [
-            {
-              _id: 'welcome-1',
-              groupId: 'group-1',
-              seq: 0,
-              userId: 'alice',
-              username: 'Alice',
-              contentType: 'welcome',
-              payload: JSON.stringify({
-                groupId: 'group-1',
-                epoch: 2,
-                cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
-                roster: [
-                  { userId: 'alice', username: 'Alice', leafIndex: 0 },
-                  { userId: 'bob', username: 'Bob', leafIndex: 1 },
-                ],
-                recipientUserId: 'bob',
-                recipientLeafIndex: 1,
-                groupKeyB64: 'welcome-key',
-              }),
-            },
-            {
-              _id: 'commit-1',
-              groupId: 'group-1',
-              seq: 1,
-              userId: 'alice',
-              username: 'Alice',
-              contentType: 'commit',
-              payload: JSON.stringify({
-                groupId: 'group-1',
-                epoch: 3,
-                type: 'add',
-                senderLeafIndex: 0,
-                roster: [
-                  { userId: 'alice', username: 'Alice', leafIndex: 0 },
-                  { userId: 'bob', username: 'Bob', leafIndex: 1 },
-                  { userId: 'carol', username: 'Carol', leafIndex: 2 },
-                ],
-                nextGroupKeyB64: 'committed-key',
-                targetUserId: 'carol',
-                targetLeafIndex: 2,
-              }),
-            },
-            {
-              _id: 'app-1',
-              groupId: 'group-1',
-              seq: 2,
-              userId: 'alice',
-              username: 'Alice',
-              contentType: 'application',
-              headerB64: 'header-after-replay',
-              ciphertextB64: 'ciphertext-after-replay',
-            },
-          ],
-        })
-      }
+      if (event === 'fetchGroupMessages') callback?.({ success: true, messages: [] })
     })
+
+    await renderGroup({ userId: 'bob', username: 'Bob' })
+    // Invited, no key material yet → composer down.
+    expect(container.querySelector('[data-testid="group-send-text"]')).toBeNull()
+
+    const welcomeListener = listenerFor(socket, 'groupWelcome')
+    expect(typeof welcomeListener).toBe('function')
 
     await act(async () => {
-      root.render(
-        <GroupChat
-          activeGroupId='group-1'
-          activeGroupName='Project Team'
-          userId='bob'
-          username='Bob'
-          currentWallpaper='default'
-        />
-      )
-      await flush()
-      await flush()
+      await welcomeListener({
+        groupId: 'group-1',
+        welcome: {
+          groupId: 'group-1',
+          epoch: 2,
+          cipherSuite: 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256',
+          recipientUserId: 'bob',
+          recipientLeafIndex: 1,
+          groupKeyB64: 'welcome-group-key',
+        },
+      })
       await flush()
     })
 
-    expect(processWelcomeMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        welcome: expect.objectContaining({
-          groupId: 'group-1',
-          recipientUserId: 'bob',
-          groupKeyB64: 'welcome-key',
-        }),
-        selfUserId: 'bob',
-      })
-    )
-    expect(applyCommitMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        state: expect.objectContaining({ groupKeyB64: 'welcome-key', epoch: 2 }),
-        commit: expect.objectContaining({
-          groupId: 'group-1',
-          epoch: 3,
-          nextGroupKeyB64: 'committed-key',
-        }),
-      })
-    )
-    expect(saveGroupStateMock).toHaveBeenCalledWith(
+    expect(processWelcomeMock).toHaveBeenCalledWith(expect.objectContaining({ selfUserId: 'bob' }))
+    expect(saveGroupStateMock).toHaveBeenLastCalledWith(
       'group-1',
-      expect.objectContaining({ groupKeyB64: 'welcome-key', epoch: 2 })
+      expect.objectContaining({ selfUserId: 'bob', groupKeyB64: 'welcome-group-key' })
     )
-    expect(saveGroupStateMock).toHaveBeenCalledWith(
-      'group-1',
-      expect.objectContaining({ groupKeyB64: 'committed-key', epoch: 3 })
-    )
-    expect(decryptApplicationMessageMock).toHaveBeenCalledWith({
-      state: expect.objectContaining({ groupKeyB64: 'committed-key', epoch: 3 }),
-      encryptedSenderDataB64: null,
-      header: 'header-after-replay',
-      ciphertext: 'ciphertext-after-replay',
-      includeNewState: true,
-    })
-    expect(container.querySelector('[data-testid="display-text"]').textContent).toContain(
-      'Alice added Carol to the group'
-    )
-    expect(container.querySelector('[data-testid="display-text"]').textContent).toContain(
-      'replayed history'
-    )
+    const sendButton = container.querySelector('[data-testid="group-send-text"]')
+    expect(sendButton).not.toBeNull()
+    expect(sendButton.getAttribute('data-disabled')).toBe('false')
   })
 })

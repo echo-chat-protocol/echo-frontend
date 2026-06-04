@@ -11,7 +11,7 @@ import {
   CircleUserRound,
 } from 'lucide-react'
 import { getSocket } from '../../socket'
-import { tokenStorage } from '@services/api'
+import { tokenStorage, refreshAccessToken } from '@services/api'
 import UsersService from '@/services/users.service'
 import { compressImage } from '../Dashboard/Chat/utils/imageUtils'
 import { formatProfileImage, getUserData } from './DashboardComponents/utils/helpers'
@@ -214,6 +214,21 @@ export default function UserProfileModal({ user = {}, open, onClose = () => {} }
       setName(resolvedProfile.display_name)
       setAbout(resolvedProfile.bio)
       setAvatarUrl(resolvedProfile.avatar_url)
+
+      // The username lives in the JWT access token (minted at login). When it
+      // changes we must mint a fresh token, otherwise every client surface that
+      // reads it (sidebar identity, outgoing message attribution) keeps showing
+      // the old name until the next login. `/auth/refresh` re-signs the token
+      // from the now-updated DB record. Best-effort: a failure here must not
+      // block the save, it just delays the refresh until the next 401 cycle.
+      if (isOwnProfile && resolvedProfile.username && resolvedProfile.username !== user.username) {
+        try {
+          await refreshAccessToken()
+        } catch (refreshErr) {
+          console.warn('[profile] Token refresh after username change failed:', refreshErr)
+        }
+      }
+
       persistProfileCache(resolvedProfile)
 
       onClose()

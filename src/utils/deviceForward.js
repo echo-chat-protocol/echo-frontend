@@ -205,6 +205,95 @@ export async function forwardMessageToDevices({
   }
 }
 
+export async function forwardGroupMessageToPairedDevices({
+  userId,
+  groupId,
+  groupName = null,
+  text,
+  image = null,
+  replyTo = null,
+  messageId,
+  createdAt,
+  seenStatus = true,
+  username = '',
+}) {
+  const gid = String(groupId ?? '')
+  const id = String(messageId ?? '')
+  if (!userId || !gid || !id) return
+
+  try {
+    const identityKeys = await getIdentityKeys()
+    if (!identityKeys?.privateKeyX25519) return
+
+    const pairedDeviceIds = await getPairedDeviceIds(userId)
+    if (pairedDeviceIds.length === 0) return
+
+    let identities = []
+    try {
+      const res = await deviceService.getDeviceIdentities(userId)
+      identities = Array.isArray(res?.devices) ? res.devices : Array.isArray(res) ? res : []
+    } catch {
+      identities = []
+    }
+    const byId = new Map(
+      identities
+        .filter((d) => d?.deviceId && d?.publicIdentityKeyX25519)
+        .map((d) => [String(d.deviceId), d])
+    )
+
+    const senderPrivB64 = identityKeys.privateKeyX25519
+    const senderPubB64 = identityKeys.publicKeyX25519 || null
+    const currentDeviceId = localStorage.getItem('echo-device-id') || null
+    const timestamp = createdAt || new Date().toISOString()
+    const payload = {
+      type: 'groupMessageDisplaySync',
+      userId,
+      groupId: gid,
+      groupName,
+      text: text ?? '',
+      image: image ?? null,
+      replyTo: replyTo ?? null,
+      _id: id,
+      createdAt: timestamp,
+      seenStatus,
+      username: username ?? '',
+    }
+
+    const envelopes = []
+    for (const recipientDeviceId of pairedDeviceIds) {
+      const rec = byId.get(String(recipientDeviceId))
+      if (!rec?.publicIdentityKeyX25519) continue
+
+      const { ciphertext, nonce } = await encryptDhEnvelope({
+        senderPrivB64,
+        recipientPubB64: rec.publicIdentityKeyX25519,
+        payload,
+      })
+      const envelope = {
+        logicalRecipientId: userId,
+        recipientDeviceId,
+        ciphertext,
+        nonce,
+        header: { alg: 'x25519-hkdf-aesgcm', senderPubB64 },
+        messageType: 'groupMessageDisplaySync',
+        conversationId: `group:${gid}`,
+      }
+      envelopes.push(envelope)
+
+      const socket = getSocket()
+      if (socket?.connected) {
+        socket.emit('deviceEnvelope', envelope)
+      }
+    }
+
+    if (envelopes.length > 0) {
+      await deviceService.storeEnvelopes({ senderDeviceId: currentDeviceId, envelopes })
+    }
+  } catch (err) {
+    console.warn('[DeviceForward] Failed to forward group message display sync:', err)
+  }
+}
+
 // ── process a single already-fetched envelope (shared by socket and REST paths) ─
 
 export async function processRawDeviceEnvelope(userId, rawEnvelope) {
@@ -368,6 +457,32 @@ export async function processRawDeviceEnvelope(userId, rawEnvelope) {
     } catch (err) {
       console.warn('[DeviceForward] Failed to apply group state sync:', err)
     }
+    return
+  }
+
+  if (payload.type === 'groupMessageDisplaySync') {
+    const gid = String(payload.groupId ?? '')
+    const id = String(payload._id ?? '')
+    if (!gid || !id) return
+
+    const { updateSavedMessages } =
+      await import('@/components/Dashboard/Chat/utils/chat/keyManagement')
+    const message = {
+      _id: id,
+      userId: String(payload.userId ?? userId ?? ''),
+      username: payload.username ?? '',
+      text: payload.text ?? '',
+      image: payload.image ?? null,
+      createdAt: payload.createdAt || new Date().toISOString(),
+      seenStatus: payload.seenStatus ?? true,
+      _fromDeviceForward: true,
+    }
+    if (payload.replyTo) message.replyTo = payload.replyTo
+    await updateSavedMessages(userId, `group:${gid}`, message, null)
+
+    window.dispatchEvent(
+      new CustomEvent('groupStateSynced', { detail: { groupId: gid, source: 'displaySync' } })
+    )
     return
   }
 

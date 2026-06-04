@@ -5,15 +5,38 @@ import { createRoot } from 'react-dom/client'
 import { act } from 'react'
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
+//
+// QRGenerator was redesigned: it no longer encrypts a typed message into a QR.
+// It now auto-creates a DH pairing session on mount, renders the ephemeral-key
+// QR for the phone to scan, then derives a shared secret and uploads an
+// encrypted chat-history package. These tests cover that current behaviour.
 
 const cryptoMocks = vi.hoisted(() => ({
   getOrCreateDeviceIK: vi.fn(),
-  encryptQRPayloadDebug: vi.fn(),
+  generatePairingEphemeralDebug: vi.fn(),
+  encodeKeyBase64: vi.fn(),
+  generatePairingCode: vi.fn(),
+  derivePairingDhDebug: vi.fn(),
+  decodeKeyInput: vi.fn(),
+  encryptHistoryPackageChunks: vi.fn(),
 }))
+
+const deviceServiceMocks = vi.hoisted(() => ({
+  createDhSession: vi.fn(),
+  getDhSession: vi.fn(),
+  transferDhChunkToServer: vi.fn(),
+}))
+
+const qrcodeMock = vi.hoisted(() => ({ toDataURL: vi.fn() }))
 
 vi.mock('../qrCrypto', () => ({
   getOrCreateDeviceIK: (...a) => cryptoMocks.getOrCreateDeviceIK(...a),
-  encryptQRPayloadDebug: (...a) => cryptoMocks.encryptQRPayloadDebug(...a),
+  generatePairingEphemeralDebug: (...a) => cryptoMocks.generatePairingEphemeralDebug(...a),
+  encodeKeyBase64: (...a) => cryptoMocks.encodeKeyBase64(...a),
+  generatePairingCode: (...a) => cryptoMocks.generatePairingCode(...a),
+  derivePairingDhDebug: (...a) => cryptoMocks.derivePairingDhDebug(...a),
+  decodeKeyInput: (...a) => cryptoMocks.decodeKeyInput(...a),
+  encryptHistoryPackageChunks: (...a) => cryptoMocks.encryptHistoryPackageChunks(...a),
   hexBytes: (u8, limit = 16) => {
     if (!u8) return '(null)'
     const slice = Array.from(u8).slice(0, limit)
@@ -21,51 +44,59 @@ vi.mock('../qrCrypto', () => ({
   },
 }))
 
-vi.mock('qrcode', () => ({
-  default: {
-    toDataURL: vi.fn().mockResolvedValue('data:image/png;base64,FAKE_QR'),
+vi.mock('../deviceService', () => ({
+  deviceService: {
+    createDhSession: (...a) => deviceServiceMocks.createDhSession(...a),
+    getDhSession: (...a) => deviceServiceMocks.getDhSession(...a),
+    transferDhChunkToServer: (...a) => deviceServiceMocks.transferDhChunkToServer(...a),
   },
 }))
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+vi.mock('@/utils/network/apiBase', () => ({
+  resolvePairingServerUrl: () => 'https://pairing.example.test',
+}))
+
+vi.mock('../historyPackage', () => ({
+  buildHistoryPackage: vi.fn().mockResolvedValue({ chats: [], groups: [], messages: [] }),
+}))
+
+vi.mock('qrcode', () => ({
+  default: { toDataURL: (...a) => qrcodeMock.toDataURL(...a) },
+}))
 
 import QRGenerator from '../QRGenerator'
 
 const flush = () => new Promise((r) => setTimeout(r, 0))
 
-const fakeIK = { priv: new Uint8Array(32), pub: new Uint8Array(32), source: 'local' }
-const fakePayload = { v: 'echo-qr-v1', epk: 'epkABC', ct: 'ctDEF', s: 'sGHI', n: 'nJKL' }
-const fakeDebug = {
-  ikSource: 'local',
-  ikPub: new Uint8Array(32).fill(2),
-  ekPub: new Uint8Array(32).fill(3),
-  dhOp: 'DH(ek_priv, IK_pub)',
-  dhShared: new Uint8Array(32).fill(4),
-  salt: new Uint8Array(32).fill(5),
-  hkdfInfo: 'echo-qr-v1',
-  symKey: new Uint8Array(32).fill(6),
-  nonce: new Uint8Array(12).fill(7),
-  ct: 'deadbeef',
-}
-
-function setInputValue(input, value) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
-  setter.call(input, value)
-  input.dispatchEvent(new Event('input', { bubbles: true }))
-  input.dispatchEvent(new Event('change', { bubbles: true }))
-}
-
 // ── Setup / teardown ──────────────────────────────────────────────────────────
 
 let container, root
+
+const fakeEphemeral = { ekPub: new Uint8Array(32).fill(3), ekPriv: new Uint8Array(32).fill(4) }
+const fakeSession = {
+  sessionId: 'sess-1',
+  targetAccessToken: 'tok-1',
+  // Far-future expiry so the countdown effect never auto-resets during a test.
+  expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+}
 
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
-  cryptoMocks.getOrCreateDeviceIK.mockResolvedValue(fakeIK)
-  cryptoMocks.encryptQRPayloadDebug.mockResolvedValue({ payload: fakePayload, debug: fakeDebug })
+
+  cryptoMocks.getOrCreateDeviceIK.mockResolvedValue({
+    pub: new Uint8Array(32).fill(1),
+    source: 'local',
+  })
+  cryptoMocks.generatePairingEphemeralDebug.mockResolvedValue(fakeEphemeral)
+  cryptoMocks.encodeKeyBase64.mockReturnValue('EKPUB_B64')
+  cryptoMocks.generatePairingCode.mockReturnValue('123456')
+  // Polling never returns a scanner key during these tests (no scan happens).
+  deviceServiceMocks.createDhSession.mockResolvedValue(fakeSession)
+  deviceServiceMocks.getDhSession.mockResolvedValue({ session: { status: 'active' } })
+  qrcodeMock.toDataURL.mockResolvedValue('data:image/png;base64,FAKE_QR')
 })
 
 afterEach(() => {
@@ -77,160 +108,91 @@ afterEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('QRGenerator', () => {
-  it('shows "Loading keys…" on the button while IK is not yet resolved', async () => {
-    // Never resolves during this test
-    cryptoMocks.getOrCreateDeviceIK.mockReturnValue(new Promise(() => {}))
+  it('shows a loading placeholder before the DH session is created', async () => {
+    // Session creation never resolves during this test.
+    deviceServiceMocks.createDhSession.mockReturnValue(new Promise(() => {}))
 
     await act(async () => {
       root.render(<QRGenerator />)
       await flush()
     })
 
-    const btn = container.querySelector('button')
-    expect(btn.textContent).toContain('Loading keys')
-    expect(btn.disabled).toBe(true)
+    expect(container.querySelector('img[alt="Ephemeral key pairing QR"]')).toBeNull()
+    expect(container.textContent).toMatch(/QR/i)
   })
 
-  it('renders the message input after mount', async () => {
+  it('auto-creates a DH session and renders the pairing QR image on mount', async () => {
     await act(async () => {
       root.render(<QRGenerator />)
       await flush()
-    })
-
-    const input = container.querySelector('input[type="text"]')
-    expect(input).not.toBeNull()
-    expect(input.placeholder).toContain('encrypt')
-  })
-
-  it('button is disabled when message is empty (even after IK loads)', async () => {
-    await act(async () => {
-      root.render(<QRGenerator />)
       await flush()
     })
 
-    const btn = container.querySelector('button')
-    expect(btn.disabled).toBe(true)
-  })
+    expect(cryptoMocks.getOrCreateDeviceIK).toHaveBeenCalled()
+    expect(deviceServiceMocks.createDhSession).toHaveBeenCalledTimes(1)
 
-  it('button becomes enabled after IK loads and message is typed', async () => {
-    await act(async () => {
-      root.render(<QRGenerator />)
-      await flush()
-    })
-
-    const input = container.querySelector('input[type="text"]')
-    await act(async () => {
-      setInputValue(input, 'hello world')
-      await flush()
-    })
-
-    const btn = container.querySelector('button')
-    expect(btn.disabled).toBe(false)
-    expect(btn.textContent).toContain('Generate QR Code')
-  })
-
-  it('clicking Generate QR Code calls encryptQRPayloadDebug and shows the QR image', async () => {
-    await act(async () => {
-      root.render(<QRGenerator />)
-      await flush()
-    })
-
-    const input = container.querySelector('input[type="text"]')
-    await act(async () => {
-      setInputValue(input, 'secret message')
-      await flush()
-    })
-
-    const btn = container.querySelector('button')
-    await act(async () => {
-      btn.click()
-      await flush()
-    })
-
-    expect(cryptoMocks.encryptQRPayloadDebug).toHaveBeenCalledWith('secret message', fakeIK)
-
-    const img = container.querySelector('img[alt="QR Code"]')
+    const img = container.querySelector('img[alt="Ephemeral key pairing QR"]')
     expect(img).not.toBeNull()
     expect(img.src).toContain('data:image/png')
   })
 
-  it('shows the encrypted message label after QR generation', async () => {
+  it('encodes the session and ephemeral public key into the scanned QR payload', async () => {
     await act(async () => {
       root.render(<QRGenerator />)
       await flush()
-    })
-
-    await act(async () => {
-      setInputValue(container.querySelector('input'), 'my text')
       await flush()
     })
 
-    await act(async () => {
-      container.querySelector('button').click()
-      await flush()
+    expect(qrcodeMock.toDataURL).toHaveBeenCalled()
+    const payloadArg = qrcodeMock.toDataURL.mock.calls[0][0]
+    const payload = JSON.parse(payloadArg)
+    expect(payload).toMatchObject({
+      type: 'echo_dh_pairing',
+      sessionId: 'sess-1',
+      targetAccessToken: 'tok-1',
+      ekPub: 'EKPUB_B64',
+      serverUrl: 'https://pairing.example.test',
     })
-
-    expect(container.textContent).toContain('my text')
   })
 
-  it('"Generate new" button resets back to the input form', async () => {
+  it('shows an error and a "Try again" button when session creation fails', async () => {
+    deviceServiceMocks.createDhSession.mockRejectedValue(new Error('backend offline'))
+
     await act(async () => {
       root.render(<QRGenerator />)
       await flush()
-    })
-
-    await act(async () => {
-      setInputValue(container.querySelector('input'), 'reset test')
       await flush()
     })
 
-    await act(async () => {
-      container.querySelector('button').click()
-      await flush()
-    })
-
-    // Find "Generate new" link/button
-    const resetBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent.includes('Generate new')
+    expect(container.textContent).toContain('backend offline')
+    const retry = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent.includes('Try again')
     )
-    expect(resetBtn).not.toBeNull()
-
-    await act(async () => {
-      resetBtn.click()
-      await flush()
-    })
-
-    // Input form should be back
-    expect(container.querySelector('input[type="text"]')).not.toBeNull()
+    expect(retry).toBeTruthy()
   })
 
-  it('shows an error message when encryptQRPayloadDebug rejects', async () => {
-    cryptoMocks.encryptQRPayloadDebug.mockRejectedValue(new Error('WASM failed'))
+  it('retries session creation when the "Try again" button is clicked', async () => {
+    deviceServiceMocks.createDhSession.mockRejectedValueOnce(new Error('backend offline'))
 
     await act(async () => {
       root.render(<QRGenerator />)
       await flush()
-    })
-
-    await act(async () => {
-      setInputValue(container.querySelector('input'), 'bad')
       await flush()
     })
 
+    const retry = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent.includes('Try again')
+    )
+    expect(retry).toBeTruthy()
+
     await act(async () => {
-      container.querySelector('button').click()
+      retry.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flush()
       await flush()
     })
 
-    expect(container.textContent).toContain('Encryption failed')
-  })
-
-  it('shows key source note when IK is loaded', async () => {
-    await act(async () => {
-      root.render(<QRGenerator />)
-      await flush()
-    })
-
-    expect(container.textContent).toContain('DH symmetry')
+    // First (failed) attempt + retry = 2 calls; the retry renders the QR.
+    expect(deviceServiceMocks.createDhSession.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(container.querySelector('img[alt="Ephemeral key pairing QR"]')).not.toBeNull()
   })
 })

@@ -159,10 +159,28 @@ const {
   encryptApplicationMessage,
   processWelcome,
 } = await import('../groupCryptoProvider.js')
+const { generateKeyPackage } = await import('../groupCrypto/keyPackage.js')
 
 const ALICE_KEY = bytesToBase64(new Uint8Array(32).fill(0x01))
 const BOB_KEY = bytesToBase64(new Uint8Array(32).fill(0x02))
 const CAROL_KEY = bytesToBase64(new Uint8Array(32).fill(0x03))
+
+// Adding a member now requires a full signed KeyPackage (signing pubkey +
+// credential). Mint a real one for Carol and carry her identity on the
+// `newMember` object passed to buildAddCommit.
+const CIPHER_SUITE = 'Echo-MLS-TreeKEM/X25519_AES256GCM_SHA256'
+const { keyPackage: CAROL_KP } = await generateKeyPackage({
+  userId: 'carol',
+  initKeyB64: CAROL_KEY,
+  cipherSuite: CIPHER_SUITE,
+})
+const CAROL_MEMBER = {
+  userId: 'carol',
+  username: 'Carol',
+  leafIndex: 2,
+  leafSigningPubKeyB64: CAROL_KP.leafSigningPubKeyB64,
+  credential: CAROL_KP.credential,
+}
 
 const ALICE_BOB_ROSTER = [
   { userId: 'alice', username: 'Alice', leafIndex: 0 },
@@ -407,7 +425,7 @@ describe('groupCryptoProvider commits', () => {
       nextState: aliceNext,
     } = await buildAddCommit({
       state: creatorState,
-      newMember: { userId: 'carol', username: 'Carol', leafIndex: 2 },
+      newMember: CAROL_MEMBER,
       memberInitKeys: ALL_INIT_KEYS,
     })
     const bobNext = await applyCommit({
@@ -448,7 +466,7 @@ describe('groupCryptoProvider commits', () => {
 
     const { commit, nextState: aliceNext } = await buildAddCommit({
       state: creatorState,
-      newMember: { userId: 'carol', username: 'Carol', leafIndex: 2 },
+      newMember: CAROL_MEMBER,
       memberInitKeys: ALL_INIT_KEYS,
     })
     const bobNext = await applyCommit({
