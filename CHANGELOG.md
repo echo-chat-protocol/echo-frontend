@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [1.0.0](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.1.0...v1.0.0) (2026-06-05)
+
+
+### Features
+
+* add group info tab ([c1a0c82](https://github.com/echo-chat-protocol/echo-frontend/commit/c1a0c82c18b46d17e67e9e6a9582f3fccc0bf85f))
+* add mobile friendly ui ([bf2cd9b](https://github.com/echo-chat-protocol/echo-frontend/commit/bf2cd9b584cb6d0e9b537ae7f6115dfb12b361a2))
+* add pricingpage ([1d6eedf](https://github.com/echo-chat-protocol/echo-frontend/commit/1d6eedf59cea527523eb24b61a69d1056d87a2ba))
+* added message reply ([fdebf73](https://github.com/echo-chat-protocol/echo-frontend/commit/fdebf73c5888b3f3bb8e063e365fcfb99378b0f5))
+* replace debug menu with gecho ([fa88321](https://github.com/echo-chat-protocol/echo-frontend/commit/fa88321f465dd6729ccbe8bf53ee9326c3bdfba0))
+
+
+### Bug Fixes
+
+* apostrophe pricing page ([48d3734](https://github.com/echo-chat-protocol/echo-frontend/commit/48d373492b38a7d046ab956f7f4570dc95ec4e09))
+* **blog:** add article page, images, preload toggle, layout fixes ([24199d6](https://github.com/echo-chat-protocol/echo-frontend/commit/24199d6d1d43dee0b5e498b7b7088f5ad75874bd))
+* change quotes ([a887a3e](https://github.com/echo-chat-protocol/echo-frontend/commit/a887a3ecfc37216ee533de53efd530d294d3fbff))
+* delete cookies ([0f47103](https://github.com/echo-chat-protocol/echo-frontend/commit/0f47103b2965788c23a9a0ef880910162ea8cd0d))
+* don't squish chat when opening info ([b306c04](https://github.com/echo-chat-protocol/echo-frontend/commit/b306c0428d9a93e56ccd35b764b7d12a89e5e84a))
+* fix IOS camera startup on QR ([f9a2df4](https://github.com/echo-chat-protocol/echo-frontend/commit/f9a2df4375a655afb41ddc65bcd9b3fc0b19d728))
+* fix message response UI ([743cf5e](https://github.com/echo-chat-protocol/echo-frontend/commit/743cf5e8df1c7249c84a2dc896b4bfba841b14f0))
+* fixed audio notes playback ([d9638e8](https://github.com/echo-chat-protocol/echo-frontend/commit/d9638e8507f4f38f61b8410b17b6ee1580d2a33f))
+* fixed auth in profile section ([01ff6f7](https://github.com/echo-chat-protocol/echo-frontend/commit/01ff6f7b6cfbed6836efd72a05ea1688e8557de9))
+* fixed call UI ([447d246](https://github.com/echo-chat-protocol/echo-frontend/commit/447d246dbbe449ea69f0d7fa8e07ef21d90c52f7))
+* fixed duped id in profile ([db2d13f](https://github.com/echo-chat-protocol/echo-frontend/commit/db2d13f0cd5b4c2000f0958f3083edd2fd38c3aa))
+* fixed video and media paths ([2268a26](https://github.com/echo-chat-protocol/echo-frontend/commit/2268a264c3fce5fabeec98fc64c2e82003fb827b))
+* getting chat information at click instead of on recieve ([633d3c8](https://github.com/echo-chat-protocol/echo-frontend/commit/633d3c8aa6c51f02d621e9cc9fb66ecc7389f326))
+* group profile picture bug ([0017ad6](https://github.com/echo-chat-protocol/echo-frontend/commit/0017ad662a833b2a7e31aaedb53f9e6d430ae294))
+* improve licences page ([c35d7e7](https://github.com/echo-chat-protocol/echo-frontend/commit/c35d7e7dfd3296dd6f3fe754748c7beec2893cbf))
+* name change bug ([7a20820](https://github.com/echo-chat-protocol/echo-frontend/commit/7a2082029e0c4b0dc2a5ae4bbe9789656ebe5db6))
+* sender media replay bug ([b462c2b](https://github.com/echo-chat-protocol/echo-frontend/commit/b462c2b90574eac1f27161af43a29da9c0ea7cc3))
+* smoothened MLS replay ([9719170](https://github.com/echo-chat-protocol/echo-frontend/commit/97191703221652427b12576445f3fa2fd98c194e))
+* stuck ELD loading ([9a1925b](https://github.com/echo-chat-protocol/echo-frontend/commit/9a1925be5be69691cc428daa384bdff4ece116e0))
+* subtitle hero links to register page ([6dfbc83](https://github.com/echo-chat-protocol/echo-frontend/commit/6dfbc83acdd4f8c7c620f25eb8cc2a87046c5b1b))
+
 ## [0.0.13](https://github.com/echo-chat-protocol/echo-frontend/compare/v0.0.12...v0.0.13) (2026-05-29)
 
 
