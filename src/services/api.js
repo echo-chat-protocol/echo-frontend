@@ -225,3 +225,6 @@ const api = {
 export default api
 // Named export for backwards compatibility
 export { api }
+// Exposed for the media service, which streams raw binary (octet-stream upload,
+// arraybuffer download) and so can't go through the JSON-oriented `request`.
+export { BASE_URL }

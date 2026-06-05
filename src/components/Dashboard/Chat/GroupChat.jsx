@@ -1215,23 +1215,39 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
             /* ignore */
           }
 
-          // local system msg so the re-joined user gets a heads up
-          const joinedAt = new Date().toISOString()
-          const joinedMessage = {
-            _id: `group-joined:${String(groupId)}:${joinedAt}`,
-            userId: '',
-            username: '',
-            text: 'You joined the group',
-            createdAt: joinedAt,
-            seenStatus: true,
-            messageType: 'system',
+          // local system msg so the re-joined user gets a heads up — but NOT for
+          // device pairing. A freshly paired secondary device is bootstrapped
+          // into every group the account already belongs to via per-device leaf
+          // adds, each arriving here as a Welcome. That's device management, not
+          // a join, so it must not drop a "You joined the group" row. The tell:
+          // the account already owns another leaf (its primary) in the roster.
+          const joinRoster = Array.isArray(persistedState?.roster) ? persistedState.roster : []
+          const selfLeafIdx = persistedState?.selfLeafIndex
+          const accountHasOtherLeaf = joinRoster.some((m) => {
+            const sameAccount =
+              String(m?.userId ?? '') === String(userId) ||
+              String(m?.parentUserId ?? '') === String(userId)
+            return sameAccount && m?.leafIndex !== selfLeafIdx
+          })
+
+          if (!accountHasOtherLeaf) {
+            const joinedAt = new Date().toISOString()
+            const joinedMessage = {
+              _id: `group-joined:${String(groupId)}:${joinedAt}`,
+              userId: '',
+              username: '',
+              text: 'You joined the group',
+              createdAt: joinedAt,
+              seenStatus: true,
+              messageType: 'system',
+            }
+            await updateSavedMessages(
+              userId,
+              getGroupCacheId(activeGroupId),
+              joinedMessage,
+              setMessages
+            )
           }
-          await updateSavedMessages(
-            userId,
-            getGroupCacheId(activeGroupId),
-            joinedMessage,
-            setMessages
-          )
 
           // state's ready now, retry buffered messages
           const key = String(groupId)
@@ -1535,11 +1551,14 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     }
   }, [groupMeta?.mlsEnabled, groupCryptoState, userId])
 
-  const sendMessageNow = async (text, imageData = null, replyTo = null) => {
+  const sendMessageNow = async (text, imageData = null, replyTo = null, media = null) => {
     if (removedInfoRef.current) {
       throw new Error('You are no longer a member of this group')
     }
 
+    // Encrypted-blob video descriptor (built by the composer). Carried inside
+    // the MLS application plaintext so its key stays end-to-end encrypted.
+    const videoData = media?.video ?? null
     const currentMeta = groupMetaRef.current
 
     if (currentMeta?.mlsEnabled) {
@@ -1659,7 +1678,12 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
 
       const encrypted = await encryptApplicationMessage({
         state: currentState,
-        plaintextBytes: encodeGroupMessagePayload({ text, image: imageData, replyTo }),
+        plaintextBytes: encodeGroupMessagePayload({
+          text,
+          image: imageData,
+          replyTo,
+          video: videoData,
+        }),
       })
       const pendingOutgoingMessage = {
         groupId: activeGroupId,
@@ -1671,6 +1695,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         ...pendingOutgoingMessage,
         text,
         image: imageData ?? null,
+        video: videoData ?? null,
         replyTo: replyTo ?? null,
       })
 
@@ -1680,7 +1705,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           {
             groupId: activeGroupId,
             nonce: encrypted.nonceB64,
-            messageType: imageData ? 'image' : 'text',
+            messageType: videoData ? 'video' : imageData ? 'image' : 'text',
             contentType: 'application',
             encryptedSenderDataB64: encrypted.encryptedSenderDataB64 ?? null,
             headerB64: encrypted.headerB64,
@@ -1699,6 +1724,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                 groupId: activeGroupId,
                 text,
                 image: imageData ?? null,
+                video: videoData ?? null,
                 replyTo: replyTo ?? null,
                 messageId: ack.messageId,
                 createdAt: ack.createdAt,
@@ -1739,7 +1765,12 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                   }
                   const retried = await encryptApplicationMessage({
                     state: retryState,
-                    plaintextBytes: encodeGroupMessagePayload({ text, image: imageData, replyTo }),
+                    plaintextBytes: encodeGroupMessagePayload({
+                      text,
+                      image: imageData,
+                      replyTo,
+                      video: videoData,
+                    }),
                   })
                   const retryPendingOutgoingMessage = {
                     groupId: activeGroupId,
@@ -1752,6 +1783,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                     ...retryPendingOutgoingMessage,
                     text,
                     image: imageData ?? null,
+                    video: videoData ?? null,
                     replyTo: replyTo ?? null,
                   })
                   socket.emit(
@@ -1759,7 +1791,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                     {
                       groupId: activeGroupId,
                       nonce: retried.nonceB64,
-                      messageType: imageData ? 'image' : 'text',
+                      messageType: videoData ? 'video' : imageData ? 'image' : 'text',
                       contentType: 'application',
                       encryptedSenderDataB64: retried.encryptedSenderDataB64 ?? null,
                       headerB64: retried.headerB64,
@@ -1780,6 +1812,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                           groupId: activeGroupId,
                           text,
                           image: imageData ?? null,
+                          video: videoData ?? null,
                           replyTo: replyTo ?? null,
                           messageId: ack2.messageId,
                           createdAt: ack2.createdAt,
@@ -1843,10 +1876,10 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
     })
   }
 
-  const sendMessage = (text, imageData = null, replyTo = null) => {
+  const sendMessage = (text, imageData = null, replyTo = null, media = null) => {
     const queuedSend = sendQueueRef.current
       .catch(() => {})
-      .then(() => sendMessageNow(text, imageData, replyTo))
+      .then(() => sendMessageNow(text, imageData, replyTo, media))
 
     sendQueueRef.current = queuedSend.catch(() => {})
     return queuedSend

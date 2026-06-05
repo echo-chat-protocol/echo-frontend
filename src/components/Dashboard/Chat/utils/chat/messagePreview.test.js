@@ -34,4 +34,13 @@ describe('getMessagePreview', () => {
     expect(getMessagePreview({})).toBe('')
     expect(getMessagePreview({ text: null, image: null })).toBe('')
   })
+
+  it('marks a video message and prefers its caption', () => {
+    expect(getMessagePreview({ video: { mediaId: 'm1' } })).toBe('🎥 Video')
+    expect(getMessagePreview({ video: { mediaId: 'm1' }, text: 'my clip' })).toBe('🎥 my clip')
+  })
+
+  it('treats video as higher priority than an image field', () => {
+    expect(getMessagePreview({ video: { mediaId: 'm1' }, image: 'x.png' })).toBe('🎥 Video')
+  })
 })

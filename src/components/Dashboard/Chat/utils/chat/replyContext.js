@@ -15,7 +15,7 @@ const mediaKind = (image) => {
 // Build the embeddable reply context from a full (already-decrypted) message.
 export const buildReplyContext = (message) => {
   if (!message) return null
-  const kind = mediaKind(message.image) || 'text'
+  const kind = message.video ? 'video' : mediaKind(message.image) || 'text'
   const rawText = typeof message.text === 'string' ? message.text : ''
   const text =
     rawText.length > REPLY_SNIPPET_MAX ? `${rawText.slice(0, REPLY_SNIPPET_MAX)}…` : rawText
@@ -34,5 +34,6 @@ export const replyPreviewText = (replyTo) => {
   if (replyTo.text) return replyTo.text
   if (replyTo.kind === 'gif') return '🎞️ GIF'
   if (replyTo.kind === 'image') return '📷 Photo'
+  if (replyTo.kind === 'video') return '🎥 Video'
   return ''
 }

@@ -5,12 +5,16 @@
  * a 📷 with the caption when present, or "Photo" when not. GIFs (sent via the
  * media picker) keep their own marker when uncaptioned.
  *
- * @param {{ text?: string, image?: string|null }} [message]
+ * @param {{ text?: string, image?: string|null, video?: object|null }} [message]
  * @returns {string}
  */
 export const getMessagePreview = (message) => {
   const caption = typeof message?.text === 'string' ? message.text.trim() : ''
   const image = message?.image
+
+  if (message?.video) {
+    return caption ? `🎥 ${caption}` : '🎥 Video'
+  }
 
   if (image) {
     if (caption) return `📷 ${caption}`

@@ -5,6 +5,7 @@ import { format, isSameDay } from 'date-fns'
 import { es } from 'date-fns/locale'
 import CallEventMessage from './CallEventMessage'
 import ImageLightbox from './ImageLightbox'
+import VideoMessage from './VideoMessage'
 import { receiptState, RECEIPT_STATE } from '../utils/chat/readReceipts'
 import { replyPreviewText } from '../utils/chat/replyContext'
 import {
@@ -172,13 +173,15 @@ function MessageBubble({
   // layout. Re-anchor to the bottom on load — but only when the user was still
   // pinned near the bottom, so we don't yank them up while reading history.
   // Works for both the DM and group lists, which share `.messages-container`.
-  const handleImageLoad = (e) => {
-    const container = e.currentTarget.closest('.messages-container')
+  const anchorBottomIfNear = (container) => {
     if (!container) return
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
     if (distanceFromBottom <= 600) {
       container.scrollTop = container.scrollHeight
     }
+  }
+  const handleImageLoad = (e) => {
+    anchorBottomIfNear(e.currentTarget.closest('.messages-container'))
   }
 
   return (
@@ -255,7 +258,36 @@ function MessageBubble({
           </span>
         ) : null}
 
-        {message.image ? (
+        {message.video ? (
+          <div
+            className={`group/bubble relative w-full overflow-hidden rounded-2xl border ${
+              tintedBubbleStyle ? '' : isSelf ? 'border-violet-500/30' : 'border-white/[0.07]'
+            } bg-black/40`}
+            style={tintedBubbleStyle ? { borderColor: userBorderColor(message.userId) } : undefined}
+          >
+            {message.replyTo && (
+              <div className='px-2 pt-2'>
+                <ReplyQuote
+                  replyTo={message.replyTo}
+                  accent={colorizeSenders ? userColorName(message.replyTo.userId) : null}
+                  onClick={() => onQuoteClick?.(message.replyTo.id)}
+                />
+              </div>
+            )}
+            <VideoMessage video={message.video} />
+            <div className='flex items-center justify-end gap-1 border-t border-white/[0.06] bg-black/50 px-3 py-2'>
+              {message.text ? (
+                <div className='min-w-0 flex-1 text-[12px] text-white/80'>
+                  {renderMessageContent(message.text)}
+                </div>
+              ) : null}
+              <span className='ml-2 inline-flex shrink-0 items-center gap-1 text-[10px] text-white/35 mono'>
+                {time}
+                {isSelf && <State message={message} />}
+              </span>
+            </div>
+          </div>
+        ) : message.image ? (
           <div
             className={`group/bubble relative w-full overflow-hidden rounded-2xl border ${
               tintedBubbleStyle ? '' : isSelf ? 'border-violet-500/30' : 'border-white/[0.07]'

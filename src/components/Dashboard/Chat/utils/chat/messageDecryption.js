@@ -505,8 +505,16 @@ export const decryptIncomingMessage = async (
       text: decryptedPayload.text,
       image: decryptedPayload.image,
     }
-    // Only attach replyTo when present so plain messages keep their prior shape.
+    // Only attach replyTo/video when present so plain messages keep their prior shape.
     if (decryptedPayload.replyTo) decryptedMessage.replyTo = decryptedPayload.replyTo
+    if (decryptedPayload.video) {
+      decryptedMessage.video = decryptedPayload.video
+      // Eagerly download + decrypt + cache the blob locally on receipt, so
+      // opening it later is instant and offline. Fire-and-forget, decoupled.
+      import('../crypto/mediaCache')
+        .then((m) => m.prefetchMedia(decryptedPayload.video))
+        .catch(() => {})
+    }
 
     // Commit ratchet state only after successful decrypt (prevents desync on tampered ciphertext).
     for (const action of postDecryptActions) {

@@ -1,8 +1,21 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import PropTypes from 'prop-types'
-import { Plus, Smile, Keyboard, Send, X, Reply } from 'lucide-react'
+import {
+  Plus,
+  Smile,
+  Keyboard,
+  Send,
+  X,
+  Reply,
+  Film,
+  Loader2,
+  Image as ImageIcon,
+} from 'lucide-react'
 import { compressImage } from '../utils/imageUtils'
+import { extractVideoPoster, fileToBytes, MAX_VIDEO_BYTES } from '../utils/videoUtils'
+import { encryptMediaBlob } from '../utils/crypto/mediaCrypto'
+import MediaService from '@/services/media.service'
 import { getSocket } from '../../../../socket'
 import MediaPanel from './MediaPanel'
 import { replyPreviewText } from '../utils/chat/replyContext'
@@ -28,7 +41,20 @@ const SendText = ({
   const [imageText, setImageText] = useState('')
   const [panelOpen, setPanelOpen] = useState(false)
   const [panelTab, setPanelTab] = useState('emoji')
+  // ── Encrypted video attachment state ──
+  const [videoFile, setVideoFile] = useState(null)
+  const [videoObjUrl, setVideoObjUrl] = useState(null)
+  const [videoMeta, setVideoMeta] = useState(null) // { thumbnail, durationMs, width, height }
+  const [showVideoModal, setShowVideoModal] = useState(false)
+  const [videoCaption, setVideoCaption] = useState('')
+  const [videoSending, setVideoSending] = useState(false)
+  const [videoError, setVideoError] = useState('')
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false)
+  const [attachMenuPos, setAttachMenuPos] = useState({ left: 0, bottom: 0 })
   const fileInputRef = useRef(null)
+  const videoInputRef = useRef(null)
+  const attachBtnRef = useRef(null)
+  const attachMenuRef = useRef(null)
   const inputRef = useRef(null)
   const caretRef = useRef(null)
   const typingTimeoutRef = useRef(null)
@@ -71,6 +97,50 @@ const SendText = ({
   useEffect(() => {
     if (replyTo) inputRef.current?.focus()
   }, [replyTo])
+
+  // Revoke any pending video preview object URL on unmount to avoid a leak.
+  useEffect(() => {
+    return () => {
+      if (videoObjUrl) URL.revokeObjectURL(videoObjUrl)
+    }
+  }, [videoObjUrl])
+
+  // Close the attach (+) popover on outside click or Escape. The menu is
+  // portaled to <body>, so "inside" means inside the button OR the portaled menu.
+  useEffect(() => {
+    if (!attachMenuOpen) return undefined
+    const onDocClick = (e) => {
+      const inBtn = attachBtnRef.current?.contains(e.target)
+      const inMenu = attachMenuRef.current?.contains(e.target)
+      if (!inBtn && !inMenu) setAttachMenuOpen(false)
+    }
+    const onKey = (e) => {
+      if (e.key === 'Escape') setAttachMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [attachMenuOpen])
+
+  // Toggle the attach popover, measuring the + button so the portaled menu pops
+  // up from it (anchored to its top-left), never the middle of the screen.
+  const toggleAttachMenu = () => {
+    if (disabled) return
+    setAttachMenuOpen((open) => {
+      if (open) return false
+      const r = attachBtnRef.current?.getBoundingClientRect()
+      if (r) {
+        setAttachMenuPos({
+          left: Math.round(r.left),
+          bottom: Math.round(window.innerHeight - r.top + 8),
+        })
+      }
+      return true
+    })
+  }
 
   const handleChange = (e) => {
     setValue(e.target.value)
@@ -141,6 +211,84 @@ const SendText = ({
     setSelectedImage(null)
     setImagePreview(null)
     setImageText('')
+  }
+
+  // ── Encrypted video flow ────────────────────────────────────────────────────
+  const handleVideoClick = () => {
+    if (disabled) return
+    videoInputRef.current?.click()
+  }
+
+  const handleVideoChange = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-selecting the same file
+    if (!file) return
+    if (!file.type.startsWith('video/')) {
+      setVideoError('Please choose a video file.')
+      return
+    }
+    if (file.size > MAX_VIDEO_BYTES) {
+      setVideoError(`Video is too large (max ${Math.round(MAX_VIDEO_BYTES / (1024 * 1024))} MB).`)
+      return
+    }
+    setVideoError('')
+    setVideoCaption('')
+    setVideoFile(file)
+    setVideoObjUrl(URL.createObjectURL(file))
+    setShowVideoModal(true)
+    // Poster + metadata for the bubble (best-effort; null thumbnail is fine).
+    try {
+      const meta = await extractVideoPoster(file)
+      setVideoMeta(meta)
+    } catch {
+      setVideoMeta({ thumbnail: null, durationMs: 0, width: 0, height: 0 })
+    }
+  }
+
+  const handleCloseVideoModal = () => {
+    if (videoSending) return
+    setShowVideoModal(false)
+    setVideoFile(null)
+    setVideoMeta(null)
+    setVideoCaption('')
+    setVideoError('')
+    if (videoObjUrl) URL.revokeObjectURL(videoObjUrl)
+    setVideoObjUrl(null)
+  }
+
+  const handleVideoSend = async () => {
+    if (disabled || !videoFile || videoSending) return
+    const reply = replyTo
+    setVideoSending(true)
+    setVideoError('')
+    try {
+      // 1. Encrypt the bytes with a fresh per-message key (K never leaves here
+      //    except inside the E2EE message payload). 2. Upload the opaque
+      //    ciphertext. 3. Send a tiny descriptor through the encrypted channel.
+      const bytes = await fileToBytes(videoFile)
+      const { ciphertext, keyB64, scheme, chunkSize, size } = await encryptMediaBlob(bytes)
+      const { mediaId } = await MediaService.upload(ciphertext)
+      const descriptor = {
+        mediaId,
+        keyB64,
+        scheme,
+        chunkSize,
+        size,
+        mime: videoFile.type || 'video/mp4',
+        durationMs: videoMeta?.durationMs ?? 0,
+        width: videoMeta?.width ?? 0,
+        height: videoMeta?.height ?? 0,
+        thumbnail: videoMeta?.thumbnail ?? null,
+      }
+      await Promise.resolve(sendMessage(videoCaption.trim(), null, reply, { video: descriptor }))
+      onCancelReply?.()
+      handleCloseVideoModal()
+    } catch (err) {
+      console.error('[SendText] Failed to send video:', err)
+      setVideoError(err?.message || 'Failed to send video.')
+    } finally {
+      setVideoSending(false)
+    }
   }
 
   // ── Emoji / GIF / sticker panel ───────────────────────────────────────────────
@@ -240,7 +388,7 @@ const SendText = ({
           document.body
         )}
 
-      {/* Hidden file input */}
+      {/* Hidden file inputs */}
       <input
         type='file'
         ref={fileInputRef}
@@ -248,6 +396,78 @@ const SendText = ({
         accept='image/*'
         className='hidden'
       />
+      <input
+        type='file'
+        ref={videoInputRef}
+        onChange={handleVideoChange}
+        accept='video/*'
+        className='hidden'
+      />
+
+      {/* Encrypted video preview modal — portaled like the image modal so it
+          escapes the composer's backdrop-blur containing block. */}
+      {showVideoModal &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className='fixed inset-0 z-[80] grid place-items-center bg-black/70 backdrop-blur-sm'
+            onClick={handleCloseVideoModal}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className='relative mx-3 w-full max-w-md overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0a0a0e] p-5'
+            >
+              <button
+                onClick={handleCloseVideoModal}
+                aria-label='Close'
+                disabled={videoSending}
+                className='absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-lg text-white/55 hover:bg-white/[0.04] hover:text-white disabled:opacity-40'
+              >
+                <X size={14} />
+              </button>
+              {videoObjUrl && (
+                <video
+                  src={videoObjUrl}
+                  poster={videoMeta?.thumbnail || undefined}
+                  controls
+                  playsInline
+                  className='mx-auto mb-4 max-h-64 w-full rounded-xl bg-black object-contain'
+                />
+              )}
+              <input
+                type='text'
+                value={videoCaption}
+                onChange={(e) => setVideoCaption(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleVideoSend()}
+                placeholder='Add a caption…'
+                disabled={videoSending}
+                className='echo-input mb-3 w-full rounded-xl px-3.5 py-2.5 text-[13px] echo-focus-ring disabled:opacity-50'
+              />
+              {videoError && (
+                <div className='mb-3 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[12px] text-red-200'>
+                  {videoError}
+                </div>
+              )}
+              <button
+                onClick={handleVideoSend}
+                disabled={videoSending}
+                className='echo-cta flex w-full items-center justify-center gap-2 rounded-full py-2.5 text-[13px] font-medium disabled:opacity-60'
+              >
+                {videoSending ? (
+                  <>
+                    <Loader2 size={14} className='animate-spin' /> Encrypting &amp; uploading…
+                  </>
+                ) : (
+                  'Send Video'
+                )}
+              </button>
+              <p className='mt-2 text-center text-[10.5px] text-white/30 mono'>
+                End-to-end encrypted · key never leaves your device
+              </p>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* Reply preview bar — shown above the composer while replying. */}
       {replyTo && (
@@ -280,15 +500,65 @@ const SendText = ({
         }`}
       >
         <button
+          ref={attachBtnRef}
           data-testid='msg-attach'
           type='button'
-          title='Attach image'
-          onClick={handleImageClick}
+          title='Attach'
+          aria-haspopup='menu'
+          aria-expanded={attachMenuOpen ? 'true' : 'false'}
+          onClick={toggleAttachMenu}
           disabled={disabled}
-          className='grid h-11 w-11 shrink-0 place-items-center rounded-full text-white/55 transition hover:bg-white/[0.04] hover:text-white disabled:opacity-40 md:h-9 md:w-9'
+          className={`grid h-11 w-11 shrink-0 place-items-center rounded-full transition hover:bg-white/[0.04] hover:text-white disabled:opacity-40 md:h-9 md:w-9 ${
+            attachMenuOpen ? 'text-violet-300' : 'text-white/55'
+          }`}
         >
-          <Plus size={17} />
+          <Plus
+            size={17}
+            className={`transition-transform duration-200 ${attachMenuOpen ? 'rotate-45' : ''}`}
+          />
         </button>
+
+        {/* Attach popover — portaled to <body> (the composer sits under
+            backdrop-filter/overflow ancestors that would clip or mis-stack an
+            absolutely-positioned menu) and fixed-anchored just above the +. */}
+        {attachMenuOpen &&
+          typeof document !== 'undefined' &&
+          createPortal(
+            <div
+              ref={attachMenuRef}
+              role='menu'
+              style={{ left: attachMenuPos.left, bottom: attachMenuPos.bottom }}
+              className='fixed z-[85] w-40 origin-bottom-left overflow-hidden rounded-2xl border border-white/10 bg-[#0d0d12] p-1 shadow-[0_18px_50px_rgba(0,0,0,0.6)] animate-fade-up'
+            >
+              <button
+                role='menuitem'
+                type='button'
+                data-testid='attach-photo'
+                onClick={() => {
+                  setAttachMenuOpen(false)
+                  handleImageClick()
+                }}
+                className='flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] text-white/85 transition hover:bg-white/[0.06]'
+              >
+                <ImageIcon size={16} className='text-violet-300' />
+                Photo
+              </button>
+              <button
+                role='menuitem'
+                type='button'
+                data-testid='attach-video'
+                onClick={() => {
+                  setAttachMenuOpen(false)
+                  handleVideoClick()
+                }}
+                className='flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] text-white/85 transition hover:bg-white/[0.06]'
+              >
+                <Film size={16} className='text-violet-300' />
+                Video
+              </button>
+            </div>,
+            document.body
+          )}
 
         <button
           data-testid='msg-emoji'

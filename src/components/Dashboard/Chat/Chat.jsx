@@ -308,6 +308,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
                   targetUserId: senderUserId,
                   text: decrypted.text ?? '',
                   image: decrypted.image ?? null,
+                  video: decrypted.video ?? null,
                   direction: 'incoming',
                   messageId: decrypted._id,
                   createdAt: decrypted.createdAt,
@@ -432,10 +433,13 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
     }
   }, [activeChat, contact, privateKeyArray, socket, targetUserId, userId])
 
-  const sendMessageNow = async (text, imageData = null, replyTo = null) => {
+  const sendMessageNow = async (text, imageData = null, replyTo = null, media = null) => {
     if (sendBlocked) {
       throw new Error(sendBlockedReason || 'Sending is blocked')
     }
+    // `media.video` is an already-encrypted-and-uploaded blob descriptor
+    // (built by the composer). It rides inside the E2EE payload like text/image.
+    const videoData = media?.video ?? null
 
     const ensurePrivateKey = async () => {
       if (privateKeyArray instanceof Uint8Array) return privateKeyArray
@@ -491,6 +495,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
       username,
       text: text || '',
       image: imageData || null,
+      video: videoData || null,
       replyTo: replyTo || null,
       seenStatus: false,
       createdAt,
@@ -572,6 +577,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
         outgoing = await encryptOutgoingMessage({
           text,
           imageData,
+          video: videoData,
           userId,
           targetUserId,
           username,
@@ -609,6 +615,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
         targetUserId,
         text: outgoingMsg.text,
         image: outgoingMsg.image,
+        video: outgoingMsg.video,
         direction: 'outgoing',
         messageId: outgoingMsg._id,
         createdAt: outgoingMsg.createdAt,
@@ -631,6 +638,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
         outgoing = await encryptOutgoingMessage({
           text,
           imageData,
+          video: videoData,
           userId,
           targetUserId,
           username,
@@ -691,10 +699,10 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
     return
   }
 
-  const sendMessage = (text, imageData = null, replyTo = null) => {
+  const sendMessage = (text, imageData = null, replyTo = null, media = null) => {
     const queuedSend = sendQueueRef.current
       .catch(() => {})
-      .then(() => sendMessageNow(text, imageData, replyTo))
+      .then(() => sendMessageNow(text, imageData, replyTo, media))
 
     sendQueueRef.current = queuedSend.catch(() => {
       // The send threw after the optimistic bubble was rendered — flip it to

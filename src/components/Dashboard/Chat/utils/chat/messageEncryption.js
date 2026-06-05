@@ -49,6 +49,10 @@ const ensureSocketConnected = async (socket, timeoutMs = 15_000) => {
 export const encryptOutgoingMessage = async ({
   text,
   imageData = null,
+  // Encrypted-blob descriptor { mediaId, keyB64, thumbnail, ... } for video
+  // attachments. The decryption key rides inside this E2EE payload, so it is
+  // protected by the Double Ratchet exactly like the message text.
+  video = null,
   userId,
   targetUserId,
   username,
@@ -126,6 +130,7 @@ export const encryptOutgoingMessage = async ({
       text: text || '',
       image: imageData || null,
       replyTo: replyTo || null,
+      video: video || null,
     })
 
     const aadBytes = buildAadBytes({
@@ -187,6 +192,7 @@ export const encryptOutgoingMessage = async ({
     text: text || '',
     image: imageData || null,
     replyTo: replyTo || null,
+    video: video || null,
   })
 
   const aadBytes = buildAadBytes({
