@@ -26,6 +26,12 @@ describe('reply context — media kinds', () => {
     expect(replyPreviewText(ctx)).toBe('my clip')
   })
 
+  it('tags a voice message as kind "audio" with the mic emoji', () => {
+    const ctx = buildReplyContext({ _id: 'm3', userId: 'u1', audio: { mediaId: 'a1' } })
+    expect(ctx.kind).toBe('audio')
+    expect(replyPreviewText(ctx)).toBe('🎤 Voice message')
+  })
+
   it('still tags image/gif/text correctly', () => {
     expect(buildReplyContext({ image: 'x.png' }).kind).toBe('image')
     expect(buildReplyContext({ image: 'cat.gif' }).kind).toBe('gif')

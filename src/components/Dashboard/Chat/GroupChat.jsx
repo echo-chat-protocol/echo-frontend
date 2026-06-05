@@ -1556,9 +1556,10 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
       throw new Error('You are no longer a member of this group')
     }
 
-    // Encrypted-blob video descriptor (built by the composer). Carried inside
-    // the MLS application plaintext so its key stays end-to-end encrypted.
+    // Encrypted-blob video/audio descriptors (built by the composer). Carried
+    // inside the MLS application plaintext so their keys stay E2E encrypted.
     const videoData = media?.video ?? null
+    const audioData = media?.audio ?? null
     const currentMeta = groupMetaRef.current
 
     if (currentMeta?.mlsEnabled) {
@@ -1683,6 +1684,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           image: imageData,
           replyTo,
           video: videoData,
+          audio: audioData,
         }),
       })
       const pendingOutgoingMessage = {
@@ -1696,6 +1698,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
         text,
         image: imageData ?? null,
         video: videoData ?? null,
+        audio: audioData ?? null,
         replyTo: replyTo ?? null,
       })
 
@@ -1705,7 +1708,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
           {
             groupId: activeGroupId,
             nonce: encrypted.nonceB64,
-            messageType: videoData ? 'video' : imageData ? 'image' : 'text',
+            messageType: audioData ? 'audio' : videoData ? 'video' : imageData ? 'image' : 'text',
             contentType: 'application',
             encryptedSenderDataB64: encrypted.encryptedSenderDataB64 ?? null,
             headerB64: encrypted.headerB64,
@@ -1725,6 +1728,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                 text,
                 image: imageData ?? null,
                 video: videoData ?? null,
+                audio: audioData ?? null,
                 replyTo: replyTo ?? null,
                 messageId: ack.messageId,
                 createdAt: ack.createdAt,
@@ -1770,6 +1774,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                       image: imageData,
                       replyTo,
                       video: videoData,
+                      audio: audioData,
                     }),
                   })
                   const retryPendingOutgoingMessage = {
@@ -1784,6 +1789,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                     text,
                     image: imageData ?? null,
                     video: videoData ?? null,
+                    audio: audioData ?? null,
                     replyTo: replyTo ?? null,
                   })
                   socket.emit(
@@ -1791,7 +1797,13 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                     {
                       groupId: activeGroupId,
                       nonce: retried.nonceB64,
-                      messageType: videoData ? 'video' : imageData ? 'image' : 'text',
+                      messageType: audioData
+                        ? 'audio'
+                        : videoData
+                          ? 'video'
+                          : imageData
+                            ? 'image'
+                            : 'text',
                       contentType: 'application',
                       encryptedSenderDataB64: retried.encryptedSenderDataB64 ?? null,
                       headerB64: retried.headerB64,
@@ -1813,6 +1825,7 @@ const GroupChat = ({ activeGroupId, userId, username, currentWallpaper, removedI
                           text,
                           image: imageData ?? null,
                           video: videoData ?? null,
+                          audio: audioData ?? null,
                           replyTo: replyTo ?? null,
                           messageId: ack2.messageId,
                           createdAt: ack2.createdAt,

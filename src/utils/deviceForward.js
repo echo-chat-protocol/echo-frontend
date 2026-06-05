@@ -145,6 +145,7 @@ export async function forwardMessageToDevices({
   text,
   image,
   video = null,
+  audio = null,
   direction, // 'outgoing' | 'incoming'
   messageId,
   createdAt,
@@ -162,6 +163,7 @@ export async function forwardMessageToDevices({
       text: text ?? '',
       image: image ?? null,
       video: video ?? null,
+      audio: audio ?? null,
       userId,
       targetUserId,
       direction,
@@ -214,6 +216,7 @@ export async function forwardGroupMessageToPairedDevices({
   text,
   image = null,
   video = null,
+  audio = null,
   replyTo = null,
   messageId,
   createdAt,
@@ -256,6 +259,7 @@ export async function forwardGroupMessageToPairedDevices({
       text: text ?? '',
       image: image ?? null,
       video: video ?? null,
+      audio: audio ?? null,
       replyTo: replyTo ?? null,
       _id: id,
       createdAt: timestamp,
@@ -483,6 +487,7 @@ export async function processRawDeviceEnvelope(userId, rawEnvelope) {
     }
     if (payload.replyTo) message.replyTo = payload.replyTo
     if (payload.video) message.video = payload.video
+    if (payload.audio) message.audio = payload.audio
     await updateSavedMessages(userId, `group:${gid}`, message, null)
 
     window.dispatchEvent(
@@ -501,6 +506,7 @@ export async function processRawDeviceEnvelope(userId, rawEnvelope) {
     text: payload.text ?? '',
     image: payload.image ?? null,
     video: payload.video ?? null,
+    audio: payload.audio ?? null,
     createdAt: payload.createdAt || new Date().toISOString(),
     seenStatus: payload.seenStatus ?? false,
     username: payload.username ?? '',

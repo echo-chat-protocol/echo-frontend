@@ -53,6 +53,8 @@ export const encryptOutgoingMessage = async ({
   // attachments. The decryption key rides inside this E2EE payload, so it is
   // protected by the Double Ratchet exactly like the message text.
   video = null,
+  // Same encrypted-blob descriptor for voice notes (audio).
+  audio = null,
   userId,
   targetUserId,
   username,
@@ -131,6 +133,7 @@ export const encryptOutgoingMessage = async ({
       image: imageData || null,
       replyTo: replyTo || null,
       video: video || null,
+      audio: audio || null,
     })
 
     const aadBytes = buildAadBytes({
@@ -193,6 +196,7 @@ export const encryptOutgoingMessage = async ({
     image: imageData || null,
     replyTo: replyTo || null,
     video: video || null,
+    audio: audio || null,
   })
 
   const aadBytes = buildAadBytes({

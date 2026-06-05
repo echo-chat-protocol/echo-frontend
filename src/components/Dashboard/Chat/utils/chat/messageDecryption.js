@@ -515,6 +515,12 @@ export const decryptIncomingMessage = async (
         .then((m) => m.prefetchMedia(decryptedPayload.video))
         .catch(() => {})
     }
+    if (decryptedPayload.audio) {
+      decryptedMessage.audio = decryptedPayload.audio
+      import('../crypto/mediaCache')
+        .then((m) => m.prefetchMedia(decryptedPayload.audio))
+        .catch(() => {})
+    }
 
     // Commit ratchet state only after successful decrypt (prevents desync on tampered ciphertext).
     for (const action of postDecryptActions) {

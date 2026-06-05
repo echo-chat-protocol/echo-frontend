@@ -18,8 +18,14 @@ const getGroupCacheId = (groupId) => `${GROUP_CACHE_PREFIX}${groupId}`
  * the DM payload shape. `image` is a data URL (compressed upload) or a remote
  * GIF/sticker URL.
  */
-export function encodeGroupMessagePayload({ text, image = null, replyTo = null, video = null }) {
-  if (image || replyTo || video) {
+export function encodeGroupMessagePayload({
+  text,
+  image = null,
+  replyTo = null,
+  video = null,
+  audio = null,
+}) {
+  if (image || replyTo || video || audio) {
     // Keep the historical { text, image } byte-shape unchanged when there's no
     // reply/video, so existing clients and vectors are unaffected; only add
     // `replyTo`/`video` when present. `video` is an encrypted-blob descriptor
@@ -28,6 +34,7 @@ export function encodeGroupMessagePayload({ text, image = null, replyTo = null, 
     const payload = { text: text || '', image: image || null }
     if (replyTo) payload.replyTo = replyTo
     if (video) payload.video = video
+    if (audio) payload.audio = audio
     return TEXT_ENCODER.encode(JSON.stringify(payload))
   }
   return TEXT_ENCODER.encode(text || '')
@@ -42,16 +49,21 @@ export function decodeGroupMessagePayload(plaintextBytes) {
       parsed &&
       typeof parsed === 'object' &&
       !Array.isArray(parsed) &&
-      ('text' in parsed || 'image' in parsed || 'replyTo' in parsed || 'video' in parsed)
+      ('text' in parsed ||
+        'image' in parsed ||
+        'replyTo' in parsed ||
+        'video' in parsed ||
+        'audio' in parsed)
     ) {
       const decoded = {
         text: typeof parsed.text === 'string' ? parsed.text : '',
         image: parsed.image ?? null,
       }
-      // Only surface replyTo/video when present, so non-reply messages keep
-      // their historical { text, image } shape.
+      // Only surface replyTo/video/audio when present, so non-reply messages
+      // keep their historical { text, image } shape.
       if (parsed.replyTo) decoded.replyTo = parsed.replyTo
       if (parsed.video) decoded.video = parsed.video
+      if (parsed.audio) decoded.audio = parsed.audio
       return decoded
     }
   } catch {
@@ -85,6 +97,7 @@ export async function decryptIncomingGroupMessage({
   let image = null
   let replyTo = null
   let video = null
+  let audio = null
   let nextState = currentState
 
   // Item #3: accept messages framed with encrypted sender data (preferred) or legacy
@@ -109,6 +122,7 @@ export async function decryptIncomingGroupMessage({
       image = pendingPlaintext.image ?? null
       replyTo = pendingPlaintext.replyTo ?? null
       video = pendingPlaintext.video ?? null
+      audio = pendingPlaintext.audio ?? null
     } else {
       const localState = currentState ?? (await loadGroupState(groupId))
       if (!localState) {
@@ -131,6 +145,7 @@ export async function decryptIncomingGroupMessage({
       image = payload.image
       replyTo = payload.replyTo ?? null
       video = payload.video ?? null
+      audio = payload.audio ?? null
 
       if (nextState && nextState !== localState) {
         nextState = await saveGroupState(groupId, nextState)
@@ -154,6 +169,10 @@ export async function decryptIncomingGroupMessage({
     // Eagerly cache the decrypted blob locally on receipt (fire-and-forget) so
     // opening it later needs no network fetch or re-decrypt.
     import('../crypto/mediaCache').then((m) => m.prefetchMedia(video)).catch(() => {})
+  }
+  if (audio) {
+    formattedMessage.audio = audio
+    import('../crypto/mediaCache').then((m) => m.prefetchMedia(audio)).catch(() => {})
   }
 
   await updateSavedMessages(userId, getGroupCacheId(groupId), formattedMessage, setMessages)

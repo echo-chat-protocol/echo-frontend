@@ -16,6 +16,10 @@ export const getMessagePreview = (message) => {
     return caption ? `🎥 ${caption}` : '🎥 Video'
   }
 
+  if (message?.audio) {
+    return '🎤 Voice message'
+  }
+
   if (image) {
     if (caption) return `📷 ${caption}`
     const isGif =

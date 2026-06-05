@@ -1,9 +1,22 @@
 import { BASE_URL, tokenStorage, ApiError, refreshAccessToken } from './api'
 
+const MEDIA_FETCH_TIMEOUT_MS = 20_000
+
+function timeoutSignal(timeoutMs = MEDIA_FETCH_TIMEOUT_MS) {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(timeoutMs)
+  }
+  if (typeof AbortController === 'undefined') return undefined
+  const controller = new AbortController()
+  setTimeout(() => controller.abort(), timeoutMs)
+  return controller.signal
+}
+
 async function authedFetch(path, options, retry = false) {
   const token = tokenStorage.getAccess()
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
+    signal: options.signal || timeoutSignal(),
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,

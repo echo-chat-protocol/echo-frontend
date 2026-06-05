@@ -11,10 +11,15 @@ import {
   Film,
   Loader2,
   Image as ImageIcon,
+  Mic,
+  Trash2,
+  Lock,
 } from 'lucide-react'
 import { compressImage } from '../utils/imageUtils'
 import { extractVideoPoster, fileToBytes, MAX_VIDEO_BYTES } from '../utils/videoUtils'
 import { encryptMediaBlob } from '../utils/crypto/mediaCrypto'
+import { cacheMediaBlob } from '../utils/crypto/mediaCache'
+import { useAudioRecorder } from './useAudioRecorder'
 import MediaService from '@/services/media.service'
 import { getSocket } from '../../../../socket'
 import MediaPanel from './MediaPanel'
@@ -289,6 +294,135 @@ const SendText = ({
     } finally {
       setVideoSending(false)
     }
+  }
+
+  // ── Voice-note flow ─────────────────────────────────────────────────────────
+  // Desktop: click mic to start, click stop to send.
+  // Mobile: press-and-hold (release to send), or double-tap to lock hands-free
+  // (then tap stop to send). A trash button discards. < ~0.8s is ignored.
+  const HOLD_MIN_MS = 350
+  const DBLTAP_MS = 400
+  const VOICE_MIN_MS = 800
+  const recorder = useAudioRecorder()
+  const [recordLocked, setRecordLocked] = useState(false)
+  const [audioSending, setAudioSending] = useState(false)
+  const [audioError, setAudioError] = useState('')
+  const lockedRef = useRef(false)
+  const justLockedRef = useRef(false)
+  const isTouchRef = useRef(false)
+  const downAtRef = useRef(0)
+  const tapTimerRef = useRef(null)
+
+  const setLocked = (v) => {
+    lockedRef.current = v
+    setRecordLocked(v)
+  }
+
+  const sendAudio = async ({ blob, mime, durationMs }) => {
+    const reply = replyTo
+    setAudioError('')
+    setAudioSending(true)
+    try {
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      const { ciphertext, keyB64, scheme, chunkSize, size } = await encryptMediaBlob(bytes.slice())
+      const { mediaId } = await MediaService.upload(ciphertext)
+      const descriptor = { mediaId, keyB64, scheme, chunkSize, size, mime, durationMs }
+      // Cache the ORIGINAL recorded bytes (never handed to the encryptor), so
+      // the sender's own bubble replays the exact, definitely-playable blob.
+      cacheMediaBlob(descriptor, bytes).catch(() => {})
+      await Promise.resolve(sendMessage('', null, reply, { audio: descriptor }))
+      onCancelReply?.()
+    } catch (err) {
+      console.error('[SendText] Failed to send voice message:', err)
+      setAudioError(err?.message || 'Failed to send voice message.')
+    } finally {
+      setAudioSending(false)
+    }
+  }
+
+  const clearTapTimer = () => {
+    if (tapTimerRef.current) {
+      clearTimeout(tapTimerRef.current)
+      tapTimerRef.current = null
+    }
+  }
+
+  const beginRecording = async () => {
+    setAudioError('')
+    const ok = await recorder.start()
+    if (!ok) setLocked(false)
+  }
+
+  const finishAndSend = async () => {
+    clearTapTimer()
+    setLocked(false)
+    const res = await recorder.stop()
+    if (!res?.blob) return
+    if (res.durationMs < VOICE_MIN_MS) {
+      setAudioError('Voice message is too short.')
+      return
+    }
+    await sendAudio(res)
+  }
+
+  const discardRecording = () => {
+    clearTapTimer()
+    setLocked(false)
+    setAudioError('')
+    recorder.cancel()
+  }
+
+  const onMicPointerDown = (e) => {
+    if (disabled || audioSending) return
+    isTouchRef.current = e.pointerType === 'touch'
+    downAtRef.current = Date.now()
+    if (!isTouchRef.current) return // desktop handled by click
+    // Keep receiving pointer events even if the finger slides off the button.
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId)
+    } catch {
+      /* ignore */
+    }
+    if (lockedRef.current) return // already hands-free; this tap sends on release
+    if (tapTimerRef.current) {
+      // second tap of a double-tap → lock the in-progress recording hands-free
+      clearTapTimer()
+      justLockedRef.current = true
+      setLocked(true)
+      return
+    }
+    if (!recorder.recording) beginRecording()
+  }
+
+  const onMicPointerUp = () => {
+    if (!isTouchRef.current) return
+    if (lockedRef.current) {
+      // The release that *set* the lock must not also send; any later tap does.
+      if (justLockedRef.current) {
+        justLockedRef.current = false
+        return
+      }
+      finishAndSend()
+      return
+    }
+    const held = Date.now() - downAtRef.current
+    if (held >= HOLD_MIN_MS) {
+      finishAndSend() // press-and-hold release → send
+    } else {
+      // quick tap: wait for a possible second tap to lock; otherwise discard
+      clearTapTimer()
+      tapTimerRef.current = setTimeout(() => {
+        tapTimerRef.current = null
+        if (!lockedRef.current) discardRecording()
+      }, DBLTAP_MS)
+    }
+  }
+
+  const onMicClick = () => {
+    if (isTouchRef.current) return // touch handled via pointer events
+    if (disabled || audioSending) return
+    if (recorder.recording) finishAndSend()
+    else beginRecording()
   }
 
   // ── Emoji / GIF / sticker panel ───────────────────────────────────────────────
@@ -573,31 +707,94 @@ const SendText = ({
           {panelOpen ? <Keyboard size={18} /> : <Smile size={18} />}
         </button>
 
-        <input
-          ref={inputRef}
-          data-testid='chat-input'
-          value={value}
-          onChange={handleChange}
-          onFocus={handleInputFocus}
-          onBlur={() => setFocused(false)}
-          onSelect={trackCaret}
-          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), submit())}
-          placeholder={disabled ? disabledReason || 'Sending is disabled...' : 'Message...'}
-          disabled={disabled}
-          className='min-w-0 flex-1 bg-transparent px-1 py-2.5 text-[16px] text-white placeholder:text-white/30 focus:outline-none md:px-1.5 md:py-2 md:text-[13.5px]'
-        />
+        {recorder.recording ? (
+          <div className='flex min-w-0 flex-1 items-center gap-2 px-1'>
+            <button
+              type='button'
+              onClick={discardRecording}
+              title='Discard'
+              className='grid h-9 w-9 shrink-0 place-items-center rounded-full text-white/55 transition hover:bg-red-500/10 hover:text-red-400'
+            >
+              <Trash2 size={16} />
+            </button>
+            <span className='h-2.5 w-2.5 shrink-0 rounded-full bg-red-500 animate-pulse' />
+            <span className='shrink-0 text-[13px] tabular-nums text-white/85 mono'>
+              {`${Math.floor(recorder.seconds / 60)}:${String(recorder.seconds % 60).padStart(2, '0')}`}
+            </span>
+            {recordLocked ? (
+              <span className='ml-1 inline-flex items-center gap-1 text-[11px] text-violet-300'>
+                <Lock size={12} /> hands-free
+              </span>
+            ) : (
+              <span className='ml-1 truncate text-[11px] text-white/35'>
+                {isTouchRef.current
+                  ? 'Release to send · double-tap to lock'
+                  : 'Recording… click stop to send'}
+              </span>
+            )}
+          </div>
+        ) : (
+          <input
+            ref={inputRef}
+            data-testid='chat-input'
+            value={value}
+            onChange={handleChange}
+            onFocus={handleInputFocus}
+            onBlur={() => setFocused(false)}
+            onSelect={trackCaret}
+            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), submit())}
+            placeholder={disabled ? disabledReason || 'Sending is disabled...' : 'Message...'}
+            disabled={disabled}
+            className='min-w-0 flex-1 bg-transparent px-1 py-2.5 text-[16px] text-white placeholder:text-white/30 focus:outline-none md:px-1.5 md:py-2 md:text-[13.5px]'
+          />
+        )}
 
-        <button
-          data-testid='chat-send'
-          type='button'
-          onClick={submit}
-          disabled={!value.trim() || disabled}
-          title={disabled ? disabledReason || 'Sending is disabled' : 'Send'}
-          className='echo-cta ml-0 grid h-11 w-11 shrink-0 place-items-center rounded-full disabled:opacity-40 disabled:saturate-50 md:ml-1 md:h-10 md:w-10'
-        >
-          <Send size={15} className='text-white' />
-        </button>
+        {value.trim() && !recorder.recording ? (
+          <button
+            data-testid='chat-send'
+            type='button'
+            onClick={submit}
+            disabled={disabled}
+            title={disabled ? disabledReason || 'Sending is disabled' : 'Send'}
+            className='echo-cta ml-0 grid h-11 w-11 shrink-0 place-items-center rounded-full disabled:opacity-40 disabled:saturate-50 md:ml-1 md:h-10 md:w-10'
+          >
+            <Send size={15} className='text-white' />
+          </button>
+        ) : (
+          // ONE persistent button for record/stop so a touch-hold's captured
+          // pointer doesn't lose its target when recording starts (which would
+          // break release-to-send). Mic → start; while recording → send.
+          <button
+            data-testid='chat-mic'
+            type='button'
+            onPointerDown={onMicPointerDown}
+            onPointerUp={onMicPointerUp}
+            onPointerCancel={onMicPointerUp}
+            onClick={onMicClick}
+            disabled={disabled || audioSending}
+            title={recorder.recording ? 'Send voice message' : 'Record voice message'}
+            className={`ml-0 grid h-11 w-11 shrink-0 place-items-center rounded-full disabled:opacity-40 md:ml-1 md:h-10 md:w-10 ${
+              recorder.recording
+                ? 'bg-red-500 text-white shadow-[0_0_0_4px_rgba(239,68,68,0.18)]'
+                : 'echo-cta'
+            }`}
+          >
+            {audioSending ? (
+              <Loader2 size={16} className='animate-spin text-white' />
+            ) : recorder.recording ? (
+              <Send size={15} className='text-white' />
+            ) : (
+              <Mic size={16} className='text-white' />
+            )}
+          </button>
+        )}
       </div>
+
+      {(recorder.error || audioError) && (
+        <div className='mx-2 mt-2 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[12px] text-red-100'>
+          {audioError || recorder.error}
+        </div>
+      )}
 
       {!panelOpen && (
         <div className='mt-2 hidden items-center justify-between px-1 text-[10px] text-white/30 mono md:flex md:px-2'>

@@ -309,6 +309,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
                   text: decrypted.text ?? '',
                   image: decrypted.image ?? null,
                   video: decrypted.video ?? null,
+                  audio: decrypted.audio ?? null,
                   direction: 'incoming',
                   messageId: decrypted._id,
                   createdAt: decrypted.createdAt,
@@ -437,9 +438,11 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
     if (sendBlocked) {
       throw new Error(sendBlockedReason || 'Sending is blocked')
     }
-    // `media.video` is an already-encrypted-and-uploaded blob descriptor
-    // (built by the composer). It rides inside the E2EE payload like text/image.
+    // `media.video`/`media.audio` are already-encrypted-and-uploaded blob
+    // descriptors (built by the composer). They ride inside the E2EE payload
+    // like text/image.
     const videoData = media?.video ?? null
+    const audioData = media?.audio ?? null
 
     const ensurePrivateKey = async () => {
       if (privateKeyArray instanceof Uint8Array) return privateKeyArray
@@ -496,6 +499,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
       text: text || '',
       image: imageData || null,
       video: videoData || null,
+      audio: audioData || null,
       replyTo: replyTo || null,
       seenStatus: false,
       createdAt,
@@ -578,6 +582,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
           text,
           imageData,
           video: videoData,
+          audio: audioData,
           userId,
           targetUserId,
           username,
@@ -616,6 +621,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
         text: outgoingMsg.text,
         image: outgoingMsg.image,
         video: outgoingMsg.video,
+        audio: outgoingMsg.audio,
         direction: 'outgoing',
         messageId: outgoingMsg._id,
         createdAt: outgoingMsg.createdAt,
@@ -639,6 +645,7 @@ function Chat({ token: tokenProp, activeChat, currentWallpaper = 'default', cont
           text,
           imageData,
           video: videoData,
+          audio: audioData,
           userId,
           targetUserId,
           username,

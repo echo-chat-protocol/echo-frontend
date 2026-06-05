@@ -36,4 +36,18 @@ describe('group message payload codec — video', () => {
     expect(decoded).toEqual({ text: 'hi', image: null })
     expect('video' in decoded).toBe(false)
   })
+
+  it('round-trips an audio (voice note) descriptor', () => {
+    const aud = {
+      mediaId: 'aud9',
+      keyB64: 'KK',
+      scheme: 'echo-blob-v1',
+      mime: 'audio/webm',
+      durationMs: 4200,
+    }
+    const bytes = encodeGroupMessagePayload({ text: '', audio: aud })
+    const decoded = decodeGroupMessagePayload(bytes)
+    expect(decoded.audio).toEqual(aud)
+    expect(decoded.image).toBeNull()
+  })
 })

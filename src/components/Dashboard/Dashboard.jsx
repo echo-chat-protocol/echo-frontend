@@ -1142,11 +1142,14 @@ const Dashboard = () => {
           try {
             const img = typeof decrypted?.image === 'string' ? decrypted.image : null
             const video = decrypted?.video ?? null
+            const audio = decrypted?.audio ?? null
             const text = typeof decrypted?.text === 'string' ? decrypted.text.trim() : ''
-            if (text || img || video) {
+            if (text || img || video || audio) {
               const title = message.username || decrypted?.username || `User ${senderId}`
               const isGif = img && (/\.gif($|\?)/i.test(img) || img.startsWith('data:image/gif'))
-              const preview = text || (video ? '🎥 Video' : isGif ? '🎞️ GIF' : '📷 Photo')
+              const preview =
+                text ||
+                (audio ? '🎤 Voice message' : video ? '🎥 Video' : isGif ? '🎞️ GIF' : '📷 Photo')
               // Sender's profile picture as the notification avatar. Prefer the
               // conversation's stored image; otherwise derive from the cached
               // profile (falls back to a generated initials avatar).

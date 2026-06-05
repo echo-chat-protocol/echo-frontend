@@ -6,6 +6,7 @@ import { es } from 'date-fns/locale'
 import CallEventMessage from './CallEventMessage'
 import ImageLightbox from './ImageLightbox'
 import VideoMessage from './VideoMessage'
+import AudioMessage from './AudioMessage'
 import { receiptState, RECEIPT_STATE } from '../utils/chat/readReceipts'
 import { replyPreviewText } from '../utils/chat/replyContext'
 import {
@@ -258,7 +259,29 @@ function MessageBubble({
           </span>
         ) : null}
 
-        {message.video ? (
+        {message.audio ? (
+          <div
+            className={`relative rounded-2xl px-2.5 py-2 ${
+              isSelf ? 'rounded-br-md' : 'rounded-bl-md'
+            } ${tintedBubbleStyle ? 'text-white' : isSelf ? 'bubble-sent' : 'bubble-received'}`}
+            style={tintedBubbleStyle || undefined}
+          >
+            {message.replyTo && (
+              <div className='mb-1'>
+                <ReplyQuote
+                  replyTo={message.replyTo}
+                  accent={colorizeSenders ? userColorName(message.replyTo.userId) : null}
+                  onClick={() => onQuoteClick?.(message.replyTo.id)}
+                />
+              </div>
+            )}
+            <AudioMessage audio={message.audio} isSelf={isSelf} />
+            <div className='mt-0.5 flex items-center justify-end gap-1 pr-1 text-[10px] text-white/35 mono'>
+              {time}
+              {isSelf && <State message={message} />}
+            </div>
+          </div>
+        ) : message.video ? (
           <div
             className={`group/bubble relative w-full overflow-hidden rounded-2xl border ${
               tintedBubbleStyle ? '' : isSelf ? 'border-violet-500/30' : 'border-white/[0.07]'

@@ -43,4 +43,8 @@ describe('getMessagePreview', () => {
   it('treats video as higher priority than an image field', () => {
     expect(getMessagePreview({ video: { mediaId: 'm1' }, image: 'x.png' })).toBe('🎥 Video')
   })
+
+  it('marks a voice message with the mic emoji', () => {
+    expect(getMessagePreview({ audio: { mediaId: 'a1' } })).toBe('🎤 Voice message')
+  })
 })
