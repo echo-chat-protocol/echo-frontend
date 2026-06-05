@@ -285,6 +285,9 @@ const SendText = ({
         height: videoMeta?.height ?? 0,
         thumbnail: videoMeta?.thumbnail ?? null,
       }
+      // Cache the original plaintext bytes locally so the sender can play back
+      // instantly/offline without needing to re-download or decrypt.
+      cacheMediaBlob(descriptor, bytes).catch(() => {})
       await Promise.resolve(sendMessage(videoCaption.trim(), null, reply, { video: descriptor }))
       onCancelReply?.()
       handleCloseVideoModal()

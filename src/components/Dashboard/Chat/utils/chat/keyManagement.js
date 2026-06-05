@@ -55,6 +55,8 @@ export const setPendingOutgoingGroupMessage = ({
   ciphertextB64,
   text,
   image = null,
+  video = null,
+  audio = null,
   replyTo = null,
 }) => {
   prunePendingGroupPlaintexts()
@@ -69,6 +71,8 @@ export const setPendingOutgoingGroupMessage = ({
   pendingGroupPlaintextCache.set(cacheKey, {
     text,
     image: image ?? null,
+    video: video ?? null,
+    audio: audio ?? null,
     replyTo: replyTo ?? null,
     createdAt: Date.now(),
   })
@@ -96,7 +100,15 @@ export const consumePendingOutgoingGroupMessage = ({
   const entry = pendingGroupPlaintextCache.get(cacheKey)
   pendingGroupPlaintextCache.delete(cacheKey)
   if (typeof entry?.text !== 'string') return null
-  return { text: entry.text, image: entry.image ?? null, replyTo: entry.replyTo ?? null }
+  // Include video/audio so the sender's own outgoing media bubble renders
+  // immediately without needing to decrypt the self-echo (which MLS cannot).
+  return {
+    text: entry.text,
+    image: entry.image ?? null,
+    video: entry.video ?? null,
+    audio: entry.audio ?? null,
+    replyTo: entry.replyTo ?? null,
+  }
 }
 
 export const deletePendingOutgoingGroupMessage = ({
