@@ -3,21 +3,18 @@ import { FileText, ShieldCheck, ScrollText, ArrowUpRight } from 'lucide-react'
 const DOCS = [
   {
     icon: ShieldCheck,
-    tag: 'Audit · 2025-Q3',
     title: 'Trail of Bits — Cryptographic Core Review',
     desc: 'Full-scope audit of the X25519 Diffie-Hellman handshake and message-layer AES-256-GCM implementation via WASM.',
     cta: 'Read the report',
   },
   {
     icon: ScrollText,
-    tag: 'Whitepaper',
     title: 'ECHO Protocol v3.2',
     desc: 'Specification of sealed sender, double-ratchet variant, group epochs and metadata padding strategies.',
     cta: 'Open whitepaper',
   },
   {
     icon: FileText,
-    tag: 'Transparency',
     title: 'Government Requests · 2025',
     desc: 'Every legal request received and how exactly zero plaintext was ever produced. Updated quarterly, signed by the team.',
     cta: 'View report',
@@ -36,7 +33,7 @@ export default function SecurityDocs() {
           <div className='max-w-2xl'>
             <h2 className='mt-5 text-4xl sm:text-5xl font-semibold tracking-tight leading-[1.05]'>
               Don&apos;t trust us. <br />
-              <span className='echo-gradient-text'>Verify everything.</span>
+              <span className='text-white'>Verify everything.</span>
             </h2>
           </div>
           <p className='text-[#b9b9c4] leading-relaxed lg:max-w-md'>
@@ -46,23 +43,22 @@ export default function SecurityDocs() {
         </div>
 
         <div className='mt-12 grid grid-cols-1 md:grid-cols-3 gap-5'>
-          {DOCS.map(({ icon: Icon, tag, title, desc, cta }, i) => (
+          {DOCS.map(({ icon: Icon, title, desc, cta }, i) => (
             <a
               data-testid={`security-doc-${i}`}
               key={title}
               href='#'
-              className='group glass cyber-border rounded-2xl p-6 flex flex-col anim-fade-up'
+              className='group rounded-2xl border border-white/10 bg-[#0b0b0f] p-6 flex flex-col anim-fade-up'
               style={{ animationDelay: `${i * 100}ms` }}
             >
               <div className='flex items-center justify-between'>
-                <div className='inline-flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#7c3aed] to-[#a855f7]'>
+                <div className='inline-flex h-10 w-10 items-center justify-center rounded-xl bg-white/[0.08]'>
                   <Icon className='h-5 w-5 text-white' />
                 </div>
-                <span className='font-mono text-[10px] text-[#a0a0a0]'>{tag}</span>
               </div>
               <h3 className='mt-5 text-lg font-semibold tracking-tight'>{title}</h3>
               <p className='mt-2 text-sm text-[#a8a8b8] leading-relaxed flex-1'>{desc}</p>
-              <div className='mt-5 inline-flex items-center gap-1.5 text-sm text-[#e9d5ff]'>
+              <div className='mt-5 inline-flex items-center gap-1.5 text-sm text-white/80'>
                 {cta}
                 <ArrowUpRight className='h-4 w-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5' />
               </div>

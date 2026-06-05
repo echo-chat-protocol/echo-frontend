@@ -1,4 +1,3 @@
-import React from "react";
 import { Scale, ArrowUpRight } from "lucide-react";
 import PageShell from "@/components/layout/PageShell";
 
@@ -6,22 +5,18 @@ const ECHO_LICENSES = [
   {
     name: "ECHO Clients (desktop, mobile, web)",
     license: "AGPL-3.0",
-    repo: "github.com/echo-labs/echo-clients",
   },
   {
     name: "ECHO Server / Relay",
     license: "AGPL-3.0",
-    repo: "github.com/echo-labs/echo-server",
   },
   {
     name: "@echo/sdk · echo-rs · echo-swift · echo-kotlin",
     license: "Apache-2.0",
-    repo: "github.com/echo-labs/echo-sdk",
   },
   {
     name: "ECHO brand assets",
     license: "CC BY-NC 4.0",
-    repo: "echo.io/brand",
   },
 ];
 

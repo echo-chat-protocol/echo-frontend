@@ -10,6 +10,7 @@ const COLS = [
       { label: 'Features', to: '/features' },
       { label: 'Security', to: '/security' },
       { label: 'Download', to: '/download' },
+      { label: 'Pricing', to: '/pricingpage' },
     ],
   },
   {
@@ -108,7 +109,6 @@ export default function Footer() {
             {[
               { label: 'Privacy', to: '/privacy' },
               { label: 'Terms', to: '/terms' },
-              { label: 'Cookies', to: '/cookies' },
               { label: 'GDPR', to: '/gdpr' },
               { label: 'Licenses', to: '/licenses' },
             ].map((l) => (

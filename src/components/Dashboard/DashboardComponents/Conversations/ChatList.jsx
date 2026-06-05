@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
-import { Search, Pin, Bot, UsersRound, CheckCheck, Check, Plus, Loader2 } from 'lucide-react'
+import { Search, Pin, Bot, UsersRound, CheckCheck, Check, Plus, Loader2, Menu } from 'lucide-react'
 
 const TABS = [
   { id: 'all', label: 'All' },
@@ -72,6 +72,9 @@ function Avatar({ src, name, isBot, isGroup }) {
  *  - onSearchChange: (val) => void
  *  - onSelect: (id) => void
  *  - onCreateGroup: () => void
+ *  - onOpenMenu: () => void  — opens the sidebar drawer on mobile
+ *  - userAvatar: string|null — current user's profile image for mobile top bar
+ *  - userName: string|null  — current user's name for avatar fallback
  */
 export default function ChatList({
   items = [],
@@ -83,6 +86,9 @@ export default function ChatList({
   onCreatePeer,
   registerOpenAddMenu,
   onRefresh,
+  onOpenMenu,
+  userAvatar,
+  userName,
 }) {
   const [tab, setTab] = useState('all')
   const [addMenuOpen, setAddMenuOpen] = useState(false)
@@ -233,22 +239,59 @@ export default function ChatList({
   const pinned = filtered.filter((c) => c.pinned)
   const recent = filtered.filter((c) => !c.pinned)
 
+  const getConsistentColor = (name = '') => {
+    const colors = ['7c3aed', 'a855f7', '6d28d9', '8b5cf6', '9333ea']
+    return colors[(name.length || 0) % colors.length]
+  }
+
   return (
     <div
       className='echo-floating relative flex h-full w-full md:w-[300px] lg:w-[340px] xl:w-[380px] shrink-0 flex-col overflow-hidden'
       style={{ touchAction: 'pan-y', overscrollBehaviorX: 'none' }}
     >
-      {/* Title row (mobile menu + title aligned) */}
+      {/* ── Mobile top bar: hamburger + title + avatar ── */}
       <div
-        className='px-4 md:pt-5 md:px-5 flex items-center justify-between'
-        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 12px)' }}
+        className='flex items-center gap-3 px-4 md:hidden'
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 12px)', paddingBottom: '4px' }}
       >
+        {/* Hamburger — opens sidebar drawer */}
+        <button
+          onClick={onOpenMenu}
+          aria-label='Open menu'
+          data-testid='chatlist-mobile-menu'
+          className='flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/[0.09] bg-white/[0.04] text-white/70 transition-all active:scale-95 hover:text-white hover:bg-white/[0.08]'
+        >
+          <Menu size={17} />
+        </button>
+
+        {/* Title */}
+        <h2 className='echo-display flex-1 text-[20px]'>Conversations</h2>
+
+        {/* User avatar — tapping also opens the sidebar so users can access profile */}
+        <button onClick={onOpenMenu} aria-label='Profile & menu' className='relative shrink-0'>
+          <img
+            src={
+              userAvatar ||
+              `https://ui-avatars.com/api/?name=${encodeURIComponent(userName || '?')}&background=${getConsistentColor(userName)}&color=fff`
+            }
+            alt={userName || 'Profile'}
+            className='h-8 w-8 rounded-full object-cover ring-1 ring-white/10'
+            onError={(e) => {
+              e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(userName || '?')}&background=${getConsistentColor(userName)}&color=fff`
+            }}
+          />
+          {/* Online indicator dot */}
+          <span className='absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-[1.5px] border-black bg-emerald-400 shadow-[0_0_6px_rgba(34,197,94,0.7)]' />
+        </button>
+      </div>
+
+      {/* ── Desktop title row ── */}
+      <div className='hidden md:flex px-5 pt-5 pb-1 items-center'>
         <h2 className='echo-display text-[22px]'>Conversations</h2>
-        <span className='md:hidden h-8 w-8' aria-hidden='true' />
       </div>
 
       {/* Search row */}
-      <div className='mt-4 px-4 md:px-5 flex items-center gap-3 md:gap-2'>
+      <div className='mt-3 px-4 md:mt-4 md:px-5 flex items-center gap-3 md:gap-2'>
         <div className='relative flex-1'>
           <Search
             size={14}

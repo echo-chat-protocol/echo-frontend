@@ -22,7 +22,6 @@ import PrivateRoute from './components/auth/PrivateRoute' // NOT lazy — used a
 const Dashboard = lazy(() => import('./components/Dashboard/Dashboard'))
 const Chat = lazy(() => import('./components/Dashboard/Chat/Chat'))
 const UserProfile = lazy(() => import('./components/Dashboard/UserProfileModal'))
-const Pricing = lazy(() => import('./features/landing/Pricing'))
 const VideoCall = lazy(() => import('./components/VideoCall/VideoCall'))
 
 // ─── New public pages (lazy, feature-based architecture) ─────────────────────
@@ -41,9 +40,9 @@ const BlogWhatIsEcho = lazy(() => import('@/pages/public/BlogWhatIsEcho'))
 const ContactPage = lazy(() => import('@/pages/public/ContactPage'))
 const PrivacyPage = lazy(() => import('@/pages/public/PrivacyPage'))
 const TermsPage = lazy(() => import('@/pages/public/TermsPage'))
-const CookiesPage = lazy(() => import('@/pages/public/CookiesPage'))
 const GdprPage = lazy(() => import('@/pages/public/GdprPage'))
 const LicensesPage = lazy(() => import('@/pages/public/LicensesPage'))
+const PricingPage = lazy(() => import('@/pages/public/PricingPage'))
 // DeviceSyncPage is eagerly imported to avoid dynamic import issues on mobile
 import DeviceSyncPage from '@/pages/DeviceSyncPage'
 
@@ -259,7 +258,6 @@ function App() {
             <Route path='/docs' element={<DocsPage />} />
             <Route path='/community' element={<CommunityPage />} />
             <Route path='/help' element={<HelpPage />} />
-            <Route path='/status' element={<Navigate to='/' replace />} />
 
             {/* Company */}
             <Route path='/about' element={<AboutPage />} />
@@ -271,7 +269,6 @@ function App() {
             {/* Legal (new short URLs) */}
             <Route path='/privacy' element={<PrivacyPage />} />
             <Route path='/terms' element={<TermsPage />} />
-            <Route path='/cookies' element={<CookiesPage />} />
             <Route path='/gdpr' element={<GdprPage />} />
             <Route path='/licenses' element={<LicensesPage />} />
 
@@ -279,7 +276,8 @@ function App() {
             <Route path='/documentation' element={<Navigate to='/docs' replace />} />
             <Route path='/documentation/guides' element={<Navigate to='/docs' replace />} />
             <Route path='/documentation/protocols' element={<Navigate to='/docs' replace />} />
-            <Route path='/pricing' element={<Pricing />} />
+            <Route path='/pricing' element={<Navigate to='/pricingpage' replace />} />
+            <Route path='/pricingpage' element={<PricingPage />} />
 
             {/* Legacy event/tool paths → new public pages */}
             <Route path='/community/events/*' element={<Navigate to='/community' replace />} />
@@ -293,7 +291,6 @@ function App() {
             {/* Legacy legal long paths → new short paths */}
             <Route path='/legal/privacy-policy' element={<Navigate to='/privacy' replace />} />
             <Route path='/legal/terms-of-service' element={<Navigate to='/terms' replace />} />
-            <Route path='/legal/cookie-policy' element={<Navigate to='/cookies' replace />} />
             <Route path='/legal/gdpr' element={<Navigate to='/gdpr' replace />} />
             <Route path='/legal/licenses' element={<Navigate to='/licenses' replace />} />
 

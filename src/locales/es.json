@@ -10,9 +10,9 @@
     "signup": "Registrarse"
   },
   "hero": {
-    "title_1": "El mensajero que tus",
-    "title_2": "conversaciones merecen.",
-    "subtitle": "ECHO es una capa de comunicación priorizando la privacidad con <1>E2EE</1>, generación de claves en el dispositivo y una pila criptográfica transparente. Sin metadatos. Sin puertas traseras. Sin concesiones.",
+    "title_1": "Habla libremente.",
+    "title_2": "Mantén tu privacidad.",
+    "subtitle": "El derecho a susurrar es tan antiguo como el lenguaje mismo y tan esencial como la palabra hablada. Una sociedad que no puede susurrar no puede pensar en voz alta.",
     "download": "Descargar Echo",
     "start": "Comienza gratis"
   }

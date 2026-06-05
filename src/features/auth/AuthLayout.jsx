@@ -49,17 +49,14 @@ export default function AuthLayout({
               <p className='text-sm text-[#e9e9ef] leading-relaxed'>
                 &quot;
                 {testimonial?.quote ??
-                  'ECHO is what every privacy researcher hopes a messenger could be — and the audits actually back it up.'}
+                  'True silence — the right not to be overheard or forced to live under constant scrutiny — is as essential to the dignity of the human mind as the right to free speech.'}
                 &quot;
               </p>
               <div className='mt-4 flex items-center gap-3'>
-                <span className='inline-flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#7c3aed] to-[#a855f7] text-sm font-semibold'>
-                  {testimonial?.initials ?? 'MR'}
-                </span>
                 <div>
-                  <div className='text-sm font-medium'>{testimonial?.name ?? 'Maya Rashidov'}</div>
+                  <div className='text-sm font-medium'>{testimonial?.name ?? 'George Steiner'}</div>
                   <div className='text-xs text-[#a0a0a0]'>
-                    {testimonial?.role ?? 'Security researcher · Cure53'}
+                    {testimonial?.role ?? 'Philosopher · Author of "Language and Silence"'}
                   </div>
                 </div>
               </div>
