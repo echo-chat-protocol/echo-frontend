@@ -10,6 +10,7 @@ import {
   Eye,
   Globe,
   Download,
+  Menu,
 } from 'lucide-react'
 import { useI18n } from '@/contexts/I18nContext'
 
@@ -73,7 +74,7 @@ const SECTIONS = [
   },
 ]
 
-export default function Settings({ initialSection = null }) {
+export default function Settings({ initialSection = null, onOpenMenu }) {
   const { t } = useI18n()
   // Allow dashboard to open a specific section on mount (e.g., devices)
   const [openSection, setOpenSection] = useState(initialSection)
@@ -81,23 +82,39 @@ export default function Settings({ initialSection = null }) {
 
   return (
     <div className='echo-floating relative flex flex-1 flex-col overflow-hidden'>
-      <div className='flex items-center gap-3 border-b border-white/[0.05] px-10 pb-6 pt-9'>
-        {active ? (
+      {/* ── Header ── */}
+      <div className='flex items-center gap-3 border-b border-white/[0.05] px-4 md:px-10 pb-4 md:pb-6 pt-4 md:pt-9'>
+        {/* Mobile hamburger — only when on root grid (not in a sub-section) */}
+        {!active && onOpenMenu && (
+          <button
+            onClick={onOpenMenu}
+            aria-label='Open menu'
+            className='md:hidden flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/[0.09] bg-white/[0.04] text-white/70 transition-all active:scale-95 hover:text-white'
+          >
+            <Menu size={17} />
+          </button>
+        )}
+
+        {/* Back button — visible when inside a section */}
+        {active && (
           <button
             data-testid='settings-back'
             onClick={() => setOpenSection(null)}
-            className='grid h-10 w-10 place-items-center rounded-full border border-white/[0.08] bg-white/[0.02] text-white/65 hover:bg-white/[0.05] hover:text-white transition'
+            className='grid h-9 w-9 md:h-10 md:w-10 place-items-center rounded-full border border-white/[0.08] bg-white/[0.02] text-white/65 hover:bg-white/[0.05] hover:text-white transition shrink-0'
             title={t('common.back')}
           >
             <ChevronLeft size={16} />
           </button>
-        ) : null}
-        <div className='flex-1'>
+        )}
+
+        <div className='flex-1 min-w-0'>
           {active ? (
-            <h1 className='echo-display text-[28px]'>{t(active.titleKey)}</h1>
+            <h1 className='echo-display text-[22px] md:text-[28px] truncate'>
+              {t(active.titleKey)}
+            </h1>
           ) : (
             <>
-              <h1 className='echo-display text-[34px]'>
+              <h1 className='echo-display text-[24px] md:text-[34px] leading-tight'>
                 {t('settings.title')
                   .split(' ')
                   .map((word, i, arr) =>
@@ -110,17 +127,20 @@ export default function Settings({ initialSection = null }) {
                     )
                   )}
               </h1>
-              <p className='mt-2 text-[13px] text-white/45'>{t('settings.subtitle')}</p>
+              <p className='mt-1 md:mt-2 text-[12px] md:text-[13px] text-white/45 hidden sm:block'>
+                {t('settings.subtitle')}
+              </p>
             </>
           )}
         </div>
       </div>
 
-      <div className='flex-1 overflow-y-auto px-10 py-7'>
+      {/* ── Content ── */}
+      <div className='flex-1 overflow-y-auto px-3 md:px-10 py-4 md:py-7'>
         {active ? (
           <active.Component />
         ) : (
-          <div className='grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3'>
+          <div className='grid grid-cols-1 gap-2.5 md:gap-3 sm:grid-cols-2 xl:grid-cols-3'>
             {SECTIONS.map(({ id, icon: Icon, titleKey, descKey }) => (
               <button
                 key={id}
@@ -129,22 +149,26 @@ export default function Settings({ initialSection = null }) {
                 className='echo-hover-lift group flex items-center gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.015] p-4 text-left'
               >
                 <div
-                  className='grid h-10 w-10 place-items-center rounded-xl ring-1'
+                  className='grid h-9 w-9 md:h-10 md:w-10 shrink-0 place-items-center rounded-xl ring-1'
                   style={{
                     background: 'rgba(var(--echo-accent-rgb), 0.10)',
                     borderColor: 'rgba(var(--echo-accent-rgb), 0.20)',
                     color: 'var(--echo-accent-soft)',
                   }}
                 >
-                  <Icon size={16} />
+                  <Icon size={15} />
                 </div>
-                <div className='flex-1'>
-                  <div className='text-[13.5px] font-medium'>{t(titleKey)}</div>
-                  <div className='text-[11.5px] text-white/40'>{t(descKey)}</div>
+                <div className='flex-1 min-w-0'>
+                  <div className='text-[13px] md:text-[13.5px] font-medium truncate'>
+                    {t(titleKey)}
+                  </div>
+                  <div className='text-[11px] md:text-[11.5px] text-white/40 truncate'>
+                    {t(descKey)}
+                  </div>
                 </div>
                 <ChevronRight
                   size={14}
-                  className='text-white/30 group-hover:text-[color:var(--echo-accent-soft)] group-hover:translate-x-0.5 transition'
+                  className='shrink-0 text-white/30 group-hover:text-[color:var(--echo-accent-soft)] group-hover:translate-x-0.5 transition'
                 />
               </button>
             ))}
@@ -158,4 +182,6 @@ export default function Settings({ initialSection = null }) {
 Settings.propTypes = {
   // Optional section id to open on mount, e.g. 'devices'
   initialSection: PropTypes.string,
+  // Mobile: opens the sidebar drawer
+  onOpenMenu: PropTypes.func,
 }
