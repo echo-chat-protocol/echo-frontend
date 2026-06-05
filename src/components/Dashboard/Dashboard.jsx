@@ -2477,6 +2477,9 @@ const Dashboard = () => {
               onRefresh={refreshConversationsData}
               onCreatePeer={() => setNewChatOpen(true)}
               onCreateGroup={() => setCreateGroupOpen(true)}
+              onOpenMenu={() => setIsMobileMenuOpen(true)}
+              userAvatar={userProfileImage}
+              userName={username}
               onSelect={(id) => {
                 // Try group first
                 const group = filteredGroups.find((g) => String(g.groupId) === String(id))
@@ -2506,9 +2509,14 @@ const Dashboard = () => {
             <SettingsView
               key={settingsInitialSection || 'root'}
               initialSection={settingsInitialSection}
+              onOpenMenu={() => setIsMobileMenuOpen(true)}
             />
           ) : activeView === 'groups' ? (
-            <GroupsView onCreate={() => setCreateGroupOpen(true)} groups={filteredGroups} />
+            <GroupsView
+              onCreate={() => setCreateGroupOpen(true)}
+              groups={filteredGroups}
+              onOpenMenu={() => setIsMobileMenuOpen(true)}
+            />
           ) : activeChat ? (
             <div className='echo-floating relative flex h-full min-h-0 flex-1 overflow-hidden rounded-none md:rounded-[20px]'>
               <div className='flex min-h-0 min-w-0 flex-1 flex-col'>

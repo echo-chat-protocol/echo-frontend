@@ -105,7 +105,7 @@ export default function UserInfoPanel({ contact, onClose }) {
 
   return (
     <>
-      {/* Backdrop — overlays the chat instead of squishing it. */}
+      {/* Backdrop */}
       <button
         type='button'
         aria-label='Close contact info'
@@ -113,9 +113,10 @@ export default function UserInfoPanel({ contact, onClose }) {
         className='fixed inset-0 z-40 bg-black/50 backdrop-blur-sm'
       />
 
+      {/* Panel — full-screen on mobile, max-width capped on larger screens */}
       <aside
         data-testid='user-info-panel'
-        className='echo-floating fixed inset-y-0 right-0 z-50 h-full w-full max-w-[390px] overflow-y-auto animate-slide-in-right border-l border-white/[0.05] rounded-none'
+        className='echo-floating fixed inset-y-0 right-0 z-50 h-full w-full sm:max-w-[390px] overflow-y-auto animate-slide-in-right border-l border-white/[0.05]'
         style={{
           borderRadius: 0,
           paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)',
@@ -123,12 +124,13 @@ export default function UserInfoPanel({ contact, onClose }) {
         }}
       >
         {/* Sticky header */}
-        <div className='sticky top-0 z-10 flex items-center justify-between border-b border-white/[0.05] px-5 py-3 backdrop-blur bg-black/40'>
+        <div className='sticky top-0 z-10 flex items-center justify-between border-b border-white/[0.05] px-5 py-3.5 backdrop-blur bg-black/40'>
           <h3 className='text-[13px] font-semibold tracking-[-0.01em]'>Contact info</h3>
           <button
             onClick={onClose}
             data-testid='user-info-close'
-            className='grid h-8 w-8 place-items-center rounded-lg text-white/45 hover:bg-white/[0.04] hover:text-white'
+            className='grid h-9 w-9 place-items-center rounded-full border border-white/[0.06] text-white/45 hover:bg-white/[0.04] hover:text-white transition-all'
+            aria-label='Close'
           >
             <X size={15} />
           </button>
@@ -161,9 +163,12 @@ export default function UserInfoPanel({ contact, onClose }) {
               </div>
             )}
           </div>
+
           <h2 className='relative mt-4 text-[18px] font-semibold tracking-[-0.02em]'>
             {profileName}
           </h2>
+
+          {/* Copy user ID pill */}
           <button
             type='button'
             onClick={copyUserId}
@@ -173,9 +178,11 @@ export default function UserInfoPanel({ contact, onClose }) {
             <Copy size={11} />
             {copied && <span className='text-emerald-300'>Copied</span>}
           </button>
-          <div className='relative mt-4 flex justify-center gap-2'>
-            <ActionBtn icon={<Phone size={14} />} label='Call' />
-            <ActionBtn icon={<Video size={14} />} label='Video' />
+
+          {/* Action buttons */}
+          <div className='relative mt-5 flex justify-center gap-3'>
+            <ActionBtn icon={<Phone size={15} />} label='Call' />
+            <ActionBtn icon={<Video size={15} />} label='Video' />
           </div>
         </div>
 
@@ -184,7 +191,7 @@ export default function UserInfoPanel({ contact, onClose }) {
           <p className='text-[12.5px] leading-relaxed text-white/65'>{about}</p>
         </Section>
 
-        {/* Media — every photo/GIF exchanged in this conversation. */}
+        {/* Media */}
         <Section title='Media' icon={<ImageIcon size={11} />}>
           {media.length === 0 ? (
             <p className='text-[12px] text-white/40'>No media shared yet.</p>
@@ -240,7 +247,7 @@ function Section({ title, icon, children }) {
 
 function ActionBtn({ icon, label }) {
   return (
-    <button className='flex flex-col items-center gap-1 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-[10.5px] text-white/70 hover:border-violet-400/40 hover:text-white hover:bg-violet-500/[0.06] transition-all'>
+    <button className='flex flex-col items-center gap-1.5 rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-3 text-[11px] text-white/70 hover:border-violet-400/40 hover:text-white hover:bg-violet-500/[0.06] transition-all min-w-[64px]'>
       <span className='text-violet-300'>{icon}</span>
       {label}
     </button>

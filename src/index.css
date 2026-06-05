@@ -1015,3 +1015,39 @@ code,
   --echo-accent-dark: #7c3aed;
   --echo-accent-rgb: 168, 85, 247;
 }
+
+/* =====================================================
+   Mobile-responsive utilities
+   ===================================================== */
+
+/* Prevent accidental horizontal overflow on mobile */
+@media (max-width: 767px) {
+  /* Ensure the dashboard sidebar rounded corners look right as a drawer */
+  [data-testid='echo-sidebar'] {
+    border-radius: 0 20px 20px 0;
+  }
+
+  /* Prevent body scroll when mobile menu is open */
+  body.mobile-menu-open {
+    overflow: hidden;
+  }
+
+  /* ChatList top bar — min tap height for accessibility */
+  [data-testid='chatlist-mobile-menu'] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Make sure text doesn't overflow in chat list items on small screens */
+  .echo-floating {
+    border-radius: 0;
+  }
+}
+
+/* Safe-area aware padding helper */
+.echo-safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.echo-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}

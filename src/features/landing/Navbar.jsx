@@ -27,6 +27,15 @@ export default function Navbar() {
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
+  // Close sheet on resize to desktop
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth >= 768) setOpen(false)
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
   return (
     <header
       data-testid='echo-navbar'
@@ -69,7 +78,7 @@ export default function Navbar() {
             ))}
           </ul>
 
-          {/* CTAs */}
+          {/* Desktop CTAs */}
           <div className='hidden md:flex items-center gap-3'>
             <button
               onClick={toggleLanguage}
@@ -99,35 +108,74 @@ export default function Navbar() {
             data-testid='navbar-mobile-toggle'
             onClick={() => setOpen((v) => !v)}
             aria-label='Toggle menu'
-            className='md:hidden inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 p-2 text-white'
+            aria-expanded={open}
+            className='md:hidden inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 p-2 text-white transition-all active:scale-95'
           >
             {open ? <X className='h-5 w-5' /> : <Menu className='h-5 w-5' />}
           </button>
         </nav>
 
-        {/* Mobile sheet */}
-        {open && (
-          <div data-testid='navbar-mobile-sheet' className='md:hidden mt-2 rounded-2xl glass p-4'>
-            <ul className='flex flex-col gap-3 text-[#e5e5e5]'>
+        {/* Mobile sheet — animated max-height transition */}
+        <div
+          data-testid='navbar-mobile-sheet'
+          className={`md:hidden overflow-hidden transition-all duration-300 ease-out ${
+            open ? 'max-h-[600px] opacity-100 mt-2' : 'max-h-0 opacity-0 pointer-events-none'
+          }`}
+        >
+          <div className='rounded-2xl glass p-4'>
+            <ul className='flex flex-col gap-0.5 text-[#e5e5e5]'>
               {NAV.map((item) => (
                 <li key={item.href}>
-                  <a href={item.href} onClick={() => setOpen(false)} className='block py-2'>
+                  <a
+                    href={item.href}
+                    onClick={() => setOpen(false)}
+                    className='block px-3 py-2.5 rounded-xl text-[15px] hover:bg-white/[0.05] hover:text-white transition-colors'
+                  >
                     {t(`nav.${item.key}`)}
                   </a>
                 </li>
               ))}
+
+              {/* Divider */}
+              <li aria-hidden='true'>
+                <div className='my-2 h-px bg-white/[0.08]' />
+              </li>
+
+              {/* Language toggle */}
               <li>
+                <button
+                  onClick={toggleLanguage}
+                  className='flex w-full items-center gap-2.5 px-3 py-2.5 rounded-xl text-[15px] text-[#cfcfcf] hover:bg-white/[0.05] hover:text-white transition-colors'
+                >
+                  <Globe className='h-4 w-4 shrink-0' />
+                  {i18n.language.startsWith('es') ? 'Español' : 'English'}
+                </button>
+              </li>
+
+              {/* Sign in */}
+              <li>
+                <a
+                  href='/login'
+                  onClick={() => setOpen(false)}
+                  className='block px-3 py-2.5 rounded-xl text-[15px] text-[#cfcfcf] hover:bg-white/[0.05] hover:text-white transition-colors'
+                >
+                  {t('nav.signin')}
+                </a>
+              </li>
+
+              {/* Sign up CTA */}
+              <li className='mt-2'>
                 <a
                   href='/register'
                   onClick={() => setOpen(false)}
-                  className='mt-2 inline-flex w-full items-center justify-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-black transition-colors hover:bg-white/90'
+                  className='inline-flex w-full items-center justify-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-black transition-colors hover:bg-white/90'
                 >
                   {t('nav.signup')}
                 </a>
               </li>
             </ul>
           </div>
-        )}
+        </div>
       </div>
     </header>
   )
